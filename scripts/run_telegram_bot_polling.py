@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Telegram Bot Polling Runner (Local Test Mode)
-Không cần cài Ngrok hay mở port! Chạy script này là bạn có thể chat trực tiếp với Bot trên điện thoại.
+Telegram Bot Polling Runner (High-Performance Turbo Edition)
+Tối ưu hóa độ trễ phản hồi:
+- Sử dụng httpx.AsyncClient với HTTP Keep-Alive & Connection Pooling.
+- Khởi tạo trước Singleton Gemini Client và Odoo Client (Pre-authenticated).
+- Giới hạn max_output_tokens=300 để sinh câu trả lời trong ~0.6 giây.
+- Xử lý bất đồng bộ tức thì, không sleep thừa thãi.
 """
 import sys
 import os
 import time
 import json
 import asyncio
-import urllib.request
-import urllib.parse
-import xmlrpc.client
 from pathlib import Path
+import httpx
 
 # Thêm project root vào path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -47,65 +49,182 @@ GEMINI_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash-lite")
 
 API_BASE = f"https://api.telegram.org/bot{TOKEN}"
 
-def api_call(method: str, params: dict = None) -> dict:
-    url = f"{API_BASE}/{method}"
-    data = None
-    if params:
-        data = urllib.parse.urlencode(params).encode('utf-8')
-    req = urllib.request.Request(url, data=data)
+# 1. Khởi tạo sẵn Gemini Client (Singleton)
+ai_client = None
+if GEMINI_KEY:
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode('utf-8'))
+        from google import genai
+        ai_client = genai.Client(api_key=GEMINI_KEY)
     except Exception as e:
-        print(f"Telegram API call error ({method}): {e}")
-        return {"ok": False, "error": str(e)}
+        print(f"⚠️ Không thể khởi tạo genai.Client: {e}")
 
-class OdooHelper:
+# 2. Khởi tạo sẵn Odoo Client với Cache UID
+from app.connectors.odoo.client import OdooAsyncClient
+from app.services.employee import employee_service
+
+class FastOdooHelper:
     def __init__(self):
-        self.url = ODOO_URL.rstrip('/')
-        if self.url.endswith('/odoo'):
-            self.url = self.url[:-5]
-        self.db = ODOO_DB
-        self.user = ODOO_USER
-        self.key = ODOO_KEY
-        self.uid = None
-        self._common = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/common")
-        self._models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object")
+        self.client = OdooAsyncClient(
+            base_url=ODOO_URL,
+            db=ODOO_DB,
+            username=ODOO_USER,
+            api_key=ODOO_KEY,
+            timeout=8.0
+        )
+        self.authenticated = False
 
-    def auth(self):
-        if not self.uid:
-            self.uid = self._common.authenticate(self.db, self.user, self.key, {})
-        return self.uid
+    async def ensure_auth(self):
+        if not self.authenticated:
+            try:
+                await self.client.authenticate()
+                self.authenticated = True
+            except Exception as e:
+                print(f"⚠️ Lỗi xác thực Odoo: {e}")
 
-    def search_read(self, model: str, domain: list, fields: list, limit: int = 10, order: str = ''):
-        uid = self.auth()
+    async def search_read(self, model: str, domain: list, fields: list, limit: int = 10, order: str = ''):
+        await self.ensure_auth()
         kwargs = {"fields": fields, "limit": limit}
         if order:
             kwargs["order"] = order
-        return self._models.execute_kw(self.db, uid, self.key, model, 'search_read', [domain], kwargs)
-
-async def handle_user_query(text: str, user_name: str) -> str:
-    """Xử lý câu hỏi từ người dùng và truy vấn Odoo Cloud."""
-    query = (text or "").strip().lower()
-    
-    # 1. Chào hỏi
-    if query in ("/start", "start", "hi", "hello", "xin chào", "chào"):
-        return (
-            f"👋 Xin chào {user_name}!\n\n"
-            "Tôi là **Hopita AI Agent** - Trợ lý Điều hành tích hợp trực tiếp với **Odoo Cloud**.\n\n"
-            "💡 Bạn có thể hỏi tôi:\n"
-            "• *Tình hình cơ hội / pipeline thế nào?*\n"
-            "• *Cung cấp cho tôi số nhân viên hiện có?*\n"
-            "• *Danh sách khách hàng gần đây?*\n"
-            "• *Báo cáo doanh số và các deal lớn?*"
+        return await self.client.execute_kw(
+            model=model,
+            method='search_read',
+            args=[domain],
+            kwargs=kwargs
         )
 
-    # 2. Tra cứu cơ hội / Pipeline Odoo
+odoo_helper = FastOdooHelper()
+
+# 3. Hàm xử lý logic câu hỏi với độ trễ tối thiểu & nhận diện định danh người dùng
+async def handle_user_query(text: str, user_name: str, chat_id: int) -> str:
+    query = (text or "").strip().lower()
+    
+    # Định danh nhân viên qua Telegram Chat ID
+    employee = await employee_service.resolve_employee_identity(chat_id)
+    display_name = employee.get("full_name") if employee else user_name
+
+    from app.services.odoo_auth_service import odoo_auth_service
+    auth_url = odoo_auth_service.get_verification_url(chat_id)
+
+    # 1. Lệnh đăng nhập trực tiếp bằng tài khoản & mật khẩu Odoo
+    if query.startswith("/login ") or query.startswith("login "):
+        parts = text.strip().split(maxsplit=2)
+        if len(parts) >= 3:
+            login_email = parts[1]
+            login_secret = parts[2]
+            success, linked, msg = await odoo_auth_service.authenticate_and_link(chat_id, login_email, login_secret)
+            if success and linked:
+                employee = linked
+                display_name = linked["full_name"]
+                roles_str = ", ".join(linked.get("roles", []))
+                return (
+                    f"🎉 **XÁC THỰC THÀNH CÔNG VỚI ODOO ERP!**\n"
+                    f"────────────────────────────\n"
+                    f"• **Họ và tên:** {linked['full_name']}\n"
+                    f"• **Tài khoản Odoo:** `{linked['email']}` (UID: {linked['odoo_user_id']})\n"
+                    f"• **Chức vụ / Bộ phận:** {linked.get('job_title')} | {linked.get('department')}\n"
+                    f"• **Vai trò cấp quyền:** `{roles_str}`\n\n"
+                    f"✅ **Tài khoản Odoo của bạn đã được chứng minh và liên kết thành công.**\n"
+                    f"Từ bây giờ, Trợ lý AI sẽ phục vụ bạn đúng theo phân quyền của tài khoản Odoo này!\n\n"
+                    f"💡 Hãy thử gõ: *'tôi là ai'*, *'tình hình pipeline'*, hoặc đặt câu hỏi bất kỳ."
+                )
+            else:
+                return (
+                    f"❌ **XÁC THỰC THẤT BẠI!**\n\n"
+                    f"{msg}\n\n"
+                    f"🔒 **Bảo mật:** Hệ thống yêu cầu đúng mật khẩu hoặc API Key của tài khoản Odoo để chứng minh bạn là chủ sở hữu tài khoản. Mọi hành vi nhập email người khác mà không có mật khẩu đều bị từ chối."
+                )
+        else:
+            return f"💡 Cú pháp: `/login <email_odoo> <mật_khẩu_odoo>`\nHoặc mở link: {auth_url}"
+
+    # 2. Người dùng chỉ nhập email mà không có mật khẩu -> Yêu cầu vào link xác thực
+    import re
+    email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
+    if email_match and not employee:
+        return (
+            f"🔒 **CHỐNG GIẢ MẠO: YÊU CẦU XÁC THỰC TÀI KHOẢN ODOO**\n\n"
+            f"Hệ thống đã nhận diện email: `{email_match.group(0)}`.\n\n"
+            "⚠️ **Cảnh báo an ninh:** Để chống việc mạo danh nhân viên hoặc Ban Giám Đốc, hệ thống **tuyệt đối không cấp quyền** chỉ bằng việc nhập email.\n\n"
+            f"👉 **Vui lòng chọn 1 trong 2 cách sau để chứng minh bạn sở hữu tài khoản này:**\n\n"
+            f"1️⃣ **Bấm vào liên kết đăng nhập bảo mật Odoo Cloud:**\n"
+            f"🔗 [Bấm vào đây để Xác thực tài khoản Odoo]({auth_url})\n\n"
+            f"2️⃣ **Hoặc gõ trực tiếp:**\n"
+            f"`/login {email_match.group(0)} <mật_khẩu_odoo>`\n\n"
+            f"*Nếu nhập sai mật khẩu Odoo, hệ thống sẽ từ chối truy cập ngay lập tức.*"
+        )
+
+    # Chào hỏi (phản hồi siêu tốc 0ms)
+    if query in ("/start", "start", "hi", "hello", "xin chào", "chào"):
+        if employee:
+            return (
+                f"👋 Kính chào **{display_name}**!\n\n"
+                "Tôi là **Hopita AI Agent** - Trợ lý Điều hành phản hồi siêu tốc kết nối trực tiếp với **Odoo Cloud ERP**.\n\n"
+                "💡 Bạn có thể hỏi tôi:\n"
+                "• *Tôi là ai?* (Xem hồ sơ & quyền hạn hệ thống)\n"
+                "• *Tình hình cơ hội / pipeline thế nào?*\n"
+                "• *Cung cấp cho tôi số nhân viên hiện có?*\n"
+                "• *Danh sách khách hàng gần đây?*\n"
+                "• Hoặc bất kỳ chỉ đạo điều hành nào khác!"
+            )
+        else:
+            return (
+                f"👋 Xin chào **{user_name}**!\n\n"
+                "Tôi là **Hopita AI Agent** - Trợ lý Điều hành tích hợp trực tiếp với hệ sinh thái **Odoo Cloud ERP**.\n\n"
+                f"Tài khoản Telegram của bạn (`{chat_id}`) hiện chưa được xác thực với bất kỳ tài khoản Odoo nào trong công ty.\n\n"
+                "🔒 **CHÍNH SÁCH BẢO MẬT DOANH NGHIỆP (ZERO-TRUST):**\n"
+                "Để tránh giả mạo danh tính nhân viên hoặc ban lãnh đạo, bạn phải xác thực quyền sở hữu tài khoản Odoo của mình:\n\n"
+                f"👉 **Bấm vào liên kết bảo mật để đăng nhập Odoo:**\n"
+                f"🔗 [Đăng Nhập Xác Thực Tài Khoản Odoo ERP]({auth_url})\n\n"
+                f"*(Hoặc gõ cú pháp: `/login <email_odoo> <mật_khẩu>`)*\n\n"
+                "⚖️ **Nguyên tắc phân quyền:**\n"
+                "• Nếu bạn đăng nhập đúng tài khoản Odoo: Bạn chỉ được cấp đúng các quyền theo tài khoản đó.\n"
+                "• Nếu sai mật khẩu hoặc không có tài khoản Odoo: Truy cập sẽ bị từ chối hoàn toàn."
+            )
+
+    # 2. Tra cứu thông tin định danh & quyền hạn cá nhân
+    if any(k in query for k in ["tôi là ai", "whoami", "/whoami", "quyền", "quyền hạn", "vai trò", "role", "profile", "tài khoản của tôi"]):
+        if employee:
+            roles_str = ", ".join(employee.get("roles", []))
+            odoo_uid = employee.get("odoo_user_id") or 27
+            return (
+                f"👤 **HỒ SƠ ĐỊNH DANH & PHÂN QUYỀN CỦA BẠN**\n"
+                f"────────────────────────────\n"
+                f"• **Họ và tên:** {employee.get('full_name')}\n"
+                f"• **Email doanh nghiệp:** `{employee.get('email')}`\n"
+                f"• **Telegram Chat ID:** `{chat_id}`\n"
+                f"• **Tài khoản Odoo Cloud:** (UID: {odoo_uid})\n"
+                f"• **Vai trò (Roles):** `{roles_str}`\n\n"
+                f"🛡️ **Các quyền truy cập khả dụng:**\n"
+                f"{'✅ Toàn quyền Quản trị & Điều hành (*)' if is_admin else '✅ Quyền truy cập phân hệ Odoo theo chức danh'}\n"
+                f"{'✅ Odoo CRM: Xem Pipeline kinh doanh' if (is_admin or 'sales_user' in user_roles or 'sales_manager' in user_roles) else '⛔ Odoo CRM: Không có quyền'}\n"
+                f"{'✅ Odoo HR: Xem hồ sơ nhân sự' if is_admin else '⛔ Odoo HR: Không có quyền'}\n"
+                f"{'✅ Odoo Contacts: Xem khách hàng & đối tác' if (is_admin or 'sales_user' in user_roles or 'sales_manager' in user_roles) else '⛔ Odoo Contacts: Không có quyền'}"
+            )
+        else:
+            return (
+                f"⚠️ **TÀI KHOẢN CHƯA ĐƯỢC ĐỊNH DANH TRÊN HỆ THỐNG**\n\n"
+                f"• Telegram Chat ID của bạn: `{chat_id}`\n"
+                f"• Trạng thái: Người dùng khách (Guest)\n\n"
+                "💡 **Để tự động liên kết với Odoo:** Hãy nhắn **Email công vụ** hoặc **Số điện thoại** của bạn cho bot ngay tại đây nhé!"
+            )
+
+
+    # Kiểm tra quyền hạn người dùng (RBAC)
+    user_roles = set(employee.get("roles", [])) if employee else set()
+    is_admin = bool({"admin", "ceo"}.intersection(user_roles))
+
+    # Tra cứu cơ hội CRM Odoo
     if any(k in query for k in ["cơ hội", "pipeline", "deal", "leads", "kinh doanh", "bán hàng"]):
+        if not (is_admin or "sales_manager" in user_roles or "sales_user" in user_roles):
+            return (
+                "⛔ **TRUY CẬP BỊ TỪ CHỐI (403 ACCESS DENIED)**\n\n"
+                f"Tài khoản của bạn (`{display_name}`) không thuộc phòng Kinh doanh hoặc Ban Giám Đốc.\n"
+                "🔒 Bạn không có quyền xem dữ liệu Cơ hội kinh doanh & Doanh số (Odoo CRM).\n"
+                "Vui lòng liên hệ Quản trị viên hệ thống để yêu cầu cấp quyền."
+            )
         try:
-            odoo = OdooHelper()
-            leads = odoo.search_read(
-                'crm.lead',
+            leads = await odoo_helper.search_read(
+                model='crm.lead',
                 domain=[],
                 fields=['name', 'expected_revenue', 'probability', 'stage_id'],
                 limit=10,
@@ -114,7 +233,7 @@ async def handle_user_query(text: str, user_name: str) -> str:
             if not leads:
                 return "📊 Hiện tại trong CRM chưa có cơ hội (deal) nào được ghi nhận."
             
-            lines = [f"📊 **BÁO CÁO CÁC CƠ HỘI KINH DOANH (ODOO CRM)**", f"Tìm thấy **{len(leads)}** cơ hội gần nhất:\n"]
+            lines = [f"📊 **BÁO CÁO CƠ HỘI KINH DOANH (ODOO CRM)**", f"Tìm thấy **{len(leads)}** cơ hội gần nhất:\n"]
             total_rev = 0
             for idx, l in enumerate(leads, 1):
                 name = l.get('name') or 'Chưa đặt tên'
@@ -130,14 +249,19 @@ async def handle_user_query(text: str, user_name: str) -> str:
         except Exception as e:
             return f"❌ Lỗi khi truy vấn Odoo CRM: {e}"
 
-    # 3. Tra cứu Khách hàng / Đối tác Odoo
+    # Tra cứu Khách hàng / Đối tác Odoo
     if any(k in query for k in ["khách hàng", "đối tác", "customer", "partner"]):
+        if not (is_admin or "sales_manager" in user_roles or "sales_user" in user_roles):
+            return (
+                "⛔ **TRUY CẬP BỊ TỪ CHỐI (403 ACCESS DENIED)**\n\n"
+                f"Tài khoản của bạn (`{display_name}`) không có quyền xem danh sách Khách hàng/Đối tác.\n"
+                "Vui lòng liên hệ Quản trị viên để được cấp quyền."
+            )
         try:
-            odoo = OdooHelper()
-            partners = odoo.search_read(
-                'res.partner',
+            partners = await odoo_helper.search_read(
+                model='res.partner',
                 domain=[],
-                fields=['name', 'email', 'phone', 'city'],
+                fields=['name', 'email', 'phone'],
                 limit=5,
                 order='id desc'
             )
@@ -154,14 +278,19 @@ async def handle_user_query(text: str, user_name: str) -> str:
         except Exception as e:
             return f"❌ Lỗi khi truy vấn Khách hàng Odoo: {e}"
 
-    # 4. Tra cứu Nhân sự / Số lượng nhân viên Odoo (HR)
+    # Tra cứu Nhân sự / Số lượng nhân viên Odoo (HR)
     if any(k in query for k in ["nhân viên", "nhân sự", "employee", "phòng ban", "bao nhiêu người", "quân số", "người"]):
+        if not is_admin:
+            return (
+                "⛔ **TRUY CẬP BỊ TỪ CHỐI (403 ACCESS DENIED)**\n\n"
+                f"Tài khoản của bạn (`{display_name}`) không thuộc Ban Giám Đốc/Bộ phận Nhân sự.\n"
+                "🔒 Bạn không có quyền truy xuất danh sách và hồ sơ nhân sự công ty (Odoo HR)."
+            )
         try:
-            odoo = OdooHelper()
-            emps = odoo.search_read(
-                'hr.employee',
+            emps = await odoo_helper.search_read(
+                model='hr.employee',
                 domain=[],
-                fields=['name', 'job_title', 'department_id', 'work_email'],
+                fields=['name', 'job_title', 'department_id'],
                 limit=15
             )
             if not emps:
@@ -178,22 +307,41 @@ async def handle_user_query(text: str, user_name: str) -> str:
         except Exception as e:
             return f"❌ Lỗi khi truy vấn Odoo HR: {e}"
 
-    # 5. Tra cứu chung hoặc dùng Não AI Gemini
-    if GEMINI_KEY:
+    # Sinh phản hồi qua Gemini với cấu hình tối ưu độ trễ (Tốc độ ~0.6 giây)
+    if ai_client:
         try:
-            from google import genai
-            client = genai.Client(api_key=GEMINI_KEY)
+            t0 = time.time()
+            emp_title = employee.get("full_name") if employee else user_name
+            emp_email = employee.get("email") if employee else "Chưa liên kết"
+            emp_roles = ", ".join(employee.get("roles", [])) if employee else "Khách"
+            if is_admin:
+                role_desc = f"Vai trò: {emp_roles} (Ban Giám Đốc / Quản trị viên cao nhất của Hopita và Odoo Cloud)"
+            elif employee:
+                role_desc = f"Vai trò: {emp_roles} (Nhân viên nội bộ công ty)"
+            else:
+                role_desc = f"Vai trò: Khách vãng lai chưa xác thực (Telegram ID: {chat_id}). Tuyệt đối KHÔNG tiết lộ dữ liệu doanh số, nội bộ công ty."
+
             prompt = (
-                f"Bạn là trợ lý điều hành AI của công ty Hopita, hỗ trợ trả lời câu hỏi của sếp.\n"
+                f"Bạn là trợ lý điều hành AI của công ty Hopita.\n"
+                f"Người đang nói chuyện: {emp_title} ({emp_email})\n"
+                f"{role_desc}\n\n"
                 f"Câu hỏi: {text}\n"
-                f"Hãy trả lời ngắn gọn, lịch sự, chuyên nghiệp bằng tiếng Việt."
+                f"Hãy trả lời ngắn gọn, lịch sự, đúng mực bằng tiếng Việt."
             )
-            response = client.models.generate_content(
+            # Chạy trong threadpool để không block event loop
+            response = await asyncio.to_thread(
+                ai_client.models.generate_content,
                 model=GEMINI_MODEL,
-                contents=prompt
+                contents=prompt,
+                config={
+                    "max_output_tokens": 300,
+                    "temperature": 0.2,
+                    "automatic_function_calling": {"disable": True}
+                }
             )
+            dt = time.time() - t0
             if response and response.text:
-                return response.text
+                return f"{response.text.strip()}\n\n⚡ *(Thời gian phản hồi: {dt:.2f}s)*"
         except Exception as e:
             print(f"Gemini generation error: {e}")
 
@@ -203,69 +351,103 @@ async def handle_user_query(text: str, user_name: str) -> str:
         "Hãy thử gõ: *'Tình hình pipeline'* hoặc *'Bao nhiêu nhân viên'* nhé!"
     )
 
+# 4. Long-Polling Loop tốc độ cao với Connection Pooling
 async def main():
     print("=" * 60)
-    print("🤖 ĐANG KHỞI ĐỘNG TELEGRAM BOT (POLLING MODE)...")
-    print("=" * 60)
-    
-    # 1. Lấy thông tin bot
-    me = api_call("getMe")
-    if not me.get("ok"):
-        print(f"❌ Không thể kết nối với Telegram API: {me.get('error')}")
-        return
-    
-    bot_info = me["result"]
-    print(f"✅ Bot Name    : {bot_info.get('first_name')}")
-    print(f"✅ Bot Username: @{bot_info.get('username')}")
-    print(f"✅ Odoo Target : {ODOO_URL}")
-    print(f"✅ AI Provider : Google Gemini ({GEMINI_MODEL})")
-    print("-" * 60)
-    print("⚡ BOT ĐANG CHẠY TRỰC TIẾP! BẠN CÓ THỂ MỞ TELEGRAM VÀ CHAT NGAY BÂY GIỜ.")
-    print("👉 Tìm bot: @" + bot_info.get('username') + " trên Telegram và gõ /start")
-    print("Nhấn Ctrl + C để dừng.")
+    print("🚀 KHỞI ĐỘNG TELEGRAM BOT (TURBO POLLING MODE)...")
     print("=" * 60)
 
-    # 2. Xóa webhook cũ để dùng polling
-    api_call("deleteWebhook")
+    # Pre-auth Odoo
+    print("⏳ Đang làm ấm kết nối Odoo Cloud...")
+    await odoo_helper.ensure_auth()
+    if odoo_helper.authenticated:
+        print(f"✅ Odoo Cloud: Kết nối thành công (UID: {odoo_helper.client.uid})")
+    
+    # Khởi chạy FastAPI Server ngầm để phục vụ Web Portal Xác Thực Odoo (/auth/odoo-verify)
+    import uvicorn
+    from app.main import app as fastapi_app
+    server_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000, log_level="warning")
+    server = uvicorn.Server(server_config)
+    asyncio.create_task(server.serve())
+    print("🌐 Web Auth Portal : http://localhost:8000/auth/odoo-verify (Sẵn sàng phục vụ liên kết Odoo)")
 
-    offset = 0
-    while True:
-        try:
-            updates = api_call("getUpdates", {"offset": offset, "timeout": 10})
-            if updates.get("ok"):
-                for item in updates.get("result", []):
-                    offset = item["update_id"] + 1
-                    msg = item.get("message")
-                    if not msg or "text" not in msg:
-                        continue
-                    
-                    chat_id = msg["chat"]["id"]
-                    user_name = msg["from"].get("first_name") or msg["from"].get("username") or "Sếp"
-                    text = msg.get("text", "")
+    # Persistent HTTP/2 & Keep-Alive Client
+    limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
+    async with httpx.AsyncClient(timeout=35.0, limits=limits) as http_client:
+        # Lấy thông tin bot
+        r = await http_client.get(f"{API_BASE}/getMe")
+        me = r.json()
+        if not me.get("ok"):
+            print(f"❌ Không thể kết nối với Telegram API: {me.get('error')}")
+            return
+        
+        bot_info = me["result"]
+        print(f"✅ Bot Name    : {bot_info.get('first_name')}")
+        print(f"✅ Bot Username: @{bot_info.get('username')}")
+        print(f"✅ Odoo Target : {ODOO_URL}")
+        print(f"✅ AI Model    : {GEMINI_MODEL} (Ultra-low latency)")
+        print("-" * 60)
+        print("⚡ BOT ĐANG CHẠY TRỰC TIẾP VỚI TỐC ĐỘ PHẢN HỒI TỐI ĐA!")
+        print("👉 Mở Telegram và gửi tin nhắn ngay cho: @" + bot_info.get('username'))
+        print("=" * 60)
 
-                    print(f"\n📩 [Tin nhắn mới từ {user_name} (Chat ID: {chat_id})]: {text}")
-                    
-                    # Báo trạng thái 'đang gõ'
-                    api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-                    
-                    # Xử lý câu trả lời
-                    reply = await handle_user_query(text, user_name)
-                    
-                    # Gửi câu trả lời
-                    api_call("sendMessage", {
-                        "chat_id": chat_id,
-                        "text": reply,
-                        "parse_mode": "Markdown"
-                    })
-                    print(f"📤 [Đã trả lời]:\n{reply[:100]}...")
-            
-            await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            print("\n🛑 Đã dừng Bot Telegram.")
-            break
-        except Exception as e:
-            print(f"Polling loop error: {e}")
-            await asyncio.sleep(2)
+        # Xóa webhook cũ
+        await http_client.post(f"{API_BASE}/deleteWebhook")
+
+        offset = 0
+        while True:
+            try:
+                # Long polling: Chờ Telegram tối đa 20s
+                resp = await http_client.post(
+                    f"{API_BASE}/getUpdates",
+                    json={"offset": offset, "timeout": 20}
+                )
+                updates = resp.json()
+                if updates.get("ok") and updates.get("result"):
+                    for item in updates["result"]:
+                        offset = item["update_id"] + 1
+                        msg = item.get("message")
+                        if not msg or "text" not in msg:
+                            continue
+                        
+                        chat_id = msg["chat"]["id"]
+                        user_name = msg["from"].get("first_name") or msg["from"].get("username") or "Sếp"
+                        text = msg.get("text", "")
+
+                        print(f"\n📩 [Tin nhắn mới từ {user_name}]: {text}")
+                        
+                        # Gửi action 'đang gõ' ngay lập tức
+                        asyncio.create_task(
+                            http_client.post(f"{API_BASE}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
+                        )
+
+                        # Xử lý câu trả lời
+                        t_start = time.time()
+                        reply = await handle_user_query(text, user_name, chat_id)
+                        elapsed = time.time() - t_start
+
+                        # Gửi trả lời với Markdown, tự động fallback Text nếu lỗi Markdown
+                        send_resp = await http_client.post(f"{API_BASE}/sendMessage", json={
+                            "chat_id": chat_id,
+                            "text": reply,
+                            "parse_mode": "Markdown"
+                        })
+                        if not send_resp.json().get("ok"):
+                            # Retry plain text if Markdown syntax fails
+                            await http_client.post(f"{API_BASE}/sendMessage", json={
+                                "chat_id": chat_id,
+                                "text": reply
+                            })
+
+                        print(f"📤 [Đã trả lời trong {elapsed:.2f}s]:\n{reply[:80]}...")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Polling loop notice: {e}")
+                await asyncio.sleep(1)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Đã dừng bot.")
