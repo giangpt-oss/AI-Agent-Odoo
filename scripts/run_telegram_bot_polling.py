@@ -95,8 +95,10 @@ class FastOdooHelper:
 
 odoo_helper = FastOdooHelper()
 
+AUTH_PENDING_SESSIONS: dict[int, dict] = {}
+
 # 3. Hàm xử lý logic câu hỏi với độ trễ tối thiểu & nhận diện định danh người dùng
-async def handle_user_query(text: str, user_name: str, chat_id: int) -> str:
+async def handle_user_query(text: str, user_name: str, chat_id: int, msg_id: int = None, http_client = None) -> str:
     query = (text or "").strip().lower()
     
     # Định danh nhân viên qua Telegram Chat ID
@@ -106,8 +108,44 @@ async def handle_user_query(text: str, user_name: str, chat_id: int) -> str:
     from app.services.odoo_auth_service import odoo_auth_service
     auth_url = odoo_auth_service.get_verification_url(chat_id)
 
-    # 1. Lệnh đăng nhập trực tiếp bằng tài khoản & mật khẩu Odoo
-    if query.startswith("/login ") or query.startswith("login "):
+    # 1. Kịch bản Bước 2: Người dùng đang trong phiên nhập Mật khẩu Odoo
+    if chat_id in AUTH_PENDING_SESSIONS and not employee:
+        stored_email = AUTH_PENDING_SESSIONS.pop(chat_id).get("email", "")
+        # Xóa ngay tin nhắn chứa mật khẩu để đảm bảo an ninh tuyệt đối
+        if msg_id and http_client:
+            asyncio.create_task(http_client.post(f"{API_BASE}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id}))
+
+        success, linked, msg = await odoo_auth_service.authenticate_and_link(chat_id, stored_email, text.strip())
+        if success and linked:
+            employee = linked
+            display_name = linked["full_name"]
+            roles_str = ", ".join(linked.get("roles", []))
+            return (
+                f"🎉 **XÁC THỰC THÀNH CÔNG VỚI ODOO ERP!**\n"
+                f"────────────────────────────\n"
+                f"• **Họ và tên:** {linked['full_name']}\n"
+                f"• **Tài khoản Odoo:** `{linked['email']}` (UID: {linked['odoo_user_id']})\n"
+                f"• **Chức vụ / Đội ngũ:** {linked.get('job_title')} | {linked.get('department')}\n"
+                f"• **Quyền hạn cấp theo Odoo:** `{roles_str}`\n\n"
+                f"✅ **Tài khoản của bạn đã được chứng minh và liên kết thành công.**\n"
+                f"Từ bây giờ, Trợ lý AI sẽ phục vụ bạn đúng theo phân quyền Odoo của bạn!\n\n"
+                f"💡 Hãy thử gõ: *'tôi là ai'*, *'tình hình pipeline'*, hoặc đặt câu hỏi bất kỳ."
+            )
+        else:
+            return (
+                f"❌ **XÁC THỰC THẤT BẠI!**\n\n"
+                f"Mật khẩu cho tài khoản Odoo `{stored_email}` không chính xác.\n"
+                f"Odoo Cloud đã từ chối quyền truy cập.\n\n"
+                f"🔒 **Chính sách an ninh:** Nếu bạn không phải là chủ sở hữu hoặc không có tài khoản trên Odoo, bạn sẽ không được cấp quyền.\n\n"
+                f"👉 Gõ lại Email của bạn hoặc gõ `/login` để thử lại."
+            )
+
+    # 2. Lệnh đăng nhập nhanh 1 dòng: /login <email> <mật_khẩu>
+    if query.startswith("/login") or query.startswith("login"):
+        # Xóa ngay tin nhắn chứa lệnh đăng nhập có mật khẩu
+        if msg_id and http_client:
+            asyncio.create_task(http_client.post(f"{API_BASE}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id}))
+
         parts = text.strip().split(maxsplit=2)
         if len(parts) >= 3:
             login_email = parts[1]
@@ -132,25 +170,26 @@ async def handle_user_query(text: str, user_name: str, chat_id: int) -> str:
                 return (
                     f"❌ **XÁC THỰC THẤT BẠI!**\n\n"
                     f"{msg}\n\n"
-                    f"🔒 **Bảo mật:** Hệ thống yêu cầu đúng mật khẩu hoặc API Key của tài khoản Odoo để chứng minh bạn là chủ sở hữu tài khoản. Mọi hành vi nhập email người khác mà không có mật khẩu đều bị từ chối."
+                    f"🔒 **Bảo mật:** Mật khẩu Odoo không chính xác. Mọi hành vi nhập email người khác mà không có mật khẩu đều bị từ chối."
                 )
         else:
-            return f"💡 Cú pháp: `/login <email_odoo> <mật_khẩu_odoo>`\nHoặc mở link: {auth_url}"
+            AUTH_PENDING_SESSIONS[chat_id] = {"stage": "email"}
+            return (
+                f"🔑 **BẮT ĐẦU ĐĂNG NHẬP ODOO ERP**\n\n"
+                f"Vui lòng gửi **Email tài khoản Odoo của bạn** vào đây:\n"
+                f"*(Ví dụ: `nam@haiminhtsc.vn` hoặc `hung@haiminhtsc.vn`)*"
+            )
 
-    # 2. Người dùng chỉ nhập email mà không có mật khẩu -> Yêu cầu vào link xác thực
+    # 3. Kịch bản Bước 1: Người dùng chưa xác thực nhập Email
     import re
     email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     if email_match and not employee:
+        found_email = email_match.group(0)
+        AUTH_PENDING_SESSIONS[chat_id] = {"email": found_email, "time": time.time()}
         return (
-            f"🔒 **CHỐNG GIẢ MẠO: YÊU CẦU XÁC THỰC TÀI KHOẢN ODOO**\n\n"
-            f"Hệ thống đã nhận diện email: `{email_match.group(0)}`.\n\n"
-            "⚠️ **Cảnh báo an ninh:** Để chống việc mạo danh nhân viên hoặc Ban Giám Đốc, hệ thống **tuyệt đối không cấp quyền** chỉ bằng việc nhập email.\n\n"
-            f"👉 **Vui lòng chọn 1 trong 2 cách sau để chứng minh bạn sở hữu tài khoản này:**\n\n"
-            f"1️⃣ **Bấm vào liên kết đăng nhập bảo mật Odoo Cloud:**\n"
-            f"🔗 [Bấm vào đây để Xác thực tài khoản Odoo]({auth_url})\n\n"
-            f"2️⃣ **Hoặc gõ trực tiếp:**\n"
-            f"`/login {email_match.group(0)} <mật_khẩu_odoo>`\n\n"
-            f"*Nếu nhập sai mật khẩu Odoo, hệ thống sẽ từ chối truy cập ngay lập tức.*"
+            f"📧 **Tài khoản Odoo:** `{found_email}`\n\n"
+            f"🔑 **BƯỚC 2: Vui lòng nhập MẬT KHẨU hoặc ODOO API KEY của tài khoản này để chứng minh quyền sở hữu:**\n\n"
+            f"🛡️ *An ninh tuyệt đối: Tin nhắn chứa mật khẩu của bạn sẽ được Bot TỰ ĐỘNG XÓA NGAY LẬP TỨC khỏi màn hình chat sau khi nhận.*"
         )
 
     # Chào hỏi (phản hồi siêu tốc 0ms)
@@ -169,16 +208,15 @@ async def handle_user_query(text: str, user_name: str, chat_id: int) -> str:
         else:
             return (
                 f"👋 Xin chào **{user_name}**!\n\n"
-                "Tôi là **Hopita AI Agent** - Trợ lý Điều hành tích hợp trực tiếp với hệ sinh thái **Odoo Cloud ERP**.\n\n"
+                "Tôi là **Hopita AI Agent** - Trợ lý Điều hành tích hợp trực tiếp hệ sinh thái **Odoo Cloud ERP**.\n\n"
                 f"Tài khoản Telegram của bạn (`{chat_id}`) hiện chưa được xác thực với bất kỳ tài khoản Odoo nào trong công ty.\n\n"
-                "🔒 **CHÍNH SÁCH BẢO MẬT DOANH NGHIỆP (ZERO-TRUST):**\n"
-                "Để tránh giả mạo danh tính nhân viên hoặc ban lãnh đạo, bạn phải xác thực quyền sở hữu tài khoản Odoo của mình:\n\n"
-                f"👉 **Bấm vào liên kết bảo mật để đăng nhập Odoo:**\n"
-                f"🔗 [Đăng Nhập Xác Thực Tài Khoản Odoo ERP]({auth_url})\n\n"
-                f"*(Hoặc gõ cú pháp: `/login <email_odoo> <mật_khẩu>`)*\n\n"
-                "⚖️ **Nguyên tắc phân quyền:**\n"
-                "• Nếu bạn đăng nhập đúng tài khoản Odoo: Bạn chỉ được cấp đúng các quyền theo tài khoản đó.\n"
-                "• Nếu sai mật khẩu hoặc không có tài khoản Odoo: Truy cập sẽ bị từ chối hoàn toàn."
+                "🔒 **QUY TRÌNH ĐĂNG NHẬP ODOO (CHỐNG GIẢ MẠO DANH TÍNH):**\n\n"
+                "👉 **Cách 1 (Nhanh nhất - Ngay trên chat):**\n"
+                "Hãy gửi **Email tài khoản Odoo của bạn** vào đây (ví dụ: `nam@haiminhtsc.vn` hoặc `hung@haiminhtsc.vn`). Bot sẽ hỏi mật khẩu và xác thực ngay với Odoo!\n\n"
+                "👉 **Cách 2 (Qua trang Web nội bộ):**\n"
+                f"🔗 [Bấm vào đây để Đăng Nhập Trên Web]({auth_url})\n\n"
+                "*(Hoặc gõ 1 dòng: `/login <email_odoo> <mật_khẩu>`)*\n\n"
+                "⚖️ *Chỉ tài khoản có mật khẩu Odoo hợp lệ mới được cấp quyền tương ứng.*"
             )
 
     # 2. Tra cứu thông tin định danh & quyền hạn cá nhân
@@ -414,6 +452,7 @@ async def main():
                         user_name = msg["from"].get("first_name") or msg["from"].get("username") or "Sếp"
                         text = msg.get("text", "")
 
+                        msg_id = msg.get("message_id")
                         print(f"\n📩 [Tin nhắn mới từ {user_name}]: {text}")
                         
                         # Gửi action 'đang gõ' ngay lập tức
@@ -423,21 +462,31 @@ async def main():
 
                         # Xử lý câu trả lời
                         t_start = time.time()
-                        reply = await handle_user_query(text, user_name, chat_id)
+                        reply = await handle_user_query(text, user_name, chat_id, msg_id=msg_id, http_client=http_client)
                         elapsed = time.time() - t_start
 
-                        # Gửi trả lời với Markdown, tự động fallback Text nếu lỗi Markdown
-                        send_resp = await http_client.post(f"{API_BASE}/sendMessage", json={
+                        # Chuẩn bị payload gửi tin nhắn
+                        send_payload = {
                             "chat_id": chat_id,
                             "text": reply,
                             "parse_mode": "Markdown"
-                        })
+                        }
+                        
+                        # Nếu tin nhắn chứa lời mời đăng nhập web, đính kèm nút bấm Inline Keyboard chính thức
+                        if "Đăng Nhập Trên Web" in reply:
+                            from app.services.odoo_auth_service import odoo_auth_service
+                            auth_url = odoo_auth_service.get_verification_url(chat_id)
+                            send_payload["reply_markup"] = {
+                                "inline_keyboard": [
+                                    [{"text": "🌐 Bấm Vào Đây Để Đăng Nhập Odoo", "url": auth_url}]
+                                ]
+                            }
+
+                        send_resp = await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
                         if not send_resp.json().get("ok"):
                             # Retry plain text if Markdown syntax fails
-                            await http_client.post(f"{API_BASE}/sendMessage", json={
-                                "chat_id": chat_id,
-                                "text": reply
-                            })
+                            send_payload.pop("parse_mode", None)
+                            await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
 
                         print(f"📤 [Đã trả lời trong {elapsed:.2f}s]:\n{reply[:80]}...")
             except asyncio.CancelledError:

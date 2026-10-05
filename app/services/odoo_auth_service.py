@@ -56,7 +56,15 @@ class OdooAuthService:
     def get_verification_url(self, chat_id: int) -> str:
         """Tạo URL xác thực Odoo cho người dùng."""
         token = self.generate_token(chat_id)
-        base_url = f"http://localhost:{self.settings.PORT}"
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            lan_ip = "192.168.1.97"
+        base_url = f"http://{lan_ip}:{self.settings.PORT}"
         return f"{base_url}/auth/odoo-verify?token={token}"
 
     async def authenticate_and_link(
