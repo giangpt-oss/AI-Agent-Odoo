@@ -1,0 +1,30 @@
+# Python & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+*.env
+!.env.example
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & DBs
+*.log
+*.sqlite3
+*.db
+qdrant_data/
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Archives
+_archive/
+_archive_hm_ai_agent_legacy/

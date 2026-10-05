@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # 1. AI Agent Backend (FastAPI + LangGraph Gateway)
+  # ----------------------------------------------------
+  ai-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: enterprise_ai_agent
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:odoo_agent_pwd@postgres:5432/ai_agent_db
+      - REDIS_URL=redis://redis:6379/0
+      - HOST=0.0.0.0
+      - PORT=8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agent_net
+
+  # ----------------------------------------------------
+  # 2. PostgreSQL (Persistent Storage for Audit, Employees, Tokens)
+  # ----------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: agent_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: odoo_agent_pwd
+      POSTGRES_DB: ai_agent_db
+    ports:
+      - "5433:5432"  # Dùng cổng ngoài 5433 để không xung đột với Odoo DB cục bộ
+    volumes:
+      - agent_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_agent_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agent_net
+
+  # ----------------------------------------------------
+  # 3. Redis (Cache, Kill Switch, Circuit Breaker)
+  # ----------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: agent_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"  # Dùng cổng ngoài 6380 để không xung đột
+    volumes:
+      - agent_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agent_net
+
+volumes:
+  agent_pg_data:
+    driver: local
+  agent_redis_data:
+    driver: local
+
+networks:
+  agent_net:
+    driver: bridge
