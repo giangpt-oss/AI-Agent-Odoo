@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 from app.connectors.telegram.client import get_telegram_connector
-from app.services.employee import DEV_EMPLOYEES_STORE
+from app.services.identity_store import identity_store
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class NotificationService:
         target_roles_set = set(target_roles)
 
         # Lấy danh sách nhân viên sở hữu roles mục tiêu
-        for chat_id, emp in DEV_EMPLOYEES_STORE.items():
+        for chat_id, emp in identity_store.list_profiles():
             emp_roles = set(emp.get("roles", []))
             if emp_roles.intersection(target_roles_set):
                 success = await self.telegram.send_message(

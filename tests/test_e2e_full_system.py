@@ -3,6 +3,8 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+
+pytestmark = pytest.mark.usefixtures("linked_employees")
 from app.security.kill_switch import kill_switch
 
 
@@ -27,7 +29,7 @@ async def test_e2e_scenario_1_authorized_read():
         with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_tg:
             mock_tg.return_value = True
 
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
                 resp = await client.post("/api/v1/telegram/webhook", json=payload)
                 assert resp.status_code == 200
                 data = resp.json()
@@ -55,7 +57,7 @@ async def test_e2e_scenario_2_unauthorized_action_auto_rejection():
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_tg:
         mock_tg.return_value = True
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp = await client.post("/api/v1/telegram/webhook", json=payload)
             assert resp.status_code == 200
             data = resp.json()
@@ -77,14 +79,14 @@ async def test_e2e_scenario_3_write_action_with_user_self_confirmation():
     turn1_payload = {
         "message": {
             "chat": {"id": 777777},
-            "text": "Tạo đơn hàng 50 triệu",
+            "text": "Tạo đơn hàng partner_id=42",
         }
     }
 
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_tg:
         mock_tg.return_value = True
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp1 = await client.post("/api/v1/telegram/webhook", json=turn1_payload)
             assert resp1.status_code == 200
 
@@ -106,7 +108,7 @@ async def test_e2e_scenario_3_write_action_with_user_self_confirmation():
         with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_tg:
             mock_tg.return_value = True
 
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
                 resp2 = await client.post("/api/v1/telegram/webhook", json=turn2_payload)
                 assert resp2.status_code == 200
 
@@ -132,7 +134,7 @@ async def test_e2e_scenario_4_kill_switch_active_protection():
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_tg:
         mock_tg.return_value = True
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp = await client.post("/api/v1/telegram/webhook", json=payload)
             assert resp.status_code == 200
             assert resp.json()["status"] == "kill_switch_active"

@@ -16,7 +16,8 @@ async def formatter_node(state: AgentState) -> dict[str, Any]:
     # 2. Nếu đã có final_response từ confirmation_guard (hỏi xác nhận hoặc đã hủy)
     existing_resp = state.get("final_response")
     if existing_resp and (
-        state.get("requires_user_confirmation")
+        state.get("missing_slots")
+        or state.get("requires_user_confirmation")
         or state.get("user_confirmed") is False
     ):
         return {

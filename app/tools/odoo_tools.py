@@ -23,7 +23,7 @@ class GetSalesOrdersTool(BaseTool):
 
     async def execute(self, context: ToolContext, **kwargs) -> ToolResult:
         validated = self.validate_args(**kwargs)
-        connector = get_odoo_connector()
+        connector = get_odoo_connector(context)
 
         domain = []
         if validated.partner_id:
@@ -74,7 +74,7 @@ class CreateSalesOrderTool(BaseTool):
 
     async def execute(self, context: ToolContext, **kwargs) -> ToolResult:
         validated = self.validate_args(**kwargs)
-        connector = get_odoo_connector()
+        connector = get_odoo_connector(context)
 
         values = {
             "partner_id": validated.partner_id,
@@ -123,7 +123,7 @@ class GetOpportunitiesTool(BaseTool):
 
     async def execute(self, context: ToolContext, **kwargs) -> ToolResult:
         validated = self.validate_args(**kwargs)
-        connector = get_odoo_connector()
+        connector = get_odoo_connector(context)
 
         domain = []
         if validated.query:
@@ -168,7 +168,7 @@ class GetPartnersTool(BaseTool):
 
     async def execute(self, context: ToolContext, **kwargs) -> ToolResult:
         validated = self.validate_args(**kwargs)
-        connector = get_odoo_connector()
+        connector = get_odoo_connector(context)
 
         domain = []
         if validated.query:
@@ -213,7 +213,7 @@ class GetEmployeesTool(BaseTool):
 
     async def execute(self, context: ToolContext, **kwargs) -> ToolResult:
         validated = self.validate_args(**kwargs)
-        connector = get_odoo_connector()
+        connector = get_odoo_connector(context)
 
         domain = []
         if validated.query:

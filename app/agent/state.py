@@ -38,3 +38,6 @@ class AgentState(TypedDict):
     tool_result: dict[str, Any] | None
     final_response: str | None
     error: str | None
+
+    confirmation_requested_at: float | None
+    confirmation_payload: dict[str, Any] | None

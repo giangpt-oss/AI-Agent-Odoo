@@ -98,21 +98,13 @@ class OdooAuthService:
         if not verified_uid or verified_uid <= 0:
             return False, None, "❌ Tài khoản Odoo không hợp lệ hoặc không có quyền truy cập."
 
-        # 2. Người dùng đã chứng minh sở hữu tài khoản Odoo!
-        # Dùng client hệ thống để truy xuất hồ sơ và các quyền hạn đã được gán trên Odoo
-        system_client = OdooAsyncClient(
-            base_url=self.settings.ODOO_URL,
-            db=self.settings.ODOO_DB,
-            username=self.settings.odoo_user,
-            api_key=self.settings.ODOO_API_KEY,
-            timeout=8.0
-        )
-        await system_client.authenticate()
-
+        # Read the profile using the authenticated user's ACL, never a service admin.
+        system_client = user_client
         full_name = clean_login
         job_title = "Nhân sự Odoo"
         department = "Công ty Hải Minh / Hopita"
 
+        emps = []
         # Tra cứu tên trong hr.employee
         try:
             emps = await system_client.execute_kw(
@@ -130,29 +122,29 @@ class OdooAuthService:
         except Exception as e:
             logger.warning(f"Không thể lấy hr.employee cho UID {verified_uid}: {e}")
 
-        # Tra cứu vai trò trong res.users
-        roles = ["employee"]
+        roles = []
+        groups = {
+            "base.group_user": "employee",
+            "base.group_system": "admin",
+            "sales_team.group_sale_salesman": "sales_user",
+            "sales_team.group_sale_manager": "sales_manager",
+            "hr.group_hr_user": "hr_user",
+            "hr.group_hr_manager": "hr_manager",
+        }
+        for group, role in groups.items():
+            try:
+                member = await user_client.execute_kw("res.users", "has_group", [[verified_uid], group], {})
+                if member is True:
+                    roles.append(role)
+            except Exception:
+                logger.warning("Could not verify Odoo group %s; permission not granted", group)
         try:
-            users = await system_client.execute_kw(
-                model='res.users',
-                method='search_read',
-                args=[[['id', '=', verified_uid]]],
-                kwargs={'fields': ['name', 'sale_team_id', 'is_hr_user', 'role'], 'limit': 1}
-            )
-            if users:
-                u = users[0]
-                if not emps:
-                    full_name = u.get('name') or full_name
-                if u.get('sale_team_id'):
-                    roles.extend(["sales_user", "sales_manager"])
-                if u.get('is_hr_user'):
-                    roles.append("hr_user")
-                if u.get('role') == 'group_system' or verified_uid == 27 or 'giangpt' in clean_login:
-                    roles.extend(["admin", "ceo", "sales_write"])
-        except Exception as e:
-            logger.warning(f"Không thể lấy res.users roles cho UID {verified_uid}: {e}")
-
-        roles = sorted(list(set(roles)))
+            users = await user_client.execute_kw("res.users", "read", [[verified_uid]], {"fields": ["name"]})
+            if users and not emps:
+                full_name = users[0].get("name") or full_name
+        except Exception:
+            logger.warning("Could not read authenticated user's display name")
+        roles = sorted(set(roles))
 
         profile = {
             "id": f"odoo-uid-{verified_uid}",
@@ -166,7 +158,8 @@ class OdooAuthService:
         }
 
         # 3. Gắn Telegram Chat ID vĩnh viễn với tài khoản Odoo đã xác thực
-        DEV_EMPLOYEES_STORE[chat_id] = profile
+        from app.services.identity_store import identity_store
+        identity_store.save(chat_id, profile, clean_login, clean_secret)
         logger.info(f"✅ ĐÃ XÁC THỰC THÀNH CÔNG: Chat ID {chat_id} -> Odoo UID {verified_uid} ({full_name}) - Roles: {roles}")
 
         return True, profile, "Xác thực thành công!"

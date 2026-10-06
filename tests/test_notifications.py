@@ -5,6 +5,8 @@ from httpx import AsyncClient, ASGITransport
 from app.services.notification import notification_service
 from app.main import app
 
+pytestmark = pytest.mark.usefixtures("linked_employees")
+
 
 @pytest.mark.asyncio
 async def test_notification_broadcast_to_roles():
@@ -58,7 +60,7 @@ async def test_api_odoo_webhook_endpoint():
         "assigned_chat_id": 777777,
     }
 
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
         resp = await client.post("/api/v1/webhooks/odoo", json=payload)
         assert resp.status_code == 200
         data = resp.json()

@@ -20,6 +20,9 @@ def route_after_permission(state: AgentState) -> Literal["confirmation_guard", "
     if not state.get("permission_granted", True):
         return "formatter"
 
+    if state.get("missing_slots"):
+        return "formatter"
+
     if state.get("is_write_action", False):
         return "confirmation_guard"
 

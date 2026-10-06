@@ -1,96 +1,48 @@
+import re
 from typing import Any
 from langchain_core.messages import HumanMessage
 from app.agent.state import AgentState
 
+CONFIRM_WORDS = {"đồng ý", "xác nhận", "yes", "ok", "confirm", "tiến hành"}
+CANCEL_WORDS = {"hủy", "huỷ", "hủy bỏ", "cancel", "thôi", "bỏ qua", "không", "không đồng ý"}
 
 async def analyzer_node(state: AgentState) -> dict[str, Any]:
-    """Phân tích tin nhắn của người dùng để bóc tách:
-    - Intent chính
-    - Các tham số (slot filling)
-    - Nhận biết có phải Write Action không
-    """
     messages = state.get("messages", [])
-    if not messages:
-        return {
-            "current_intent": "unknown",
-            "extracted_slots": {},
-            "missing_slots": [],
-            "is_write_action": False,
-            "pending_tool_name": None,
-            "pending_tool_args": None,
-        }
+    text = next((str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"), "")
+    lower = text.lower().strip()
+    if state.get("confirmation_requested_at") and state.get("pending_tool_name"):
+        if lower in CONFIRM_WORDS | CANCEL_WORDS:
+            return {"requires_user_confirmation": True, "user_confirmed": None, "tool_result": None, "error": None}
 
-    # Lấy tin nhắn người dùng mới nhất
-    last_user_msg = ""
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage) or getattr(msg, "type", "") == "human":
-            last_user_msg = str(msg.content)
-            break
-
-    lower_msg = last_user_msg.lower()
-
-    # Kiểm tra nếu là phản hồi cho bước xác nhận (Đồng ý / Hủy)
-    if state.get("requires_user_confirmation") or (state.get("pending_tool_name") and any(k in lower_msg for k in ["đồng ý", "xác nhận", "yes", "ok", "confirm", "hủy", "cancel", "thôi"])):
-        return {
-            "current_intent": state.get("current_intent") or "confirm_action",
-            "is_write_action": True,
-            "pending_tool_name": state.get("pending_tool_name"),
-            "pending_tool_args": state.get("pending_tool_args"),
-            "extracted_slots": state.get("extracted_slots", {}),
-            "missing_slots": [],
-            "requires_user_confirmation": False,
-        }
-    if any(k in lower_msg for k in ["đơn hàng", "sales order", "sale order", "đơn bán"]):
-        if any(w in lower_msg for w in ["tạo", "thêm", "create", "new"]):
-            # Write action: Tạo đơn hàng
-            return {
-                "current_intent": "create_sales_order",
-                "is_write_action": True,
-                "pending_tool_name": "create_sales_order",
-                "pending_tool_args": {"partner_id": 1, "amount_total": 50000000.0},
-                "extracted_slots": {"partner_id": 1, "amount_total": 50000000.0},
-                "missing_slots": [],
-                "requires_user_confirmation": True,
-            }
-        else:
-            # Read action: Xem đơn hàng
-            return {
-                "current_intent": "get_sales_orders",
-                "is_write_action": False,
-                "pending_tool_name": "get_sales_orders",
-                "pending_tool_args": {"query": last_user_msg, "limit": 5},
-                "extracted_slots": {"query": last_user_msg, "limit": 5},
-                "missing_slots": [],
-                "requires_user_confirmation": False,
-            }
-
-    if any(k in lower_msg for k in ["hóa đơn", "invoice"]):
-        return {
-            "current_intent": "get_invoices",
-            "is_write_action": False,
-            "pending_tool_name": "get_invoices",
-            "extracted_slots": {"query": last_user_msg},
-            "missing_slots": [],
-            "requires_user_confirmation": False,
-        }
-
-    if any(k in lower_msg for k in ["email", "gmail", "thư"]):
-        return {
-            "current_intent": "search_gmail",
-            "is_write_action": False,
-            "pending_tool_name": "search_gmail",
-            "extracted_slots": {"query": last_user_msg},
-            "missing_slots": [],
-            "requires_user_confirmation": False,
-        }
-
-    # Trường hợp câu hỏi chung / chưa khớp tool
-    return {
-        "current_intent": "general_chat",
-        "is_write_action": False,
-        "pending_tool_name": None,
-        "pending_tool_args": None,
-        "extracted_slots": {},
-        "missing_slots": [],
-        "requires_user_confirmation": False,
+    result = {
+        "current_intent": "general_chat", "extracted_slots": {}, "missing_slots": [],
+        "pending_tool_name": None, "pending_tool_args": None, "is_write_action": False,
+        "requires_user_confirmation": False, "user_confirmed": None, "tool_result": None,
+        "error": None, "final_response": None, "confirmation_requested_at": None,
+        "confirmation_payload": None,
     }
+    if any(k in lower for k in ["đơn hàng", "sales order", "sale order", "đơn bán"]):
+        if any(k in lower for k in ["tạo", "thêm", "create", "new"]):
+            args = {}
+            match = re.search(r"partner_id\s*[=:]\s*([1-9]\d*)", lower)
+            if match:
+                args["partner_id"] = int(match.group(1))
+            amount = re.search(r"(\d+(?:[.,]\d+)?)\s*(triệu|trieu|tỷ|ty|nghìn|nghin)", lower)
+            if amount:
+                scale = {"triệu": 10**6, "trieu": 10**6, "tỷ": 10**9, "ty": 10**9, "nghìn": 1000, "nghin": 1000}[amount.group(2)]
+                args["amount_total"] = float(amount.group(1).replace(",", ".")) * scale
+            missing = ([] if "partner_id" in args else ["partner_id"])
+            if amount:
+                missing.append("order_lines")
+            result.update(current_intent="create_sales_order", pending_tool_name="create_sales_order",
+                          pending_tool_args=args, extracted_slots=args, missing_slots=missing,
+                          is_write_action=True)
+            if missing:
+                result["final_response"] = "Chưa thể tạo đơn hàng: cần ID khách hàng đã xác minh (partner_id=...) và các dòng sản phẩm/số lượng/đơn giá nếu có giá trị đơn. Bot sẽ không tự chọn khách hoặc tự gán số tiền."
+            return result
+        result.update(current_intent="get_sales_orders", pending_tool_name="get_sales_orders",
+                      pending_tool_args={"limit": 5}, extracted_slots={"limit": 5})
+        return result
+    if any(k in lower for k in ["email", "gmail", "thư"]):
+        result.update(current_intent="search_gmail", pending_tool_name="search_gmail", extracted_slots={"query": text})
+    return result

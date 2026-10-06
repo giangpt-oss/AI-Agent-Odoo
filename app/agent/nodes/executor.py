@@ -29,9 +29,13 @@ async def executor_node(state: AgentState) -> dict[str, Any]:
 
     args = state.get("pending_tool_args") or state.get("extracted_slots", {})
 
+    if state.get("is_write_action") and not state.get("user_confirmed"):
+        return {"error": "User confirmation required", "tool_result": None}
     try:
         result = await tool.execute(context, **args)
         return {
+            "pending_tool_name": None, "pending_tool_args": None,
+            "confirmation_requested_at": None, "confirmation_payload": None,
             "tool_result": result.model_dump(),
             "error": result.error,
         }

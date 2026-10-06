@@ -23,10 +23,10 @@ async def telegram_webhook(
     settings = get_settings()
 
     # 1. Xác thực Secret Token từ Telegram
-    if settings.TELEGRAM_WEBHOOK_SECRET and settings.TELEGRAM_WEBHOOK_SECRET != "default-secret":
-        if x_telegram_bot_api_secret_token != settings.TELEGRAM_WEBHOOK_SECRET:
-            logger.warning("Invalid Telegram webhook secret token received")
-            raise HTTPException(status_code=403, detail="Invalid webhook secret token")
+    from secrets import compare_digest
+    secret = settings.TELEGRAM_WEBHOOK_SECRET
+    if not secret or secret == "default-secret" or not isinstance(x_telegram_bot_api_secret_token, str) or not compare_digest(x_telegram_bot_api_secret_token, secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret token")
 
     payload: dict[str, Any] = await request.json()
     message = payload.get("message")
@@ -35,6 +35,8 @@ async def telegram_webhook(
         return {"ok": True, "status": "ignored_non_message"}
 
     chat_id = message.get("chat", {}).get("id")
+    if message.get("chat", {}).get("type", "private") != "private":
+        return {"ok": True, "status": "private_chat_required"}
     user_text = message.get("text", "").strip()
 
     if not chat_id or not user_text:
@@ -65,7 +67,7 @@ async def telegram_webhook(
         return {"ok": True, "status": "unregistered_user"}
 
     # 3. Đưa vào LangGraph Orchestrator (Bảo toàn State qua Checkpointer)
-    thread_id = f"telegram-thread-{chat_id}"
+    thread_id = f"telegram-thread-{chat_id}-{employee['id']}"
     config = {"configurable": {"thread_id": thread_id}}
 
     existing_state = await agent_runnable.aget_state(config)
@@ -73,6 +75,8 @@ async def telegram_webhook(
         # Nếu đã có phiên trước đó, chỉ gửi tin nhắn mới để giữ nguyên pending_tool và confirmation state
         input_data = {
             "messages": [HumanMessage(content=user_text)],
+            "roles": employee["roles"],
+            "employee_id": employee["id"],
         }
     else:
         # Khởi tạo phiên mới

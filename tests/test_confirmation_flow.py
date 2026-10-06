@@ -16,7 +16,7 @@ async def test_write_action_triggers_user_confirmation():
         "employee_id": "emp-admin",
         "telegram_chat_id": 777777,
         "roles": ["sales_manager"],
-        "messages": [HumanMessage(content="Tạo đơn hàng 50 triệu cho khách ABC")],
+        "messages": [HumanMessage(content="Tạo đơn hàng partner_id=42")],
         "current_intent": None,
         "extracted_slots": {},
         "missing_slots": [],
@@ -54,7 +54,7 @@ async def test_user_confirms_and_executes():
         "employee_id": "emp-admin",
         "telegram_chat_id": 777777,
         "roles": ["sales_manager"],
-        "messages": [HumanMessage(content="Tạo đơn hàng 50 triệu")],
+        "messages": [HumanMessage(content="Tạo đơn hàng partner_id=42")],
         "current_intent": None,
         "extracted_slots": {},
         "missing_slots": [],
@@ -76,7 +76,7 @@ async def test_user_confirms_and_executes():
         "messages": [HumanMessage(content="Đồng ý")],
         "pending_tool_name": "create_sales_order",
         "is_write_action": True,
-        "pending_tool_args": {"partner_id": 1, "amount_total": 50000000},
+        "pending_tool_args": {"partner_id": 42},
     }
 
     with patch("app.tools.odoo_tools.get_odoo_connector") as mock_get_conn:
@@ -105,7 +105,9 @@ async def test_user_cancels_action():
         "is_write_action": True,
         "roles": ["sales_manager"],
         "permission_granted": True,
-        "pending_tool_args": {"partner_id": 1},
+        "pending_tool_args": {"partner_id": 42},
+        "confirmation_requested_at": __import__("time").time(),
+        "confirmation_payload": {"tool": "create_sales_order", "arguments": {"partner_id": 42}},
     }
 
     final_state = await agent_runnable.ainvoke(cancel_state, config=config)

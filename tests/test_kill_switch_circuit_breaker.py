@@ -10,6 +10,8 @@ from app.security.circuit_breaker import (
     CircuitBreakerOpenException,
 )
 from app.main import app
+
+pytestmark = pytest.mark.usefixtures("linked_employees")
 from app.core.config import get_settings
 
 
@@ -30,7 +32,7 @@ async def test_emergency_kill_switch_blocks_telegram():
 
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = True
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp = await client.post("/api/v1/telegram/webhook", json=payload)
             assert resp.status_code == 200
             data = resp.json()
@@ -80,7 +82,7 @@ async def test_system_status_and_admin_toggle_api():
     transport = ASGITransport(app=app)
     settings = get_settings()
 
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
         # 1. Status check
         status_resp = await client.get("/api/v1/system/status")
         assert status_resp.status_code == 200

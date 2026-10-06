@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Enterprise-AI-Agent"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     APP_SECRET_KEY: str = "change-this-super-secret-key-in-production-min-32-chars"
-    DEBUG: bool = True
+    DEBUG: bool = Field(default=False, validation_alias="APP_DEBUG")
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     ODOO_ADMIN_USERNAME: str = "bot_agent@company.com"
     ODOO_USERNAME: str | None = None
     ODOO_API_KEY: str = ""
+    ODOO_WEBHOOK_SECRET: str = ""
 
     @property
     def odoo_user(self) -> str:

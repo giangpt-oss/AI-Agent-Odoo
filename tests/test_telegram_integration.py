@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 
+pytestmark = pytest.mark.usefixtures("linked_employees")
+
 
 @pytest.mark.asyncio
 async def test_telegram_webhook_unregistered_user():
@@ -18,7 +20,7 @@ async def test_telegram_webhook_unregistered_user():
 
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = True
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp = await client.post("/api/v1/telegram/webhook", json=payload)
             assert resp.status_code == 200
             data = resp.json()
@@ -43,7 +45,7 @@ async def test_telegram_webhook_authorized_user_read_flow():
 
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = True
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp = await client.post("/api/v1/telegram/webhook", json=payload)
             assert resp.status_code == 200
             data = resp.json()
@@ -69,7 +71,7 @@ async def test_telegram_webhook_unauthorized_action_auto_rejection():
 
     with patch("app.connectors.telegram.client.TelegramConnector.send_message", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = True
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret", "X-Odoo-Webhook-Secret": "test-odoo-secret"}) as client:
             resp = await client.post("/api/v1/telegram/webhook", json=payload)
             assert resp.status_code == 200
             data = resp.json()

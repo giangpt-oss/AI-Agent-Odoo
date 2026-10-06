@@ -44,5 +44,14 @@ class AuditService:
                 f"tool={tool_name} status={status} error={error_message} (db_err={e})"
             )
 
+    @staticmethod
+    def log_external_action(action: str, skill: str, provider: str, resource_id: str, user_id: str, status: str) -> None:
+        """Ghi nhận log đồng bộ cho các hành động ra bên ngoài (Email/Calendar) per requirement 18."""
+        logger.info(
+            f"[EXTERNAL_ACTION_AUDIT] action={action} skill={skill} provider={provider} "
+            f"resource_id={resource_id} user_id={user_id} status={status}"
+        )
+
 
 audit_service = AuditService()
+audit_logger = audit_service

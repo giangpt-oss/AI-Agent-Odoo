@@ -104,5 +104,13 @@ class OdooConnector(BaseERPConnector):
 default_odoo_connector = OdooConnector()
 
 
-def get_odoo_connector() -> OdooConnector:
-    return default_odoo_connector
+def get_odoo_connector(context=None) -> OdooConnector:
+    if context is None:
+        return default_odoo_connector
+    from app.services.identity_store import identity_store
+    from app.connectors.odoo.client import OdooAccessDeniedException
+    linked = identity_store.get(context.telegram_chat_id)
+    if not linked or str(linked["profile"]["id"]) != str(context.employee_id):
+        raise OdooAccessDeniedException("Login required for this user")
+    settings = get_settings()
+    return OdooConnector(OdooAsyncClient(settings.ODOO_URL, settings.ODOO_DB, linked["login"], linked["credential"]))
