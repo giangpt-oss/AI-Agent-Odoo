@@ -9,13 +9,20 @@ class FileService:
     def __init__(self):
         self.workspace_root = Path(os.getcwd()).resolve()
 
+    @property
+    def data_dir(self) -> Path:
+        """Thư mục tập trung lưu trữ SQLite, ChromaDB và artifacts runtime."""
+        d = self.workspace_root / "data"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def get_safe_path(self, file_path: str) -> str:
         """Kiểm tra và chuẩn hóa đường dẫn, ngăn chặn path traversal."""
         path = (self.workspace_root / file_path).resolve()
         if not path.is_relative_to(self.workspace_root.resolve()):
             raise SkillPermissionError(f"Truy cập bị từ chối: Đường dẫn {file_path} nằm ngoài workspace.")
         relative = path.relative_to(self.workspace_root.resolve())
-        if any(part in {'.git', '.venv', '.agent_data', '__pycache__'} or part.startswith('.env') for part in relative.parts):
+        if any(part in {'.git', '.venv', '.agent_data', '__pycache__', 'data'} or part.startswith('.env') for part in relative.parts):
             raise SkillPermissionError("Truy cập bị từ chối: tệp cấu hình hoặc dữ liệu nội bộ.")
         return str(path)
         

@@ -277,15 +277,16 @@ async def handle_user_query(
             )
 
 
-    from app.agent.odoo_agent_service import odoo_agent_service
+    from app.assistant.company_assistant import company_assistant
     t0 = time.time()
     try:
-        response_text, generated_files, pending_conf = await odoo_agent_service.execute_agent_turn(
+        response_text, generated_files, pending_conf = await company_assistant.handle_user_turn(
             query=text,
             chat_id=chat_id,
-            employee=employee,
+            employee_raw=employee,
             user_name=user_name,
             attached_file_info=attached_file_info,
+            odoo_client=odoo_helper.client
         )
     except Exception as e:
         response_text = f"❌ Đã xảy ra lỗi khi kết nối Odoo Agent: {e}"
@@ -403,8 +404,9 @@ async def main():
                                 
                                 if cb_data.startswith("confirm_approve_"):
                                     conf_id = cb_data.replace("confirm_approve_", "")
-                                    from app.agent.odoo_agent_service import odoo_agent_service
-                                    reply = await odoo_agent_service.execute_confirmation(conf_id, chat_id, cbq["from"]["id"])
+                                    from app.assistant.company_assistant import company_assistant
+                                    action_res = await company_assistant.execute_approved_action(conf_id, chat_id, cbq["from"]["id"])
+                                    reply = action_res.to_markdown() if hasattr(action_res, "to_markdown") else str(action_res)
                                     await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": reply})
                                 elif cb_data.startswith("confirm_reject_"):
                                     conf_id = cb_data.replace("confirm_reject_", "")
@@ -506,92 +508,92 @@ async def main():
 
                         print(f"Received message id={msg_id}")
                         
-                        # Gửi action 'đang gõ' ngay lập tức
-                        asyncio.create_task(
-                            http_client.post(f"{API_BASE}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
-                        )
+                        # ⚡ CONCURRENT ASYNC DISPATCH: Xử lý song song không gây nghẽn cho các người dùng khác
+                        async def _process_single_message(p_text, p_user_name, p_chat_id, p_msg_id, p_attached_info):
+                            try:
+                                asyncio.create_task(
+                                    http_client.post(f"{API_BASE}/sendChatAction", json={"chat_id": p_chat_id, "action": "typing"})
+                                )
+                                t_start = time.time()
+                                raw_reply = await handle_user_query(
+                                    text=p_text,
+                                    user_name=p_user_name,
+                                    chat_id=p_chat_id,
+                                    msg_id=p_msg_id,
+                                    http_client=http_client,
+                                    attached_file_info=p_attached_info,
+                                )
+                                elapsed = time.time() - t_start
 
-                        # Xử lý câu trả lời
-                        t_start = time.time()
-                        raw_reply = await handle_user_query(
-                            text=text,
-                            user_name=user_name,
-                            chat_id=chat_id,
-                            msg_id=msg_id,
-                            http_client=http_client,
-                            attached_file_info=attached_file_info,
-                        )
-                        elapsed = time.time() - t_start
+                                if isinstance(raw_reply, tuple) and len(raw_reply) == 3:
+                                    reply, excel_files, pending_conf = raw_reply
+                                elif isinstance(raw_reply, tuple):
+                                    reply, excel_files = raw_reply[0], raw_reply[1]
+                                    pending_conf = None
+                                else:
+                                    reply, excel_files, pending_conf = raw_reply, [], None
 
-                        if isinstance(raw_reply, tuple) and len(raw_reply) == 3:
-                            reply, excel_files, pending_conf = raw_reply
-                        elif isinstance(raw_reply, tuple):
-                            reply, excel_files = raw_reply[0], raw_reply[1]
-                            pending_conf = None
-                        else:
-                            reply, excel_files, pending_conf = raw_reply, [], None
+                                send_payload = {
+                                    "chat_id": p_chat_id,
+                                    "text": reply,
+                                    "parse_mode": "Markdown"
+                                }
+                                
+                                if pending_conf:
+                                    conf_id = pending_conf.get("confirmation_id")
+                                    preview_data = pending_conf.get("preview", {})
+                                    reply += f"\n\n⚠️ **Cần xác nhận:** {pending_conf.get('skill')}\n{json.dumps(preview_data, ensure_ascii=False, indent=2)[:300]}"
+                                    send_payload["reply_markup"] = {
+                                        "inline_keyboard": [
+                                            [
+                                                {"text": "✅ Xác nhận", "callback_data": f"confirm_approve_{conf_id}"},
+                                                {"text": "❌ Hủy", "callback_data": f"confirm_reject_{conf_id}"}
+                                            ]
+                                        ]
+                                    }
+                                    
+                                if "Đăng Nhập Trên Web" in reply:
+                                    from app.services.odoo_auth_service import odoo_auth_service
+                                    auth_url = odoo_auth_service.get_verification_url(p_chat_id)
+                                    if "reply_markup" not in send_payload:
+                                        send_payload["reply_markup"] = {"inline_keyboard": []}
+                                    send_payload["reply_markup"]["inline_keyboard"].append([{"text": "🌐 Bấm Vào Đây Để Đăng Nhập Odoo", "url": auth_url}])
 
-                        # Chuẩn bị payload gửi tin nhắn
-                        send_payload = {
-                            "chat_id": chat_id,
-                            "text": reply,
-                            "parse_mode": "Markdown"
-                        }
-                        
-                        # Render Confirmation Inline Keyboard if any
-                        if pending_conf:
-                            conf_id = pending_conf.get("confirmation_id")
-                            preview_data = pending_conf.get("preview", {})
-                            reply += f"\n\n⚠️ **Cần xác nhận:** {pending_conf.get('skill')}\n{json.dumps(preview_data, ensure_ascii=False, indent=2)[:300]}"
-                            send_payload["reply_markup"] = {
-                                "inline_keyboard": [
-                                    [
-                                        {"text": "✅ Xác nhận", "callback_data": f"confirm_approve_{conf_id}"},
-                                        {"text": "❌ Hủy", "callback_data": f"confirm_reject_{conf_id}"}
-                                    ]
-                                ]
-                            }
-                            
-                        # Nếu tin nhắn chứa lời mời đăng nhập web, đính kèm nút bấm Inline Keyboard chính thức
-                        if "Đăng Nhập Trên Web" in reply:
-                            from app.services.odoo_auth_service import odoo_auth_service
-                            auth_url = odoo_auth_service.get_verification_url(chat_id)
-                            # Ensure we don't overwrite confirmation buttons if both exist
-                            if "reply_markup" not in send_payload:
-                                send_payload["reply_markup"] = {"inline_keyboard": []}
-                            send_payload["reply_markup"]["inline_keyboard"].append([{"text": "🌐 Bấm Vào Đây Để Đăng Nhập Odoo", "url": auth_url}])
+                                send_payload["text"] = reply[:4000]
+                                send_resp = await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
+                                if not send_resp.json().get("ok"):
+                                    send_payload.pop("parse_mode", None)
+                                    await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
 
-                        send_payload["text"] = reply[:4000]
-                        send_resp = await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
-                        if not send_resp.json().get("ok"):
-                            # Retry plain text if Markdown syntax fails
-                            send_payload.pop("parse_mode", None)
-                            await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
-
-                        # Nếu có file Excel được tạo ra, gửi file đính kèm ngay lập tức
-                        if excel_files:
-                            for ef in excel_files:
-                                if os.path.exists(ef):
-                                    ef_path = Path(ef)
-                                    print(f"📤 Đang gửi file Excel đính kèm: {ef_path.name}...")
-                                    with open(ef, "rb") as f_bytes:
-                                        await http_client.post(
-                                            f"{API_BASE}/sendDocument",
-                                            data={
-                                                "chat_id": chat_id,
-                                                "caption": f"📊 Báo cáo Excel: *{ef_path.name}*",
-                                                "parse_mode": "Markdown",
-                                            },
-                                            files={
-                                                "document": (
-                                                    ef_path.name,
-                                                    f_bytes.read(),
-                                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                if excel_files:
+                                    for ef in excel_files:
+                                        if os.path.exists(ef):
+                                            ef_path = Path(ef)
+                                            print(f"📤 Đang gửi file Excel đính kèm: {ef_path.name}...")
+                                            with open(ef, "rb") as f_bytes:
+                                                await http_client.post(
+                                                    f"{API_BASE}/sendDocument",
+                                                    data={
+                                                        "chat_id": p_chat_id,
+                                                        "caption": f"📊 Báo cáo Excel: *{ef_path.name}*",
+                                                        "parse_mode": "Markdown",
+                                                    },
+                                                    files={
+                                                        "document": (
+                                                            ef_path.name,
+                                                            f_bytes.read(),
+                                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                                        )
+                                                    }
                                                 )
-                                            }
-                                        )
 
-                        print(f"📤 [Đã trả lời trong {elapsed:.2f}s]:\n{reply[:80]}...")
+                                print(f"📤 [Đã trả lời cho {p_user_name} trong {elapsed:.2f}s]:\n{reply[:80]}...")
+                            except Exception as err:
+                                print(f"❌ Lỗi xử lý tin nhắn của {p_user_name}: {err}")
+
+                        asyncio.create_task(
+                            _process_single_message(text, user_name, chat_id, msg_id, attached_file_info)
+                        )
             except asyncio.CancelledError:
                 break
             except Exception as e:

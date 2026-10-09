@@ -7,7 +7,7 @@ from app.knowledge.models import KnowledgeSource, IndexingJob
 
 class KnowledgeMetadataStore:
     def __init__(self):
-        self.db_path = Path(file_service.workspace_root) / "knowledge.db"
+        self.db_path = file_service.data_dir / "knowledge.db"
         self._init_db()
         
     def _init_db(self):
@@ -79,6 +79,26 @@ class KnowledgeMetadataStore:
                     updated_at=row[9], indexed_at=row[10], version=row[11], state=row[12], hash=row[13]
                 )
         return None
+
+    def get_sources_by_ids(self, source_ids: List[str]) -> Dict[str, KnowledgeSource]:
+        """Khử N+1 query: Lấy danh sách nhiều sources cùng lúc trong 1 câu SQL duy nhất."""
+        if not source_ids:
+            return {}
+        unique_ids = list(set(filter(None, source_ids)))
+        if not unique_ids:
+            return {}
+        result = {}
+        placeholders = ",".join("?" for _ in unique_ids)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(f"SELECT * FROM sources WHERE source_id IN ({placeholders})", tuple(unique_ids))
+            for row in cursor.fetchall():
+                src = KnowledgeSource(
+                    source_id=row[0], source_type=row[1], title=row[2], path=row[3], external_id=row[4],
+                    workspace_id=row[5], owner_id=row[6], mime_type=row[7], created_at=row[8],
+                    updated_at=row[9], indexed_at=row[10], version=row[11], state=row[12], hash=row[13]
+                )
+                result[src.source_id] = src
+        return result
 
     def delete_source(self, source_id: str) -> None:
         with sqlite3.connect(self.db_path) as conn:

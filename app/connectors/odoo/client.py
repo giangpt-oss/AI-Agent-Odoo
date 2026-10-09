@@ -15,6 +15,23 @@ class OdooAccessDeniedException(OdooAPIException):
     pass
 
 
+_SHARED_ODOO_CLIENTS: dict[float, httpx.AsyncClient] = {}
+_GLOBAL_ODOO_READ_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def get_shared_odoo_http_client(timeout: float = 15.0) -> httpx.AsyncClient:
+    """Tái sử dụng HTTP connection pool với Keep-Alive thay vì tạo mới liên tục."""
+    global _SHARED_ODOO_CLIENTS
+    client = _SHARED_ODOO_CLIENTS.get(timeout)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50)
+        )
+        _SHARED_ODOO_CLIENTS[timeout] = client
+    return client
+
+
 class OdooAsyncClient:
     """Async HTTP Client giao tiếp với Odoo Cloud qua JSON-RPC / External API."""
 
@@ -40,7 +57,7 @@ class OdooAsyncClient:
         return self._request_counter
 
     async def call_jsonrpc(self, service: str, method: str, *args, **kwargs) -> Any:
-        """Gửi JSON-RPC payload tới Odoo endpoint."""
+        """Gửi JSON-RPC payload tới Odoo endpoint dùng Connection Pool tái sử dụng."""
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -52,21 +69,21 @@ class OdooAsyncClient:
             "id": self._next_id(),
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    self.endpoint,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                response.raise_for_status()
-                data = response.json()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429:
-                    raise OdooAPIException("CODE_429_RATE_LIMITED: Odoo Cloud đang bị quá tải.")
-                raise OdooAPIException(f"HTTP Error từ Odoo: {e.response.status_code}")
-            except httpx.RequestError as e:
-                raise OdooAPIException(f"Lỗi kết nối tới Odoo Cloud: {str(e)}")
+        client = get_shared_odoo_http_client(self.timeout)
+        try:
+            response = await client.post(
+                self.endpoint,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                raise OdooAPIException("CODE_429_RATE_LIMITED: Odoo Cloud đang bị quá tải.")
+            raise OdooAPIException(f"HTTP Error từ Odoo: {e.response.status_code}")
+        except httpx.RequestError as e:
+            raise OdooAPIException(f"Lỗi kết nối tới Odoo Cloud: {str(e)}")
 
         if "error" in data:
             err = data["error"]
@@ -100,11 +117,26 @@ class OdooAsyncClient:
         return self.uid
 
     async def execute_kw(self, model: str, method: str, args: list[Any], kwargs: dict[str, Any] | None = None) -> Any:
-        """Gọi execute_kw trên Model của Odoo."""
+        """Gọi execute_kw trên Model của Odoo với TTL caching tự động cho search_read / search_count."""
         if self.uid is None:
             await self.authenticate()
 
-        return await self.call_jsonrpc(
+        # Cache layer cho các truy vấn đọc (TTL 3 phút)
+        is_cacheable = method in ("search_read", "search_count")
+        cache_key = None
+        if is_cacheable:
+            import time
+            import hashlib
+            key_raw = f"{self.db}:{self.uid}:{model}:{method}:{args}:{kwargs}"
+            cache_key = hashlib.md5(key_raw.encode("utf-8", errors="ignore")).hexdigest()
+            now = time.time()
+            if cache_key in _GLOBAL_ODOO_READ_CACHE:
+                cached_time, cached_data = _GLOBAL_ODOO_READ_CACHE[cache_key]
+                if now - cached_time < 180.0:  # 3 phút TTL
+                    logger.debug(f"⚡ [CACHE HIT] {model}.{method} (trả kết quả tức thì)")
+                    return cached_data
+
+        result = await self.call_jsonrpc(
             "object",
             "execute_kw",
             self.db,
@@ -115,3 +147,10 @@ class OdooAsyncClient:
             args,
             kwargs or {},
         )
+
+        if is_cacheable and cache_key:
+            import time
+            _GLOBAL_ODOO_READ_CACHE[cache_key] = (time.time(), result)
+
+        return result
+

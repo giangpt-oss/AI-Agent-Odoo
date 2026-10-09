@@ -30,7 +30,9 @@ async def test_langgraph_read_permission_granted():
 
     from unittest.mock import AsyncMock, patch
     config = {"configurable": {"thread_id": "telegram-chat-999999"}}
-    with patch("app.connectors.odoo.connector.OdooConnector.search_read", new_callable=AsyncMock) as mock_odoo:
+    from app.connectors.odoo.connector import default_odoo_connector
+    with patch("app.tools.odoo_tools.get_odoo_connector", return_value=default_odoo_connector), \
+         patch("app.connectors.odoo.connector.OdooConnector.search_read", new_callable=AsyncMock) as mock_odoo:
         mock_odoo.return_value = [{"id": 1, "name": "SO001"}]
         final_state = await agent_runnable.ainvoke(initial_state, config=config)
 

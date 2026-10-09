@@ -29,11 +29,11 @@ Thumbs.db
 _archive/
 _archive_hm_ai_agent_legacy/
 
-# Private persisted credentials
+# Runtime & Local Data Storage
+data/
 .agent_data/
-
-# Vector DB & Local Storage
 chroma_db/
 exports/
 scratch/
 scratch_prompt.txt
+qdrant_data/

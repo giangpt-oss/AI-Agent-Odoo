@@ -8,7 +8,7 @@ from app.services.file_service import file_service
 
 class LocalReminderProvider(ReminderProvider):
     def __init__(self, db_path=None, user_id=None, chat_id=None):
-        self.db_path = db_path or (Path(file_service.workspace_root) / "reminders.db")
+        self.db_path = db_path or (file_service.data_dir / "reminders.db")
         self.user_id = str(user_id) if user_id is not None else None
         self.chat_id = chat_id
         self._init_db()
@@ -27,6 +27,8 @@ class LocalReminderProvider(ReminderProvider):
             for name, definition in {"user_id": "TEXT", "chat_id": "INTEGER", "attempts": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if name not in columns:
                     conn.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_status_remind ON reminders(status, remind_at)")
 
     def _owner(self):
         if not self.user_id:

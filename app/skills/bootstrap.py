@@ -13,11 +13,17 @@ def build_default_registry() -> SkillRegistry:
         from app.skills.odoo.crm_skill import OdooCrmSkill
         from app.skills.odoo.partner_skill import OdooPartnerSkill
         from app.skills.odoo.profile_skill import UserProfileSkill
+        from app.skills.odoo.product_skill import OdooProductSkill
+        from app.skills.odoo.order_skill import OdooOrderSkill
+        from app.skills.odoo.universal_query_skill import OdooUniversalQuerySkill
         
         registry.register(OdooHrSkill())
         registry.register(OdooCrmSkill())
         registry.register(OdooPartnerSkill())
         registry.register(UserProfileSkill())
+        registry.register(OdooProductSkill())
+        registry.register(OdooOrderSkill())
+        registry.register(OdooUniversalQuerySkill())
     except Exception as e:
         logger.error(f"Lỗi đăng ký Odoo skills: {e}")
         

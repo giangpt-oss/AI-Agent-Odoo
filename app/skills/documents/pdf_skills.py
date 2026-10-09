@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 from app.skills.base import BaseSkill
 from app.models.skill import SkillCategory, OperationType
@@ -21,7 +22,7 @@ class PdfReadSkill(BaseSkill):
     output_schema = {"type": "object"}
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
-        return pdf_service.read_pdf(kwargs["filepath"], kwargs.get("page_number"))
+        return await asyncio.to_thread(pdf_service.read_pdf, kwargs["filepath"], kwargs.get("page_number"))
 
 class PdfMergeSkill(BaseSkill):
     name = "merge_pdfs"
@@ -40,7 +41,7 @@ class PdfMergeSkill(BaseSkill):
     output_schema = {"type": "string"}
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
-        return pdf_service.merge_pdfs(kwargs["filepaths"], kwargs["output_path"])
+        return await asyncio.to_thread(pdf_service.merge_pdfs, kwargs["filepaths"], kwargs["output_path"])
 
 class PdfSplitSkill(BaseSkill):
     name = "split_pdf"
@@ -59,7 +60,7 @@ class PdfSplitSkill(BaseSkill):
     output_schema = {"type": "array"}
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
-        return pdf_service.split_pdf(kwargs["filepath"], kwargs["output_dir"])
+        return await asyncio.to_thread(pdf_service.split_pdf, kwargs["filepath"], kwargs["output_dir"])
 
 class PdfExtractSkill(BaseSkill):
     name = "extract_pdf_pages"
@@ -79,7 +80,7 @@ class PdfExtractSkill(BaseSkill):
     output_schema = {"type": "string"}
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
-        return pdf_service.extract_pages(kwargs["filepath"], kwargs["output_path"], kwargs["pages"])
+        return await asyncio.to_thread(pdf_service.extract_pages, kwargs["filepath"], kwargs["output_path"], kwargs["pages"])
 
 class PdfRotateSkill(BaseSkill):
     name = "rotate_pdf_pages"
@@ -100,4 +101,4 @@ class PdfRotateSkill(BaseSkill):
     output_schema = {"type": "string"}
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
-        return pdf_service.rotate_pages(kwargs["filepath"], kwargs["output_path"], kwargs["degrees"], kwargs.get("pages"))
+        return await asyncio.to_thread(pdf_service.rotate_pages, kwargs["filepath"], kwargs["output_path"], kwargs["degrees"], kwargs.get("pages"))

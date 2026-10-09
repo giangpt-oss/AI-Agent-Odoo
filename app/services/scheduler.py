@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class SchedulerService:
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or (Path(file_service.workspace_root) / "reminders.db")
+        self.db_path = db_path or (file_service.data_dir / "reminders.db")
         from app.providers.reminders.local import LocalReminderProvider
         LocalReminderProvider(self.db_path)  # apply non-destructive schema migration
         self.notification_provider = TelegramNotificationProvider()

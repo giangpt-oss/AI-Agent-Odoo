@@ -12,7 +12,7 @@ from app.agent.confirmation_manager import confirmation_manager
 logger = logging.getLogger(__name__)
 
 class AgentOrchestrator:
-    def __init__(self, ai_client: genai.Client, router: SkillRouter, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, ai_client: genai.Client, router: SkillRouter, model_name: str = "gemini-3.5-flash-lite"):
         self.ai_client = ai_client
         self.router = router
         self.model_name = model_name

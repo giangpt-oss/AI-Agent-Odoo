@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     DEFAULT_LLM_PROVIDER: Literal["gemini", "openai"] = "gemini"
-    DEFAULT_LLM_MODEL: str = "gemini-2.5-flash"
+    DEFAULT_LLM_MODEL: str = "gemini-3.5-flash-lite"
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = ""

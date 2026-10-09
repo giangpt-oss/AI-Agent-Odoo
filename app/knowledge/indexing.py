@@ -94,6 +94,9 @@ class ChunkingStrategy:
 
 class KnowledgeIndexingService:
     
+    def __init__(self):
+        self._semaphore = asyncio.Semaphore(3)
+
     def _get_file_hash(self, path: str) -> str:
         h = hashlib.md5()
         try:
@@ -101,8 +104,21 @@ class KnowledgeIndexingService:
                 for chunk in iter(lambda: f.read(4096), b""):
                     h.update(chunk)
             return h.hexdigest()
-        except:
+        except Exception:
             return ""
+
+    def _sync_parse_and_chunk(self, safe_path: str, src_type: SourceType, source_id: str) -> List[KnowledgeChunk]:
+        """Thực thi parsing và chunking trong Worker Thread riêng biệt để không block Event Loop."""
+        if src_type == SourceType.PDF:
+            return ChunkingStrategy.chunk_pdf(safe_path, source_id)
+        elif src_type == SourceType.DOCX:
+            return ChunkingStrategy.chunk_docx(safe_path, source_id)
+        elif src_type == SourceType.SPREADSHEET:
+            return ChunkingStrategy.chunk_spreadsheet(safe_path, source_id)
+        else:
+            with open(safe_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            return ChunkingStrategy.chunk_text(text, source_id)
 
     async def index_file(self, path: str, workspace_id: str, owner_id: str) -> bool:
         safe_path = file_service.get_safe_path(path)
@@ -118,11 +134,11 @@ class KnowledgeIndexingService:
         else:
             return False # Unsupported
             
-        file_hash = self._get_file_hash(safe_path)
+        file_hash = await asyncio.to_thread(self._get_file_hash, safe_path)
         title = os.path.basename(safe_path)
         
         # Check if exists and unchanged
-        existing = metadata_store.get_source_by_path(path, workspace_id)
+        existing = await asyncio.to_thread(metadata_store.get_source_by_path, path, workspace_id)
         if existing:
             if existing.hash == file_hash and existing.state == IndexState.INDEXED:
                 # Unchanged
@@ -142,24 +158,14 @@ class KnowledgeIndexingService:
                 state=IndexState.INDEXING
             )
             
-        metadata_store.upsert_source(source)
+        await asyncio.to_thread(metadata_store.upsert_source, source)
         
-        # Parse and Chunk
-        chunks = []
-        if src_type == SourceType.PDF:
-            chunks = ChunkingStrategy.chunk_pdf(safe_path, source.source_id)
-        elif src_type == SourceType.DOCX:
-            chunks = ChunkingStrategy.chunk_docx(safe_path, source.source_id)
-        elif src_type == SourceType.SPREADSHEET:
-            chunks = ChunkingStrategy.chunk_spreadsheet(safe_path, source.source_id)
-        else:
-            with open(safe_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            chunks = ChunkingStrategy.chunk_text(text, source.source_id)
+        # Parse and Chunk in Worker Thread (Không block Event Loop)
+        chunks = await asyncio.to_thread(self._sync_parse_and_chunk, safe_path, src_type, source.source_id)
             
         if not chunks:
             source.state = IndexState.FAILED
-            metadata_store.upsert_source(source)
+            await asyncio.to_thread(metadata_store.upsert_source, source)
             return False
             
         # Embed
@@ -168,16 +174,16 @@ class KnowledgeIndexingService:
         
         # Remove old chunks in Vector DB if re-indexing
         if existing:
-            default_vector_store.delete_source(source.source_id)
+            await asyncio.to_thread(default_vector_store.delete_source, source.source_id)
             
-        # Upsert new chunks
-        default_vector_store.upsert(chunks, embeddings)
+        # Upsert new chunks in thread
+        await asyncio.to_thread(default_vector_store.upsert, chunks, embeddings)
         
         # Update metadata
         source.state = IndexState.INDEXED
         source.indexed_at = datetime.now().isoformat()
         source.updated_at = datetime.now().isoformat()
-        metadata_store.upsert_source(source)
+        await asyncio.to_thread(metadata_store.upsert_source, source)
         return True
 
     async def run_indexing_job(self, job_id: str, paths: List[str], workspace_id: str, owner_id: str):
@@ -187,18 +193,19 @@ class KnowledgeIndexingService:
         job.status = "RUNNING"
         metadata_store.update_job(job)
         
-        success = 0
-        for i, path in enumerate(paths):
-            try:
-                if await self.index_file(path, workspace_id, owner_id):
-                    success += 1
-            except Exception as e:
-                print(f"Index error on {path}: {e}")
-            job.progress = int(((i + 1) / len(paths)) * 100)
+        async with self._semaphore:
+            success = 0
+            for i, path in enumerate(paths):
+                try:
+                    if await self.index_file(path, workspace_id, owner_id):
+                        success += 1
+                except Exception as e:
+                    print(f"Index error on {path}: {e}")
+                job.progress = int(((i + 1) / len(paths)) * 100)
+                metadata_store.update_job(job)
+                
+            job.status = "COMPLETED"
+            job.finished_at = datetime.now().isoformat()
             metadata_store.update_job(job)
-            
-        job.status = "COMPLETED"
-        job.finished_at = datetime.now().isoformat()
-        metadata_store.update_job(job)
 
 indexing_service = KnowledgeIndexingService()

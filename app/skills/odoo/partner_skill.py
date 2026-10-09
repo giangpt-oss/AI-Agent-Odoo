@@ -5,14 +5,17 @@ from app.models.context import SkillExecutionContext
 
 class OdooPartnerSkill(BaseSkill):
     name = "get_partners_and_customers"
-    description = "Tra cứu danh bạ khách hàng, nhà cung cấp và đối tác từ Odoo Contacts."
+    description = "Tra cứu thông tin chi tiết, tổng số lượng và danh bạ khách hàng, bệnh viện, công ty, đối tác, nhà cung cấp, thông tin liên hệ từ Odoo Contacts (res.partner)."
     category = SkillCategory.ODOO
-    capabilities = ["odoo", "contacts", "partners"]
+    capabilities = [
+        "odoo", "contacts", "partners", "customers", "liên hệ", "khách hàng",
+        "đối tác", "công ty", "bệnh viện", "doanh nghiệp", "nhà cung cấp", "thông tin công ty"
+    ]
     operation_type = OperationType.READ
     input_schema = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Tên khách hàng, đối tác, số điện thoại hoặc email cần tìm kiếm", "default": ""},
+            "query": {"type": "string", "description": "Tên khách hàng, tên công ty, bệnh viện, đối tác, số điện thoại, mã số thuế hoặc email cần tìm", "default": ""},
             "limit": {"type": "integer", "description": "Số lượng đối tác tối đa cần lấy (mặc định 20)", "default": 20},
             "export_to_excel": {"type": "boolean", "description": "Đặt thành True nếu người dùng yêu cầu xuất file Excel", "default": False}
         }
@@ -41,19 +44,28 @@ class OdooPartnerSkill(BaseSkill):
 
         domain = []
         if query:
-            domain = ["|", "|", ["name", "ilike", query], ["email", "ilike", query], ["phone", "ilike", query]]
+            domain = ["|", "|", "|", ["name", "ilike", query], ["email", "ilike", query], ["phone", "ilike", query], ["vat", "ilike", query]]
+
+        total_count = await odoo_client.execute_kw(
+            "res.partner",
+            "search_count",
+            [domain],
+            {}
+        )
         records = await odoo_client.execute_kw(
             "res.partner",
             "search_read",
             [domain],
-            {"fields": ["name", "email", "phone", "city"], "limit": limit, "order": "id desc"}
+            {"fields": ["name", "email", "phone", "street", "city", "vat", "company_type"], "limit": limit, "order": "id desc"}
         )
         partners_list = [
             {
                 "name": p.get("name"),
                 "email": p.get("email") or "Chưa có",
                 "phone": p.get("phone") or "Chưa có",
-                "city": p.get("city") or "N/A"
+                "address": f"{p.get('street') or ''}, {p.get('city') or ''}".strip(", "),
+                "vat": p.get("vat") or "Chưa cập nhật",
+                "type": "Doanh nghiệp / Tổ chức" if p.get("company_type") == "company" else "Cá nhân"
             } for p in records
         ]
 
@@ -75,7 +87,8 @@ class OdooPartnerSkill(BaseSkill):
             excel_info = f"Đã tự động tạo file Excel '{Path(fpath).name}' đính kèm gửi cho người dùng."
 
         return {
-            "count": len(records),
+            "total_count": total_count,
+            "count_returned": len(records),
             "partners": partners_list,
             "excel_export": excel_info,
         }

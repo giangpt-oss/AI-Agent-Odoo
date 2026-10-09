@@ -26,7 +26,7 @@ class HealthCheckService:
             
         # 2. Database (SQLite general check)
         try:
-            db_path = root / "tasks.db"
+            db_path = file_service.data_dir / "tasks.db"
             if db_path.exists():
                 with sqlite3.connect(db_path) as conn:
                     conn.execute("SELECT 1")

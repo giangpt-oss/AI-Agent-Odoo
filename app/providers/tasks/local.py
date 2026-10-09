@@ -10,7 +10,7 @@ from pathlib import Path
 
 class LocalTaskProvider(TaskProvider):
     def __init__(self):
-        self.db_path = Path(file_service.workspace_root) / "tasks.db"
+        self.db_path = file_service.data_dir / "tasks.db"
         self._init_db()
 
     def _init_db(self):

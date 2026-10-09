@@ -13,28 +13,33 @@ class GmailProvider(EmailProvider):
             "Content-Type": "application/json"
         }
 
+    def _get_client(self) -> httpx.AsyncClient:
+        if not hasattr(self, "_client") or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=15.0)
+        return self._client
+
     async def list_messages(self, limit: int = 10, page_token: str = None) -> Dict[str, Any]:
         params = {"maxResults": limit}
         if page_token:
             params["pageToken"] = page_token
             
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}/messages", headers=self.headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = self._get_client()
+        resp = await client.get(f"{self.base_url}/messages", headers=self.headers, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     async def search_messages(self, query: str, limit: int = 10) -> Dict[str, Any]:
         params = {"q": query, "maxResults": limit}
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}/messages", headers=self.headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = self._get_client()
+        resp = await client.get(f"{self.base_url}/messages", headers=self.headers, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     async def get_message(self, message_id: str) -> Dict[str, Any]:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}/messages/{message_id}?format=full", headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()
+        client = self._get_client()
+        resp = await client.get(f"{self.base_url}/messages/{message_id}?format=full", headers=self.headers)
+        resp.raise_for_status()
+        return resp.json()
 
     def _create_raw_message(self, to: List[str], subject: str, body: str, cc: List[str] = None, reply_to_message_id: str = None) -> str:
         msg = EmailMessage()
@@ -54,23 +59,21 @@ class GmailProvider(EmailProvider):
         raw = self._create_raw_message(to, subject, body, cc, reply_to_message_id)
         payload = {"message": {"raw": raw}}
         
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}/drafts", headers=self.headers, json=payload)
-            resp.raise_for_status()
-            return resp.json().get("id")
+        client = self._get_client()
+        resp = await client.post(f"{self.base_url}/drafts", headers=self.headers, json=payload)
+        resp.raise_for_status()
+        return resp.json().get("id")
 
     async def send_message(self, to: List[str], subject: str, body: str, cc: List[str] = None, attachments: List[str] = None) -> str:
-        # Note: attachments implementation would require multipart/mixed. Simplified here for P1A.
         raw = self._create_raw_message(to, subject, body, cc)
         payload = {"raw": raw}
         
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}/messages/send", headers=self.headers, json=payload)
-            resp.raise_for_status()
-            return resp.json().get("id")
+        client = self._get_client()
+        resp = await client.post(f"{self.base_url}/messages/send", headers=self.headers, json=payload)
+        resp.raise_for_status()
+        return resp.json().get("id")
 
     async def reply_message(self, original_message_id: str, thread_id: str, body: str, attachments: List[str] = None) -> str:
-        # Get original message to fetch 'To' and 'Subject'
         orig = await self.get_message(original_message_id)
         headers = orig.get("payload", {}).get("headers", [])
         subject = next((h["value"] for h in headers if h["name"] == "Subject"), "")
@@ -81,14 +84,14 @@ class GmailProvider(EmailProvider):
         raw = self._create_raw_message(to, subject, body, reply_to_message_id=original_message_id)
         payload = {"raw": raw, "threadId": thread_id}
         
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}/messages/send", headers=self.headers, json=payload)
-            resp.raise_for_status()
-            return resp.json().get("id")
+        client = self._get_client()
+        resp = await client.post(f"{self.base_url}/messages/send", headers=self.headers, json=payload)
+        resp.raise_for_status()
+        return resp.json().get("id")
 
     async def archive_message(self, message_id: str) -> bool:
         payload = {"removeLabelIds": ["INBOX"]}
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}/messages/{message_id}/modify", headers=self.headers, json=payload)
-            resp.raise_for_status()
-            return True
+        client = self._get_client()
+        resp = await client.post(f"{self.base_url}/messages/{message_id}/modify", headers=self.headers, json=payload)
+        resp.raise_for_status()
+        return True

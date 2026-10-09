@@ -25,8 +25,8 @@ class OdooHrSkill(BaseSkill):
         export_to_excel = kwargs.get("export_to_excel", False)
         
         roles = context.session.roles
-        is_admin = bool({"admin", "ceo"}.intersection(set(roles)))
-        if not is_admin:
+        is_authorized = bool({"admin", "ceo", "hr_user", "hr_manager"}.intersection(set(roles))) or "READ_ODOO_HR" in context.session.permissions
+        if not is_authorized:
             return {
                 "status": "error",
                 "code": 403,
@@ -40,6 +40,13 @@ class OdooHrSkill(BaseSkill):
         domain = []
         if department:
             domain.append(["department_id.name", "ilike", department])
+
+        total_employees_count = await odoo_client.execute_kw(
+            "hr.employee",
+            "search_count",
+            [domain],
+            {}
+        )
         emps = await odoo_client.execute_kw(
             "hr.employee",
             "search_read",
@@ -81,8 +88,9 @@ class OdooHrSkill(BaseSkill):
             excel_info = f"Đã tự động tạo file Excel '{Path(fpath).name}' đính kèm gửi cho người dùng."
 
         return {
-            "total_official_employees": len(emps),
+            "total_official_employees": total_employees_count,
             "total_system_users": users_count,
+            "count_returned": len(emps),
             "employees": clean_emps,
             "excel_export": excel_info,
         }

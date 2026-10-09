@@ -51,7 +51,7 @@ class TranslationSkill(BaseSkill):
             import asyncio
             response = await asyncio.to_thread(
                 ai_client.models.generate_content,
-                model="gemini-2.5-flash",
+                model="gemini-3.5-flash-lite",
                 contents=prompt
             )
             return {"translated_text": response.text}
@@ -95,7 +95,7 @@ class ProofreadingSkill(BaseSkill):
             import asyncio
             response = await asyncio.to_thread(
                 ai_client.models.generate_content,
-                model="gemini-2.5-flash",
+                model="gemini-3.5-flash-lite",
                 contents=prompt,
                 config={"response_mime_type": "application/json"}
             )

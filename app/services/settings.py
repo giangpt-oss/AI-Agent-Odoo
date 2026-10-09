@@ -6,7 +6,7 @@ from app.services.file_service import file_service
 
 class SettingsService:
     def __init__(self):
-        self.db_path = Path(file_service.workspace_root) / "settings.db"
+        self.db_path = file_service.data_dir / "settings.db"
         self._init_db()
 
     def _init_db(self):

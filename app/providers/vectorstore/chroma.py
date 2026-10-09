@@ -10,7 +10,7 @@ from app.services.file_service import file_service
 
 class ChromaVectorStore(VectorStore):
     def __init__(self, collection_name: str = "knowledge_base"):
-        self.db_dir = Path(file_service.workspace_root) / "chroma_db"
+        self.db_dir = file_service.data_dir / "chroma_db"
         self.db_dir.mkdir(exist_ok=True)
         
         self.client = chromadb.PersistentClient(

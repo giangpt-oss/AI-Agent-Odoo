@@ -11,12 +11,18 @@ from app.api.v1.router import api_v1_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Quản lý khởi tạo và dọn dẹp tài nguyên (DB Pool, Redis, v.v.)."""
+    """Quản lý khởi tạo và dọn dẹp tài nguyên (DB Pool, Redis, Scheduler v.v.)."""
     settings = get_settings()
     print(f"[*] Starting {settings.APP_NAME} in [{settings.APP_ENV}] mode...")
-    # Điểm hook cho DB & Redis connect ở Phase 4
+    
+    # Khởi động Scheduler Service cho thông báo nhắc hẹn
+    from app.services.scheduler import scheduler_service
+    scheduler_service.start()
+    
     yield
+    
     print(f"[*] Shutting down {settings.APP_NAME}...")
+    scheduler_service.stop()
 
 
 def create_application() -> FastAPI:

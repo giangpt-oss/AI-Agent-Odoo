@@ -8,7 +8,7 @@ from app.services.file_service import file_service
 
 class ProviderAccountManager:
     def __init__(self):
-        self.db_path = Path(file_service.workspace_root) / "accounts.db"
+        self.db_path = file_service.data_dir / "accounts.db"
         self._init_db()
 
     def _init_db(self):

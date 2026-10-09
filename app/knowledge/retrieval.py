@@ -15,22 +15,27 @@ class HybridSearchService:
             for k, v in filters.items():
                 chroma_filters[k] = v
                 
-        # 3. Search Vector Store
-        raw_results = default_vector_store.search(
+        # 3. Search Vector Store (Đẩy sang thread để không chặn Event Loop)
+        import asyncio
+        raw_results = await asyncio.to_thread(
+            default_vector_store.search,
             query_embedding=query_embedding,
-            top_k=top_k * 2, # Get more for reranking
+            top_k=top_k * 2,  # Get more for reranking
             filters=chroma_filters
         )
         
         if not raw_results:
             return []
             
-        # 4. Filter by workspace & Build Results
+        # 4. Filter by workspace & Build Results (Khử N+1 query)
+        all_source_ids = [r["metadata"].get("source_id") for r in raw_results if r.get("metadata")]
+        sources_map = metadata_store.get_sources_by_ids(all_source_ids)
+
         results = []
         for r in raw_results:
             meta = r["metadata"]
             source_id = meta.get("source_id")
-            source = metadata_store.get_source(source_id)
+            source = sources_map.get(source_id)
             
             # Workspace Isolation Enforced Here
             if not source or source.workspace_id != workspace_id:

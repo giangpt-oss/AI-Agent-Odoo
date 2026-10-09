@@ -24,36 +24,38 @@ class DocumentSearchSkill(BaseSkill):
     output_schema = {"type": "array"}
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
+        import asyncio
         query = kwargs["query"].lower()
         extension = kwargs.get("extension", "").lower()
         dir_path = kwargs.get("directory", ".")
         
         safe_dir = file_service.get_safe_path(dir_path)
-        results = []
-        
-        for root, dirs, files in os.walk(safe_dir):
-            for file in files:
-                if extension and not file.lower().endswith(extension):
-                    continue
-                
-                # Search by filename
-                if query in file.lower():
-                    rel_path = str(Path(os.path.join(root, file)).relative_to(file_service.workspace_root))
-                    results.append({"path": rel_path, "match_type": "filename"})
-                    continue
+
+        def _do_search():
+            results = []
+            for root, dirs, files in os.walk(safe_dir):
+                for file in files:
+                    if extension and not file.lower().endswith(extension):
+                        continue
                     
-                # Basic text search for small files
-                # Note: Skipping large files and binaries to avoid slow search
-                if file.lower().endswith(('.txt', '.md', '.csv', '.json')):
-                    try:
-                        filepath = os.path.join(root, file)
-                        if os.path.getsize(filepath) < 1024 * 1024: # max 1MB
-                            with open(filepath, 'r', encoding='utf-8') as f:
-                                content = f.read().lower()
-                                if query in content:
-                                    rel_path = str(Path(filepath).relative_to(file_service.workspace_root))
-                                    results.append({"path": rel_path, "match_type": "content"})
-                    except Exception:
-                        pass
+                    # Search by filename
+                    if query in file.lower():
+                        rel_path = str(Path(os.path.join(root, file)).relative_to(file_service.workspace_root))
+                        results.append({"path": rel_path, "match_type": "filename"})
+                        continue
                         
-        return results
+                    # Basic text search for small files
+                    if file.lower().endswith(('.txt', '.md', '.csv', '.json')):
+                        try:
+                            filepath = os.path.join(root, file)
+                            if os.path.getsize(filepath) < 1024 * 1024: # max 1MB
+                                with open(filepath, 'r', encoding='utf-8') as f:
+                                    content = f.read().lower()
+                                    if query in content:
+                                        rel_path = str(Path(filepath).relative_to(file_service.workspace_root))
+                                        results.append({"path": rel_path, "match_type": "content"})
+                        except Exception:
+                            pass
+            return results
+                        
+        return await asyncio.to_thread(_do_search)

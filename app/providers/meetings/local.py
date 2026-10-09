@@ -10,7 +10,7 @@ from pathlib import Path
 
 class LocalMeetingRepository(MeetingRepository):
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or (Path(file_service.workspace_root) / "meetings.db")
+        self.db_path = db_path or (file_service.data_dir / "meetings.db")
         self._init_db()
 
     def _init_db(self):

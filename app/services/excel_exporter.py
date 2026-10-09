@@ -7,7 +7,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "exports"
+EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "exports"
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 

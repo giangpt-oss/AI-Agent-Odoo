@@ -4,6 +4,15 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 
+def trim_messages_reducer(existing: list[BaseMessage], new: list[BaseMessage]) -> list[BaseMessage]:
+    """Giới hạn lịch sử hội thoại tối đa 20 tin nhắn gần nhất để ngăn MemorySaver phình to RAM."""
+    all_msgs = add_messages(existing, new)
+    MAX_HISTORY = 20
+    if len(all_msgs) > MAX_HISTORY:
+        return all_msgs[-MAX_HISTORY:]
+    return all_msgs
+
+
 class AgentState(TypedDict):
     """Trạng thái lõi của AI Agent truyền qua lại giữa các nodes trong LangGraph."""
 
@@ -13,8 +22,8 @@ class AgentState(TypedDict):
     telegram_chat_id: int
     roles: list[str]  # Ví dụ: ["sales_user", "inventory_viewer"]
 
-    # 2. Lịch sử tin nhắn
-    messages: Annotated[list[BaseMessage], add_messages]
+    # 2. Lịch sử tin nhắn (Được kiểm soát độ dài tối đa 20 messages)
+    messages: Annotated[list[BaseMessage], trim_messages_reducer]
 
     # 3. Ý định & Tham số trích xuất (Slot-filling)
     current_intent: str | None

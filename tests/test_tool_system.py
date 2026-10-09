@@ -71,7 +71,9 @@ async def test_langgraph_full_flow_with_tool_execution():
         {"id": 102, "name": "SO00102", "amount_total": 12000000},
     ]
 
-    with patch("app.connectors.odoo.connector.OdooConnector.search_read", new_callable=AsyncMock) as mock_odoo:
+    from app.connectors.odoo.connector import default_odoo_connector
+    with patch("app.tools.odoo_tools.get_odoo_connector", return_value=default_odoo_connector), \
+         patch("app.connectors.odoo.connector.OdooConnector.search_read", new_callable=AsyncMock) as mock_odoo:
         mock_odoo.return_value = mock_records
         final_state = await agent_runnable.ainvoke(initial_state, config=config)
 
