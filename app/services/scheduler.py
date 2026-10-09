@@ -70,90 +70,103 @@ class SchedulerService:
 
         due_reminders = await asyncio.to_thread(_get_due_reminders)
         
-        for rem_id, title, remind_at_str, tz_str, recurrence, chat_id in due_reminders:
-            if not isinstance(chat_id, int) or chat_id <= 0:
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.execute("UPDATE reminders SET status = 'NEEDS_OWNER' WHERE id = ?", (rem_id,))
-                continue
-            # 1. Atomic lock/transition to PENDING_DELIVERY to prevent double trigger
-            def _lock_reminder():
-                with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.execute("UPDATE reminders SET status = 'PENDING_DELIVERY', attempts = attempts + 1 WHERE id = ? AND (status = 'SCHEDULED' OR status = 'RETRYING')", (rem_id,))
-                    conn.commit()
-                    return cursor.rowcount > 0
-                    
-            if await asyncio.to_thread(_lock_reminder):
-                try:
-                    success = await self.notification_provider.send_notification(str(chat_id), f"🔔 LỜI NHẮC:\n{title}")
-                except Exception:
-                    # Delivery may have succeeded before the connection broke. Do not blindly resend.
-                    logger.exception("Reminder delivery status uncertain: %s", rem_id)
-                    with sqlite3.connect(self.db_path) as conn:
-                        conn.execute("UPDATE reminders SET status = 'DELIVERY_UNKNOWN' WHERE id = ?", (rem_id,))
-                    continue
+        if not due_reminders:
+            return
 
-                # 2. Update final status and recurrence
-                def _finalize_reminder():
-                    from datetime import timedelta
-                    import calendar
-                    
-                    if not success:
-                        new_status = "RETRYING"
+        dispatch_semaphore = asyncio.Semaphore(10)
+
+        async def _dispatch_reminder(item):
+            rem_id, title, remind_at_str, tz_str, recurrence, chat_id = item
+            async with dispatch_semaphore:
+                if not isinstance(chat_id, int) or chat_id <= 0:
+                    def _mark_needs_owner():
                         with sqlite3.connect(self.db_path) as conn:
-                            conn.execute("UPDATE reminders SET status = CASE WHEN attempts >= 3 THEN 'FAILED' ELSE 'RETRYING' END WHERE id = ?", (rem_id,))
-                            conn.commit()
+                            conn.execute("UPDATE reminders SET status = 'NEEDS_OWNER' WHERE id = ?", (rem_id,))
+                    await asyncio.to_thread(_mark_needs_owner)
+                    return
+
+                # 1. Atomic lock/transition to PENDING_DELIVERY to prevent double trigger
+                def _lock_reminder():
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.execute(
+                            "UPDATE reminders SET status = 'PENDING_DELIVERY', attempts = attempts + 1 "
+                            "WHERE id = ? AND (status = 'SCHEDULED' OR status = 'RETRYING')",
+                            (rem_id,)
+                        )
+                        conn.commit()
+                        return cursor.rowcount > 0
+                        
+                if await asyncio.to_thread(_lock_reminder):
+                    try:
+                        success = await self.notification_provider.send_notification(str(chat_id), f"🔔 LỜI NHẮC:\n{title}")
+                    except Exception:
+                        # Delivery may have succeeded before the connection broke. Do not blindly resend.
+                        logger.exception("Reminder delivery status uncertain: %s", rem_id)
+                        def _mark_delivery_unknown():
+                            with sqlite3.connect(self.db_path) as conn:
+                                conn.execute("UPDATE reminders SET status = 'DELIVERY_UNKNOWN' WHERE id = ?", (rem_id,))
+                        await asyncio.to_thread(_mark_delivery_unknown)
                         return
 
-                    # Triggered successfully
-                    if recurrence:
-                        # calculate next occurrence
-                        rem_dt = datetime.fromisoformat(remind_at_str)
-                        if rem_dt.tzinfo is None:
-                            rem_dt = rem_dt.replace(tzinfo=zoneinfo.ZoneInfo(tz_str))
-                            
-                        # Advance until in the future
-                        now_dt = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo(tz_str))
-                        next_dt = rem_dt
+                    # 2. Update final status and recurrence
+                    def _finalize_reminder():
+                        from datetime import timedelta
+                        import calendar
                         
-                        while next_dt <= now_dt:
-                            if recurrence == "daily":
-                                next_dt += timedelta(days=1)
-                            elif recurrence == "weekly":
-                                next_dt += timedelta(days=7)
-                            elif recurrence == "weekdays":
-                                next_dt += timedelta(days=1)
-                                while next_dt.weekday() > 4: # 5: Sat, 6: Sun
-                                    next_dt += timedelta(days=1)
-                            elif recurrence == "monthly":
-                                # simple add roughly 30 days or calculate properly
-                                month = next_dt.month
-                                year = next_dt.year
-                                month += 1
-                                if month > 12:
-                                    month = 1
-                                    year += 1
-                                # handle day out of range
-                                last_day = calendar.monthrange(year, month)[1]
-                                day = min(next_dt.day, last_day)
-                                next_dt = next_dt.replace(year=year, month=month, day=day)
-                            else:
-                                break
-                        
-                        if next_dt > now_dt:
+                        if not success:
                             with sqlite3.connect(self.db_path) as conn:
-                                # Create next instance or update this one. Let's just update this one to act as a standing reminder.
-                                conn.execute("UPDATE reminders SET status = 'SCHEDULED', attempts = 0, remind_at = ? WHERE id = ?", (next_dt.isoformat(), rem_id))
+                                conn.execute("UPDATE reminders SET status = CASE WHEN attempts >= 3 THEN 'FAILED' ELSE 'RETRYING' END WHERE id = ?", (rem_id,))
                                 conn.commit()
+                            return
+
+                        # Triggered successfully
+                        if recurrence:
+                            # calculate next occurrence
+                            rem_dt = datetime.fromisoformat(remind_at_str)
+                            if rem_dt.tzinfo is None:
+                                rem_dt = rem_dt.replace(tzinfo=zoneinfo.ZoneInfo(tz_str))
+                                
+                            # Advance until in the future
+                            now_dt = datetime.now(timezone.utc).astimezone(zoneinfo.ZoneInfo(tz_str))
+                            next_dt = rem_dt
+                            
+                            while next_dt <= now_dt:
+                                if recurrence == "daily":
+                                    next_dt += timedelta(days=1)
+                                elif recurrence == "weekly":
+                                    next_dt += timedelta(days=7)
+                                elif recurrence == "weekdays":
+                                    next_dt += timedelta(days=1)
+                                    while next_dt.weekday() > 4: # 5: Sat, 6: Sun
+                                        next_dt += timedelta(days=1)
+                                elif recurrence == "monthly":
+                                    month = next_dt.month
+                                    year = next_dt.year
+                                    month += 1
+                                    if month > 12:
+                                        month = 1
+                                        year += 1
+                                    last_day = calendar.monthrange(year, month)[1]
+                                    day = min(next_dt.day, last_day)
+                                    next_dt = next_dt.replace(year=year, month=month, day=day)
+                                else:
+                                    break
+                            
+                            if next_dt > now_dt:
+                                with sqlite3.connect(self.db_path) as conn:
+                                    conn.execute("UPDATE reminders SET status = 'SCHEDULED', attempts = 0, remind_at = ? WHERE id = ?", (next_dt.isoformat(), rem_id))
+                                    conn.commit()
+                            else:
+                                with sqlite3.connect(self.db_path) as conn:
+                                    conn.execute("UPDATE reminders SET status = 'TRIGGERED' WHERE id = ?", (rem_id,))
+                                    conn.commit()
                         else:
-                            # Fallback if unhandled
                             with sqlite3.connect(self.db_path) as conn:
                                 conn.execute("UPDATE reminders SET status = 'TRIGGERED' WHERE id = ?", (rem_id,))
                                 conn.commit()
-                    else:
-                        with sqlite3.connect(self.db_path) as conn:
-                            conn.execute("UPDATE reminders SET status = 'TRIGGERED' WHERE id = ?", (rem_id,))
-                            conn.commit()
 
-                await asyncio.to_thread(_finalize_reminder)
+                    await asyncio.to_thread(_finalize_reminder)
+
+        await asyncio.gather(*[_dispatch_reminder(item) for item in due_reminders])
 
 scheduler_service = SchedulerService()

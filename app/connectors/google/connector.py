@@ -45,28 +45,31 @@ class GoogleConnector:
         if not items:
             return []
 
-        # Tải chi tiết các email song song cùng lúc thay vì tuần tự
+        # Tải chi tiết các email song song nhưng bọc Semaphore(5) để chống nghẽn quota / 429 Too Many Requests
+        fetch_semaphore = asyncio.Semaphore(5)
+
         async def _fetch_single_message(item_dict: dict[str, Any]) -> dict[str, Any] | None:
             msg_id = item_dict.get("id")
-            try:
-                detail_resp = await client.get(
-                    f"{GOOGLE_GMAIL_API_URL}/messages/{msg_id}",
-                    headers=headers,
-                    params={"format": "metadata"},
-                )
-                if detail_resp.status_code == 200:
-                    detail = detail_resp.json()
-                    headers_list = detail.get("payload", {}).get("headers", [])
-                    subject = next((h["value"] for h in headers_list if h["name"].lower() == "subject"), "(Không có tiêu đề)")
-                    sender = next((h["value"] for h in headers_list if h["name"].lower() == "from"), "Unknown")
-                    return {
-                        "id": msg_id,
-                        "subject": subject,
-                        "from": sender,
-                        "snippet": detail.get("snippet", ""),
-                    }
-            except Exception as e:
-                logger.warning(f"Error fetching detail for message {msg_id}: {e}")
+            async with fetch_semaphore:
+                try:
+                    detail_resp = await client.get(
+                        f"{GOOGLE_GMAIL_API_URL}/messages/{msg_id}",
+                        headers=headers,
+                        params={"format": "metadata"},
+                    )
+                    if detail_resp.status_code == 200:
+                        detail = detail_resp.json()
+                        headers_list = detail.get("payload", {}).get("headers", [])
+                        subject = next((h["value"] for h in headers_list if h["name"].lower() == "subject"), "(Không có tiêu đề)")
+                        sender = next((h["value"] for h in headers_list if h["name"].lower() == "from"), "Unknown")
+                        return {
+                            "id": msg_id,
+                            "subject": subject,
+                            "from": sender,
+                            "snippet": detail.get("snippet", ""),
+                        }
+                except Exception as e:
+                    logger.warning(f"Error fetching detail for message {msg_id}: {e}")
             return None
 
         tasks = [_fetch_single_message(item) for item in items]

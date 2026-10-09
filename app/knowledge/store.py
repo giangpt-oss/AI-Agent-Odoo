@@ -38,9 +38,13 @@ class KnowledgeMetadataStore:
                     progress INTEGER,
                     created_at TEXT NOT NULL,
                     finished_at TEXT,
-                    error TEXT
+                    error TEXT,
+                    payload TEXT
                 )
             """)
+            job_cols = {r[1] for r in conn.execute("PRAGMA table_info(indexing_jobs)")}
+            if "payload" not in job_cols:
+                conn.execute("ALTER TABLE indexing_jobs ADD COLUMN payload TEXT")
             conn.commit()
 
     def upsert_source(self, source: KnowledgeSource) -> None:
@@ -118,25 +122,43 @@ class KnowledgeMetadataStore:
             ]
             
     def update_job(self, job: IndexingJob) -> None:
+        payload_str = json.dumps(job.payload) if job.payload else None
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO indexing_jobs 
-                (job_id, type, status, progress, created_at, finished_at, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (job_id, type, status, progress, created_at, finished_at, error, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                job.job_id, job.type, job.status, job.progress, job.created_at, job.finished_at, job.error
+                job.job_id, job.type, job.status, job.progress, job.created_at, job.finished_at, job.error, payload_str
             ))
             conn.commit()
             
     def get_job(self, job_id: str) -> Optional[IndexingJob]:
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT * FROM indexing_jobs WHERE job_id = ?", (job_id,))
+            cursor = conn.execute("SELECT job_id, type, status, progress, created_at, finished_at, error, payload FROM indexing_jobs WHERE job_id = ?", (job_id,))
             row = cursor.fetchone()
             if row:
+                payload = json.loads(row[7]) if row[7] else None
                 return IndexingJob(
                     job_id=row[0], type=row[1], status=row[2], progress=row[3], 
-                    created_at=row[4], finished_at=row[5], error=row[6]
+                    created_at=row[4], finished_at=row[5], error=row[6], payload=payload
                 )
         return None
+
+    def get_pending_or_interrupted_jobs(self) -> List[IndexingJob]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT job_id, type, status, progress, created_at, finished_at, error, payload "
+                "FROM indexing_jobs WHERE status IN ('PENDING', 'RUNNING') ORDER BY created_at ASC"
+            )
+            rows = cursor.fetchall()
+            jobs = []
+            for row in rows:
+                payload = json.loads(row[7]) if row[7] else None
+                jobs.append(IndexingJob(
+                    job_id=row[0], type=row[1], status=row[2], progress=row[3], 
+                    created_at=row[4], finished_at=row[5], error=row[6], payload=payload
+                ))
+            return jobs
 
 metadata_store = KnowledgeMetadataStore()

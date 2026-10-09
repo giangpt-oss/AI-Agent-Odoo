@@ -33,20 +33,25 @@ class KnowledgeIndexSkill(BaseSkill):
     
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         paths = kwargs["paths"]
-        # Trigger background indexing
+        # Trigger persistent background indexing
         import uuid
         from app.knowledge.models import IndexingJob
-        job = IndexingJob(job_id=f"job_{uuid.uuid4().hex[:8]}", type="INDEX", status="PENDING")
+        workspace_id = context.session.workspace_id if hasattr(context.session, 'workspace_id') else "default"
+        owner_id = context.session.user_id
+        job = IndexingJob(
+            job_id=f"job_{uuid.uuid4().hex[:8]}",
+            type="INDEX",
+            status="PENDING",
+            payload={"paths": paths, "workspace_id": workspace_id, "owner_id": owner_id}
+        )
         await asyncio.to_thread(metadata_store.update_job, job)
         
-        # Dispatch to background (asyncio.create_task)
-        asyncio.create_task(
-            indexing_service.run_indexing_job(
-                job.job_id, 
-                paths, 
-                context.session.workspace_id if hasattr(context.session, 'workspace_id') else "default",
-                context.session.user_id
-            )
+        # Enqueue job vào worker có cơ chế tự phục hồi sau restart
+        await indexing_service.enqueue_indexing_job(
+            job.job_id, 
+            paths, 
+            workspace_id,
+            owner_id
         )
         return {"status": "SUCCESS", "message": f"Đã bắt đầu lập chỉ mục {len(paths)} tài liệu chạy ngầm.", "job_id": job.job_id}
 

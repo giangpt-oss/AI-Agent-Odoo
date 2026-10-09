@@ -56,6 +56,7 @@ class IndexingJob(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     finished_at: Optional[str] = None
     error: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
 
 class SearchResult(BaseModel):
     chunk_id: str

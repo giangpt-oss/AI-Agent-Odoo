@@ -1,5 +1,6 @@
 import os
 import hashlib
+import logging
 from datetime import datetime
 from typing import List, Optional
 import asyncio
@@ -13,6 +14,8 @@ from app.services.file_service import file_service
 import pypdf
 import docx
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 class ChunkingStrategy:
     MAX_TOKENS_ESTIMATE = 1000 # Roughly 4 chars per token, so ~4000 chars
@@ -96,6 +99,48 @@ class KnowledgeIndexingService:
     
     def __init__(self):
         self._semaphore = asyncio.Semaphore(3)
+        self._queue: Optional[asyncio.Queue] = None
+        self._worker_task: Optional[asyncio.Task] = None
+
+    def _ensure_worker(self):
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._queue_worker_loop())
+
+    async def _queue_worker_loop(self):
+        # 1. Phục hồi các jobs bị gián đoạn (PENDING / RUNNING) từ SQLite sau khi restart
+        try:
+            pending_jobs = await asyncio.to_thread(metadata_store.get_pending_or_interrupted_jobs)
+            for j in pending_jobs:
+                if j.payload and "paths" in j.payload:
+                    logger.info(f"Phục hồi indexing job chưa hoàn thành từ SQLite: {j.job_id}")
+                    await self.run_indexing_job(
+                        j.job_id,
+                        j.payload["paths"],
+                        j.payload.get("workspace_id", "default"),
+                        j.payload.get("owner_id", "system")
+                    )
+        except Exception as e:
+            logger.error(f"Lỗi khi khôi phục indexing jobs từ SQLite: {e}")
+
+        # 2. Xử lý các jobs tiếp theo từ queue
+        while True:
+            try:
+                job_id, paths, workspace_id, owner_id = await self._queue.get()
+                await self.run_indexing_job(job_id, paths, workspace_id, owner_id)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Lỗi trong queue worker loop: {e}")
+            finally:
+                if self._queue:
+                    self._queue.task_done()
+
+    async def enqueue_indexing_job(self, job_id: str, paths: List[str], workspace_id: str, owner_id: str):
+        """Đưa job vào hàng đợi và kích hoạt worker với cơ chế tự phục hồi sau restart."""
+        self._ensure_worker()
+        await self._queue.put((job_id, paths, workspace_id, owner_id))
 
     def _get_file_hash(self, path: str) -> str:
         h = hashlib.md5()

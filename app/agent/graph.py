@@ -1,3 +1,5 @@
+import logging
+import sqlite3
 from typing import Literal
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import Checkpoint, CheckpointMetadata, ChannelVersions
@@ -10,6 +12,9 @@ from app.agent.nodes.permission_guard import permission_guard_node
 from app.agent.nodes.confirmation import confirmation_guard_node
 from app.agent.nodes.executor import executor_node
 from app.agent.nodes.formatter import formatter_node
+from app.services.file_service import file_service
+
+logger = logging.getLogger(__name__)
 
 
 class BoundedMemorySaver(MemorySaver):
@@ -37,6 +42,52 @@ class BoundedMemorySaver(MemorySaver):
             for tid in list(self.storage.keys())[:excess]:
                 self.delete_thread(tid)
         return res
+
+
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    class PersistentSqliteSaver(SqliteSaver):
+        """SqliteSaver hỗ trợ cả synchronous lẫn asynchronous invocation (ainvoke / astream / aget_state).
+        Lưu vết checkpoint bền vững trên đĩa SQLite (data/checkpoints.db), tồn tại qua các lần restart process
+        và chia sẻ trạng thái đồng bộ giữa nhiều worker tiến trình.
+        """
+
+        async def aget_tuple(self, config):
+            return self.get_tuple(config)
+
+        async def aput(self, config, checkpoint, metadata, new_versions):
+            return self.put(config, checkpoint, metadata, new_versions)
+
+        async def aput_writes(self, config, writes, task_id, task_path=""):
+            return self.put_writes(config, writes, task_id, task_path)
+
+        async def alist(self, config, *, filter=None, before=None, limit=None):
+            for item in self.list(config, filter=filter, before=before, limit=limit):
+                yield item
+
+        async def adelete_thread(self, thread_id: str):
+            return self.delete_thread(thread_id)
+except ImportError:
+    PersistentSqliteSaver = None
+
+
+def get_default_checkpointer():
+    """Khởi tạo Checkpointer bền vững qua SQLite (data/checkpoints.db).
+    - Lưu vết session bền vững trên đĩa, tồn tại qua các lần restart process.
+    - Chia sẻ chung checkpoint giữa nhiều worker tiến trình.
+    - Fallback an toàn về BoundedMemorySaver nếu môi trường không khả dụng.
+    """
+    if PersistentSqliteSaver is not None:
+        try:
+            db_path = file_service.data_dir / "checkpoints.db"
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            saver = PersistentSqliteSaver(conn)
+            saver.setup()
+            return saver
+        except Exception as e:
+            logger.warning(f"Could not initialize PersistentSqliteSaver, fallback to BoundedMemorySaver: {e}")
+    return BoundedMemorySaver(max_threads=100)
 
 
 def route_after_permission(state: AgentState) -> Literal["confirmation_guard", "executor", "formatter"]:
@@ -72,7 +123,7 @@ def route_after_confirmation(state: AgentState) -> Literal["executor", "formatte
     return "formatter"
 
 
-def build_agent_graph():
+def build_agent_graph(checkpointer=None):
     """Xây dựng đồ thị trạng thái Agent đầy đủ với Layer 1 Guard và User Self-Confirmation."""
     workflow = StateGraph(AgentState)
 
@@ -109,8 +160,9 @@ def build_agent_graph():
     workflow.add_edge("executor", "formatter")
     workflow.add_edge("formatter", END)
 
-    # 3. Checkpointer để lưu vết session với LRU bound
-    checkpointer = BoundedMemorySaver(max_threads=100)
+    # 3. Checkpointer bền vững (Persistent SQLite Checkpointer)
+    if checkpointer is None:
+        checkpointer = get_default_checkpointer()
 
     return workflow.compile(checkpointer=checkpointer)
 

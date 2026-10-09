@@ -34,6 +34,9 @@ class ExpiringLRUCache:
         if time.time() - created_at > self.default_ttl:
             self._data.pop(key, None)
             return None
+        # Cập nhật thứ tự truy cập (True LRU - đưa key vừa đọc về cuối hàng đợi)
+        self._data.pop(key)
+        self._data[key] = (created_at, value)
         return value
 
     def set(self, key: str, value: Any) -> None:
