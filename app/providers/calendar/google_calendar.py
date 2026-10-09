@@ -11,6 +11,21 @@ class GoogleCalendarProvider(CalendarProvider):
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json"
         }
+        self._client: Optional[httpx.AsyncClient] = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=15.0,
+                limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+            )
+        return self._client
+
+    async def close(self) -> None:
+        """Đóng kết nối HTTP nếu cần giải phóng tài nguyên."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def list_events(self, start_time: datetime, end_time: datetime, limit: int = 10, query: str = None) -> Dict[str, Any]:
         params = {
@@ -23,16 +38,16 @@ class GoogleCalendarProvider(CalendarProvider):
         if query:
             params["q"] = query
             
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}/calendars/primary/events", headers=self.headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = self._get_client()
+        resp = await client.get(f"{self.base_url}/calendars/primary/events", headers=self.headers, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     async def get_event(self, event_id: str) -> Dict[str, Any]:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}/calendars/primary/events/{event_id}", headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()
+        client = self._get_client()
+        resp = await client.get(f"{self.base_url}/calendars/primary/events/{event_id}", headers=self.headers)
+        resp.raise_for_status()
+        return resp.json()
 
     async def find_free_time(self, start_time: datetime, end_time: datetime, duration_minutes: int) -> List[Dict[str, datetime]]:
         payload = {
@@ -40,10 +55,10 @@ class GoogleCalendarProvider(CalendarProvider):
             "timeMax": end_time.isoformat(),
             "items": [{"id": "primary"}]
         }
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}/freeBusy", headers=self.headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        client = self._get_client()
+        resp = await client.post(f"{self.base_url}/freeBusy", headers=self.headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
             
         # Simplified free time calculation: just returning the busy slots for the skill to process
         # A full find_free_time would invert the busy slots.
@@ -59,19 +74,19 @@ class GoogleCalendarProvider(CalendarProvider):
         if description: payload["description"] = description
         if attendees: payload["attendees"] = [{"email": a} for a in attendees]
         
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}/calendars/primary/events", headers=self.headers, json=payload)
-            resp.raise_for_status()
-            return resp.json().get("id")
+        client = self._get_client()
+        resp = await client.post(f"{self.base_url}/calendars/primary/events", headers=self.headers, json=payload)
+        resp.raise_for_status()
+        return resp.json().get("id")
 
     async def update_event(self, event_id: str, updates: Dict[str, Any]) -> str:
-        async with httpx.AsyncClient() as client:
-            resp = await client.patch(f"{self.base_url}/calendars/primary/events/{event_id}", headers=self.headers, json=updates)
-            resp.raise_for_status()
-            return resp.json().get("id")
+        client = self._get_client()
+        resp = await client.patch(f"{self.base_url}/calendars/primary/events/{event_id}", headers=self.headers, json=updates)
+        resp.raise_for_status()
+        return resp.json().get("id")
 
     async def cancel_event(self, event_id: str) -> bool:
-        async with httpx.AsyncClient() as client:
-            resp = await client.delete(f"{self.base_url}/calendars/primary/events/{event_id}", headers=self.headers)
-            resp.raise_for_status()
-            return True
+        client = self._get_client()
+        resp = await client.delete(f"{self.base_url}/calendars/primary/events/{event_id}", headers=self.headers)
+        resp.raise_for_status()
+        return True

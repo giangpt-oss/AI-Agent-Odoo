@@ -187,25 +187,32 @@ class KnowledgeIndexingService:
         return True
 
     async def run_indexing_job(self, job_id: str, paths: List[str], workspace_id: str, owner_id: str):
-        job = metadata_store.get_job(job_id)
-        if not job: return
+        job = await asyncio.to_thread(metadata_store.get_job, job_id)
+        if not job:
+            return
         
         job.status = "RUNNING"
-        metadata_store.update_job(job)
+        await asyncio.to_thread(metadata_store.update_job, job)
         
         async with self._semaphore:
             success = 0
-            for i, path in enumerate(paths):
-                try:
-                    if await self.index_file(path, workspace_id, owner_id):
-                        success += 1
-                except Exception as e:
-                    print(f"Index error on {path}: {e}")
-                job.progress = int(((i + 1) / len(paths)) * 100)
-                metadata_store.update_job(job)
-                
-            job.status = "COMPLETED"
-            job.finished_at = datetime.now().isoformat()
-            metadata_store.update_job(job)
+            try:
+                for i, path in enumerate(paths):
+                    try:
+                        if await self.index_file(path, workspace_id, owner_id):
+                            success += 1
+                    except Exception as e:
+                        print(f"Index error on {path}: {e}")
+                    job.progress = int(((i + 1) / len(paths)) * 100)
+                    await asyncio.to_thread(metadata_store.update_job, job)
+                    
+                job.status = "COMPLETED"
+                job.finished_at = datetime.now().isoformat()
+                await asyncio.to_thread(metadata_store.update_job, job)
+            except Exception as e:
+                job.status = "FAILED"
+                job.error = str(e)
+                job.finished_at = datetime.now().isoformat()
+                await asyncio.to_thread(metadata_store.update_job, job)
 
 indexing_service = KnowledgeIndexingService()

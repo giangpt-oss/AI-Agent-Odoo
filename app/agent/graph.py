@@ -1,6 +1,8 @@
 from typing import Literal
-from langgraph.graph import StateGraph, START, END
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import Checkpoint, CheckpointMetadata, ChannelVersions
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import StateGraph, START, END
 
 from app.agent.state import AgentState
 from app.agent.nodes.analyzer import analyzer_node
@@ -8,6 +10,33 @@ from app.agent.nodes.permission_guard import permission_guard_node
 from app.agent.nodes.confirmation import confirmation_guard_node
 from app.agent.nodes.executor import executor_node
 from app.agent.nodes.formatter import formatter_node
+
+
+class BoundedMemorySaver(MemorySaver):
+    """MemorySaver giới hạn tối đa số lượng thread hội thoại (LRU capacity bound).
+
+    Khi số lượng thread vượt quá max_threads, hệ thống sẽ tự động giải phóng các thread cũ nhất
+    (bao gồm storage, writes và blobs), bảo vệ bộ nhớ RAM không bị tăng vô hạn khi có hàng ngàn
+    phiên người dùng.
+    """
+
+    def __init__(self, max_threads: int = 100):
+        super().__init__()
+        self.max_threads = max_threads
+
+    def put(
+        self,
+        config: RunnableConfig,
+        checkpoint: Checkpoint,
+        metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
+        res = super().put(config, checkpoint, metadata, new_versions)
+        if len(self.storage) > self.max_threads:
+            excess = len(self.storage) - self.max_threads
+            for tid in list(self.storage.keys())[:excess]:
+                self.delete_thread(tid)
+        return res
 
 
 def route_after_permission(state: AgentState) -> Literal["confirmation_guard", "executor", "formatter"]:
@@ -80,8 +109,8 @@ def build_agent_graph():
     workflow.add_edge("executor", "formatter")
     workflow.add_edge("formatter", END)
 
-    # 3. Checkpointer để lưu vết session
-    checkpointer = MemorySaver()
+    # 3. Checkpointer để lưu vết session với LRU bound
+    checkpointer = BoundedMemorySaver(max_threads=100)
 
     return workflow.compile(checkpointer=checkpointer)
 

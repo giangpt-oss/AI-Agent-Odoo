@@ -11,11 +11,12 @@ import zoneinfo
 logger = logging.getLogger(__name__)
 
 class SchedulerService:
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, poll_interval: int = 15):
         self.db_path = db_path or (file_service.data_dir / "reminders.db")
         from app.providers.reminders.local import LocalReminderProvider
         LocalReminderProvider(self.db_path)  # apply non-destructive schema migration
         self.notification_provider = TelegramNotificationProvider()
+        self.poll_interval = poll_interval
         self.is_running = False
         self._task = None
 
@@ -37,13 +38,19 @@ class SchedulerService:
                 await self._check_and_trigger_reminders()
             except Exception as e:
                 logger.error(f"Error in scheduler loop: {e}")
-            await asyncio.sleep(60) # Poll every 60 seconds
+            await asyncio.sleep(self.poll_interval) # Poll every 15s (thay vì 60s) để giảm trễ thông báo
 
     async def _check_and_trigger_reminders(self):
         def _get_due_reminders():
             due = []
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT id, title, remind_at, timezone, recurrence, chat_id FROM reminders WHERE status = 'SCHEDULED' OR status = 'RETRYING'")
+                # Dùng composite index (status, remind_at) và giới hạn 100 entries sớm nhất
+                cursor = conn.execute(
+                    "SELECT id, title, remind_at, timezone, recurrence, chat_id "
+                    "FROM reminders "
+                    "WHERE status IN ('SCHEDULED', 'RETRYING') "
+                    "ORDER BY remind_at ASC LIMIT 100"
+                )
                 rows = cursor.fetchall()
                 
             now_utc = datetime.now(timezone.utc)

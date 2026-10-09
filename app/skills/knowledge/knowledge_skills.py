@@ -37,7 +37,7 @@ class KnowledgeIndexSkill(BaseSkill):
         import uuid
         from app.knowledge.models import IndexingJob
         job = IndexingJob(job_id=f"job_{uuid.uuid4().hex[:8]}", type="INDEX", status="PENDING")
-        metadata_store.update_job(job)
+        await asyncio.to_thread(metadata_store.update_job, job)
         
         # Dispatch to background (asyncio.create_task)
         asyncio.create_task(
@@ -152,10 +152,9 @@ class KnowledgeRemoveSkill(BaseSkill):
         
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         source_id = kwargs["source_id"]
-        # Delete from Vector Store
-        default_vector_store.delete_source(source_id)
-        # Delete from Metadata
-        metadata_store.delete_source(source_id)
+        # Delete from Vector Store & Metadata in thread pool
+        await asyncio.to_thread(default_vector_store.delete_source, source_id)
+        await asyncio.to_thread(metadata_store.delete_source, source_id)
         return {"status": "SUCCESS", "message": "Đã xóa khỏi Knowledge Base."}
 
 class KnowledgeListSourcesSkill(BaseSkill):
@@ -172,7 +171,7 @@ class KnowledgeListSourcesSkill(BaseSkill):
     
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         workspace_id = context.session.workspace_id if hasattr(context.session, 'workspace_id') else "default"
-        sources = metadata_store.list_sources(workspace_id)
+        sources = await asyncio.to_thread(metadata_store.list_sources, workspace_id)
         return {
             "status": "SUCCESS", 
             "sources": [{"id": s.source_id, "title": s.title, "state": s.state} for s in sources]

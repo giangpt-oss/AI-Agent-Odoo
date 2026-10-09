@@ -16,7 +16,45 @@ class OdooAccessDeniedException(OdooAPIException):
 
 
 _SHARED_ODOO_CLIENTS: dict[float, httpx.AsyncClient] = {}
-_GLOBAL_ODOO_READ_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+class ExpiringLRUCache:
+    """Bộ nhớ đệm LRU có TTL tự động dọn dẹp các key hết hạn và giới hạn dung lượng tối đa."""
+
+    def __init__(self, maxsize: int = 500, default_ttl: float = 180.0):
+        self.maxsize = maxsize
+        self.default_ttl = default_ttl
+        self._data: dict[str, tuple[float, Any]] = {}
+
+    def get(self, key: str) -> Any | None:
+        import time
+        if key not in self._data:
+            return None
+        created_at, value = self._data[key]
+        if time.time() - created_at > self.default_ttl:
+            self._data.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        import time
+        now = time.time()
+        # Dọn dẹp các key hết hạn nếu vượt dung lượng
+        if len(self._data) >= self.maxsize:
+            expired = [k for k, (t, _) in self._data.items() if now - t > self.default_ttl]
+            for k in expired:
+                self._data.pop(k, None)
+            # Nếu vẫn vượt maxsize, đẩy bớt key cũ nhất (FIFO/LRU)
+            while len(self._data) >= self.maxsize:
+                first_key = next(iter(self._data))
+                self._data.pop(first_key, None)
+        self._data[key] = (now, value)
+
+    def __contains__(self, key: str) -> bool:
+        return self.get(key) is not None
+
+
+_GLOBAL_ODOO_READ_CACHE = ExpiringLRUCache(maxsize=500, default_ttl=180.0)
 
 
 def get_shared_odoo_http_client(timeout: float = 15.0) -> httpx.AsyncClient:
@@ -125,16 +163,13 @@ class OdooAsyncClient:
         is_cacheable = method in ("search_read", "search_count")
         cache_key = None
         if is_cacheable:
-            import time
             import hashlib
             key_raw = f"{self.db}:{self.uid}:{model}:{method}:{args}:{kwargs}"
             cache_key = hashlib.md5(key_raw.encode("utf-8", errors="ignore")).hexdigest()
-            now = time.time()
-            if cache_key in _GLOBAL_ODOO_READ_CACHE:
-                cached_time, cached_data = _GLOBAL_ODOO_READ_CACHE[cache_key]
-                if now - cached_time < 180.0:  # 3 phút TTL
-                    logger.debug(f"⚡ [CACHE HIT] {model}.{method} (trả kết quả tức thì)")
-                    return cached_data
+            cached_data = _GLOBAL_ODOO_READ_CACHE.get(cache_key)
+            if cached_data is not None:
+                logger.debug(f"⚡ [CACHE HIT] {model}.{method} (trả kết quả tức thì)")
+                return cached_data
 
         result = await self.call_jsonrpc(
             "object",
@@ -149,8 +184,7 @@ class OdooAsyncClient:
         )
 
         if is_cacheable and cache_key:
-            import time
-            _GLOBAL_ODOO_READ_CACHE[cache_key] = (time.time(), result)
+            _GLOBAL_ODOO_READ_CACHE.set(cache_key, result)
 
         return result
 
