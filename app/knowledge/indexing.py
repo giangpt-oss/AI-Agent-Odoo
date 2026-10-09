@@ -137,15 +137,14 @@ class KnowledgeIndexingService:
     async def _queue_worker_loop(self):
         """Đọc từ queue và dispatch song song tối đa 3 tác vụ đồng thời thông qua Semaphore(3)."""
         async def _dispatch_job(job_id: str, paths: List[str], workspace_id: str, owner_id: str):
-            async with self._semaphore:
-                try:
-                    await self.run_indexing_job(job_id, paths, workspace_id, owner_id)
-                except Exception as e:
-                    logger.error(f"Lỗi khi chạy indexing job {job_id}: {e}")
-                finally:
-                    self._enqueued_jobs.discard(job_id)
-                    if self._queue:
-                        self._queue.task_done()
+            try:
+                await self.run_indexing_job(job_id, paths, workspace_id, owner_id)
+            except Exception as e:
+                logger.error(f"Lỗi khi chạy indexing job {job_id}: {e}")
+            finally:
+                self._enqueued_jobs.discard(job_id)
+                if self._queue:
+                    self._queue.task_done()
 
         while self._is_running:
             try:

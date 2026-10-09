@@ -27,9 +27,9 @@ class HybridSearchService:
         if not raw_results:
             return []
             
-        # 4. Filter by workspace & Build Results (Khử N+1 query)
+        # 4. Filter by workspace & Build Results (Khử N+1 query, non-blocking SQLite)
         all_source_ids = [r["metadata"].get("source_id") for r in raw_results if r.get("metadata")]
-        sources_map = metadata_store.get_sources_by_ids(all_source_ids)
+        sources_map = await asyncio.to_thread(metadata_store.get_sources_by_ids, all_source_ids)
 
         results = []
         for r in raw_results:
