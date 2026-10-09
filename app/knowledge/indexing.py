@@ -101,46 +101,68 @@ class KnowledgeIndexingService:
         self._semaphore = asyncio.Semaphore(3)
         self._queue: Optional[asyncio.Queue] = None
         self._worker_task: Optional[asyncio.Task] = None
+        self._enqueued_jobs: set[str] = set()
+        self._is_running = False
 
-    def _ensure_worker(self):
+    async def start_worker(self):
+        """Khởi động worker ngay lúc server/bot boot để phục hồi các job bị gián đoạn từ SQLite."""
         if self._queue is None:
             self._queue = asyncio.Queue()
         if self._worker_task is None or self._worker_task.done():
+            self._is_running = True
+            # Phục hồi các jobs bị gián đoạn (PENDING / RUNNING) từ SQLite
+            try:
+                pending_jobs = await asyncio.to_thread(metadata_store.get_pending_or_interrupted_jobs)
+                for j in pending_jobs:
+                    if j.job_id not in self._enqueued_jobs and j.payload and "paths" in j.payload:
+                        self._enqueued_jobs.add(j.job_id)
+                        logger.info(f"Phục hồi indexing job chưa hoàn thành từ SQLite vào queue: {j.job_id}")
+                        await self._queue.put((
+                            j.job_id,
+                            j.payload["paths"],
+                            j.payload.get("workspace_id", "default"),
+                            j.payload.get("owner_id", "system")
+                        ))
+            except Exception as e:
+                logger.error(f"Lỗi khi khôi phục indexing jobs từ SQLite: {e}")
+
             self._worker_task = asyncio.create_task(self._queue_worker_loop())
 
-    async def _queue_worker_loop(self):
-        # 1. Phục hồi các jobs bị gián đoạn (PENDING / RUNNING) từ SQLite sau khi restart
-        try:
-            pending_jobs = await asyncio.to_thread(metadata_store.get_pending_or_interrupted_jobs)
-            for j in pending_jobs:
-                if j.payload and "paths" in j.payload:
-                    logger.info(f"Phục hồi indexing job chưa hoàn thành từ SQLite: {j.job_id}")
-                    await self.run_indexing_job(
-                        j.job_id,
-                        j.payload["paths"],
-                        j.payload.get("workspace_id", "default"),
-                        j.payload.get("owner_id", "system")
-                    )
-        except Exception as e:
-            logger.error(f"Lỗi khi khôi phục indexing jobs từ SQLite: {e}")
+    def stop_worker(self):
+        """Dừng worker gracefully khi tắt ứng dụng."""
+        self._is_running = False
+        if self._worker_task and not self._worker_task.done():
+            self._worker_task.cancel()
 
-        # 2. Xử lý các jobs tiếp theo từ queue
-        while True:
+    async def _queue_worker_loop(self):
+        """Đọc từ queue và dispatch song song tối đa 3 tác vụ đồng thời thông qua Semaphore(3)."""
+        async def _dispatch_job(job_id: str, paths: List[str], workspace_id: str, owner_id: str):
+            async with self._semaphore:
+                try:
+                    await self.run_indexing_job(job_id, paths, workspace_id, owner_id)
+                except Exception as e:
+                    logger.error(f"Lỗi khi chạy indexing job {job_id}: {e}")
+                finally:
+                    self._enqueued_jobs.discard(job_id)
+                    if self._queue:
+                        self._queue.task_done()
+
+        while self._is_running:
             try:
                 job_id, paths, workspace_id, owner_id = await self._queue.get()
-                await self.run_indexing_job(job_id, paths, workspace_id, owner_id)
+                # Dispatch job chạy nền song song (được giới hạn bởi Semaphore(3))
+                asyncio.create_task(_dispatch_job(job_id, paths, workspace_id, owner_id))
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Lỗi trong queue worker loop: {e}")
-            finally:
-                if self._queue:
-                    self._queue.task_done()
 
     async def enqueue_indexing_job(self, job_id: str, paths: List[str], workspace_id: str, owner_id: str):
-        """Đưa job vào hàng đợi và kích hoạt worker với cơ chế tự phục hồi sau restart."""
-        self._ensure_worker()
-        await self._queue.put((job_id, paths, workspace_id, owner_id))
+        """Đưa job mới vào hàng đợi, tránh chạy lặp và tự động khởi động worker nếu chưa chạy."""
+        await self.start_worker()
+        if job_id not in self._enqueued_jobs:
+            self._enqueued_jobs.add(job_id)
+            await self._queue.put((job_id, paths, workspace_id, owner_id))
 
     def _get_file_hash(self, path: str) -> str:
         h = hashlib.md5()

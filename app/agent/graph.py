@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import sqlite3
+import threading
 from typing import Literal
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import Checkpoint, CheckpointMetadata, ChannelVersions
@@ -48,26 +50,51 @@ try:
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     class PersistentSqliteSaver(SqliteSaver):
-        """SqliteSaver hỗ trợ cả synchronous lẫn asynchronous invocation (ainvoke / astream / aget_state).
-        Lưu vết checkpoint bền vững trên đĩa SQLite (data/checkpoints.db), tồn tại qua các lần restart process
-        và chia sẻ trạng thái đồng bộ giữa nhiều worker tiến trình.
+        """SqliteSaver bọc các thao tác SQLite qua asyncio.to_thread và threading.Lock.
+        - Đảm bảo 100% không bao giờ chặn (block) asyncio event loop của tiến trình.
+        - Không bị ràng buộc vào 1 event loop cụ thể (an toàn trong testing và đa request).
         """
 
+        def __init__(self, conn, **kwargs):
+            super().__init__(conn, **kwargs)
+            self._thread_lock = threading.Lock()
+
+        def _sync_get_tuple(self, config):
+            with self._thread_lock:
+                return self.get_tuple(config)
+
+        def _sync_put(self, config, checkpoint, metadata, new_versions):
+            with self._thread_lock:
+                return self.put(config, checkpoint, metadata, new_versions)
+
+        def _sync_put_writes(self, config, writes, task_id, task_path):
+            with self._thread_lock:
+                return self.put_writes(config, writes, task_id, task_path)
+
+        def _sync_list(self, config, filter, before, limit):
+            with self._thread_lock:
+                return list(self.list(config, filter=filter, before=before, limit=limit))
+
+        def _sync_delete_thread(self, thread_id):
+            with self._thread_lock:
+                return self.delete_thread(thread_id)
+
         async def aget_tuple(self, config):
-            return self.get_tuple(config)
+            return await asyncio.to_thread(self._sync_get_tuple, config)
 
         async def aput(self, config, checkpoint, metadata, new_versions):
-            return self.put(config, checkpoint, metadata, new_versions)
+            return await asyncio.to_thread(self._sync_put, config, checkpoint, metadata, new_versions)
 
         async def aput_writes(self, config, writes, task_id, task_path=""):
-            return self.put_writes(config, writes, task_id, task_path)
+            return await asyncio.to_thread(self._sync_put_writes, config, writes, task_id, task_path)
 
         async def alist(self, config, *, filter=None, before=None, limit=None):
-            for item in self.list(config, filter=filter, before=before, limit=limit):
+            items = await asyncio.to_thread(self._sync_list, config, filter, before, limit)
+            for item in items:
                 yield item
 
         async def adelete_thread(self, thread_id: str):
-            return self.delete_thread(thread_id)
+            return await asyncio.to_thread(self._sync_delete_thread, thread_id)
 except ImportError:
     PersistentSqliteSaver = None
 
@@ -76,12 +103,16 @@ def get_default_checkpointer():
     """Khởi tạo Checkpointer bền vững qua SQLite (data/checkpoints.db).
     - Lưu vết session bền vững trên đĩa, tồn tại qua các lần restart process.
     - Chia sẻ chung checkpoint giữa nhiều worker tiến trình.
+    - Chạy hoàn toàn non-blocking qua thread pool, bảo vệ event loop.
+    - Bật WAL mode và busy timeout để concurrency mượt mà.
     - Fallback an toàn về BoundedMemorySaver nếu môi trường không khả dụng.
     """
     if PersistentSqliteSaver is not None:
         try:
             db_path = file_service.data_dir / "checkpoints.db"
             conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             saver = PersistentSqliteSaver(conn)
             saver.setup()
             return saver

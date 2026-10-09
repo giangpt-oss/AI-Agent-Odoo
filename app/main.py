@@ -18,11 +18,16 @@ async def lifespan(app: FastAPI):
     # Khởi động Scheduler Service cho thông báo nhắc hẹn
     from app.services.scheduler import scheduler_service
     scheduler_service.start()
+
+    # Khởi động Indexing Worker để phục hồi các job gián đoạn ngay khi boot
+    from app.knowledge.indexing import indexing_service
+    await indexing_service.start_worker()
     
     yield
     
     print(f"[*] Shutting down {settings.APP_NAME}...")
     scheduler_service.stop()
+    indexing_service.stop_worker()
 
 
 def create_application() -> FastAPI:

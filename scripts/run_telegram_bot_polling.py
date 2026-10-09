@@ -318,9 +318,11 @@ async def startup_lifecycle():
     if odoo_helper.authenticated:
         print(f"✅ Odoo Cloud: Kết nối thành công (UID: {odoo_helper.client.uid})")
         
-    print("⏳ [6/8] Initializing scheduler...")
+    print("⏳ [6/8] Initializing scheduler & indexing worker...")
     from app.services.scheduler import scheduler_service
     scheduler_service.start()
+    from app.knowledge.indexing import indexing_service
+    await indexing_service.start_worker()
     
     print("⏳ [7/8] Running health checks...")
     from app.services.health_check import health_check_service
