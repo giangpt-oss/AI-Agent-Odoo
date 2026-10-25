@@ -70,7 +70,7 @@ CAPABILITY_REGISTRY: Dict[BusinessCapability, CapabilityDefinition] = {
         title="Quản lý cơ hội kinh doanh",
         description="Theo dõi tiến độ, xác suất và doanh thu dự kiến của các cơ hội.",
         required_permissions=["READ_ODOO_CRM"],
-        associated_skills=["get_crm_pipeline"]
+        associated_skills=["get_crm_pipeline", "create_crm_lead"]
     ),
     BusinessCapability.PIPELINE_ANALYSIS: CapabilityDefinition(
         name=BusinessCapability.PIPELINE_ANALYSIS,

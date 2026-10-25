@@ -64,7 +64,7 @@ class StructuredTaskResult(BaseModel):
 
     def to_markdown(self) -> str:
         """Định dạng kết quả theo chuẩn Structured Task Results doanh nghiệp."""
-        status_emoji = "✅" if self.status == "Completed" else "⚠️" if "Pending" in self.status else "ℹ️"
+        status_emoji = "✅" if self.status == "Completed" else "❌" if self.status == "Failed" else "⚠️" if "Pending" in self.status else "ℹ️"
         lines = [f"{status_emoji} **{self.status.upper()}**\n"]
         if self.summary:
             lines.append(f"{self.summary}\n")

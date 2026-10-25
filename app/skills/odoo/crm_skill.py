@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 from app.skills.base import BaseSkill
 from app.models.skill import SkillCategory, OperationType
@@ -94,3 +95,153 @@ class OdooCrmSkill(BaseSkill):
             "deals": clean_deals,
             "excel_export": excel_info,
         }
+
+
+logger = logging.getLogger(__name__)
+
+
+class OdooCreateCrmLeadSkill(BaseSkill):
+    name = "create_crm_lead"
+    description = "Tạo mới cơ hội kinh doanh (Opportunity) trên Odoo CRM cho khách hàng."
+    category = SkillCategory.ODOO
+    capabilities = ["odoo", "crm", "create_lead", "create_opportunity", "tạo cơ hội"]
+    operation_type = OperationType.WRITE
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Tên cơ hội kinh doanh (bắt buộc)"},
+            "partner_id": {"type": "integer", "description": "ID khách hàng trên Odoo (bắt buộc)"},
+            "expected_revenue": {"type": "number", "description": "Doanh thu dự kiến (bắt buộc, VNĐ)"},
+            "description": {"type": "string", "description": "Mô tả / ghi chú chi tiết về cơ hội (tùy chọn)", "default": ""}
+        },
+        "required": ["name", "partner_id", "expected_revenue"]
+    }
+    output_schema = {"type": "object"}
+
+    async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
+        import httpx
+        from app.services.audit import audit_service
+        from app.connectors.odoo.client import OdooAccessDeniedException, OdooAPIException
+
+        name = kwargs.get("name", "").strip()
+        partner_id = kwargs.get("partner_id")
+        expected_revenue = kwargs.get("expected_revenue", 0.0)
+        description = kwargs.get("description", "").strip()
+
+        if not name:
+            raise ValueError("Tên cơ hội không được để trống.")
+        try:
+            partner_id = int(partner_id)
+            if partner_id <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ValueError("ID khách hàng không hợp lệ (phải là số nguyên dương).")
+
+        try:
+            expected_revenue = float(expected_revenue)
+            if expected_revenue < 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ValueError("Doanh thu dự kiến không hợp lệ.")
+
+        odoo_client = context.providers.get("odoo")
+        if not odoo_client:
+            raise RuntimeError("Odoo client chưa được cấu hình trong phiên làm việc.")
+
+        # Đảm bảo đã xác thực tài khoản Odoo
+        await odoo_client.authenticate()
+        actor_uid = odoo_client.uid
+
+        # 1. Kiểm tra tồn tại của khách hàng trên Odoo & lấy tên khách
+        partner_name = f"Khách hàng #{partner_id}"
+        try:
+            partners = await odoo_client.execute_kw(
+                "res.partner",
+                "search_read",
+                [[["id", "=", partner_id]]],
+                {"fields": ["id", "name"], "limit": 1}
+            )
+            if partners:
+                partner_name = partners[0].get("name") or partner_name
+            else:
+                raise ValueError(f"Không tìm thấy khách hàng có ID #{partner_id} trên Odoo.")
+        except (OdooAccessDeniedException, OdooAPIException) as e:
+            logger.warning(f"Không thể tra cứu khách hàng #{partner_id}: {e}")
+            raise RuntimeError(f"Odoo từ chối quyền truy cập khách hàng: {e}")
+
+        # 2. Chuẩn bị giá trị ghi vào crm.lead
+        vals = {
+            "name": name,
+            "partner_id": partner_id,
+            "expected_revenue": expected_revenue,
+            "type": "opportunity",
+        }
+        if actor_uid:
+            vals["user_id"] = int(actor_uid)
+        if description:
+            vals["description"] = description
+
+        # 3. Tạo bản ghi crm.lead
+        lead_id = None
+        try:
+            lead_id_raw = await odoo_client.execute_kw("crm.lead", "create", [vals])
+            lead_id = int(lead_id_raw)
+        except (httpx.TimeoutException, TimeoutError) as e:
+            logger.error(f"Timeout khi gửi lệnh tạo crm.lead lên Odoo: {e}")
+            raise RuntimeError(
+                "TIMEOUT_UNDETERMINED: Đã gửi lệnh tạo cơ hội tới Odoo nhưng bị quá thời gian chờ (timeout). "
+                "Hệ thống không tự động gửi lại lệnh để tránh trùng lặp dữ liệu. "
+                "Vui lòng kiểm tra lại danh sách cơ hội trên Odoo trước khi thao tác tiếp."
+            )
+        except OdooAccessDeniedException as e:
+            logger.warning(f"Odoo từ chối quyền tạo crm.lead: {e}")
+            raise RuntimeError("PERMISSION_DENIED: Tài khoản Odoo của bạn không có quyền tạo cơ hội kinh doanh trên Odoo ERP.")
+        except Exception as e:
+            logger.error(f"Lỗi tạo crm.lead trên Odoo: {e}")
+            raise RuntimeError(f"Odoo báo lỗi khi tạo cơ hội: {e}")
+
+        # 4. Đọc lại bản ghi để lấy dữ liệu thực tế
+        read_back = None
+        read_back_error = None
+        try:
+            records = await odoo_client.execute_kw(
+                "crm.lead",
+                "read",
+                [[lead_id]],
+                {"fields": ["name", "partner_id", "expected_revenue", "user_id", "stage_id"]}
+            )
+            if records:
+                read_back = records[0]
+        except Exception as e:
+            logger.warning(f"Đã tạo cơ hội #{lead_id} thành công nhưng đọc lại thất bại: {e}")
+            read_back_error = f"Chưa thể đối chiếu chi tiết sau khi tạo: {e}"
+
+        base_url = odoo_client.base_url.rstrip("/")
+        odoo_url = f"{base_url}/web#id={lead_id}&model=crm.lead&view_type=form"
+
+        # 5. Ghi vết kiểm toán (Audit Trail) - Tuyệt đối không log thông tin xác thực
+        session = context.session
+        user_id_str = session.user_id if session else "unknown"
+        audit_service.log_external_action(
+            action="CREATE",
+            skill="create_crm_lead",
+            provider="odoo",
+            resource_id=f"crm.lead:{lead_id}",
+            user_id=user_id_str,
+            status="SUCCESS"
+        )
+
+        return {
+            "status": "success",
+            "lead_id": lead_id,
+            "name": name,
+            "partner_id": partner_id,
+            "partner_name": partner_name,
+            "expected_revenue": expected_revenue,
+            "currency": "VNĐ",
+            "odoo_url": odoo_url,
+            "read_back": read_back,
+            "read_back_error": read_back_error,
+            "user_id": actor_uid
+        }
+

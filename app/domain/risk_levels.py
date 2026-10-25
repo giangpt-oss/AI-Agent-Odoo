@@ -53,6 +53,7 @@ SKILL_RISK_MAP: Dict[str, ActionRiskLevel] = {
     "template_render": ActionRiskLevel.LEVEL_1_DRAFT_ANALYSIS,
 
     # Level 2: Reversible write action (Requires preview & confirmation)
+    "create_crm_lead": ActionRiskLevel.LEVEL_2_REVERSIBLE_WRITE,
     "create_task": ActionRiskLevel.LEVEL_2_REVERSIBLE_WRITE,
     "update_task": ActionRiskLevel.LEVEL_2_REVERSIBLE_WRITE,
     "complete_task": ActionRiskLevel.LEVEL_2_REVERSIBLE_WRITE,

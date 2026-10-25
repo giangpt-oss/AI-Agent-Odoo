@@ -404,6 +404,16 @@ async def main():
                                     http_client.post(f"{API_BASE}/answerCallbackQuery", json={"callback_query_id": cb_id})
                                 )
                                 
+                                # Vô hiệu hóa nút sau khi xử lý (disable inline buttons immediately)
+                                cb_message_id = cb_msg.get("message_id")
+                                if cb_message_id:
+                                    asyncio.create_task(
+                                        http_client.post(
+                                            f"{API_BASE}/editMessageReplyMarkup",
+                                            json={"chat_id": chat_id, "message_id": cb_message_id, "reply_markup": {"inline_keyboard": []}}
+                                        )
+                                    )
+                                
                                 if cb_data.startswith("confirm_approve_"):
                                     conf_id = cb_data.replace("confirm_approve_", "")
                                     from app.assistant.company_assistant import company_assistant
@@ -412,9 +422,12 @@ async def main():
                                     await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": reply})
                                 elif cb_data.startswith("confirm_reject_"):
                                     conf_id = cb_data.replace("confirm_reject_", "")
-                                    from app.agent.odoo_agent_service import odoo_agent_service
-                                    if await odoo_agent_service.reject_confirmation(conf_id, chat_id, cbq["from"]["id"]):
-                                        reply = "❌ **Đã hủy yêu cầu.**"
+                                    from app.agent.confirmation_manager import confirmation_manager
+                                    from app.services.employee import employee_service
+                                    emp = await employee_service.resolve_employee_identity(chat_id)
+                                    u_id = str(emp.get("id")) if emp else ""
+                                    if confirmation_manager.reject_confirmation(conf_id, user_id=u_id, chat_id=chat_id):
+                                        reply = "❌ **Đã hủy yêu cầu.** Không có thay đổi nào được ghi vào hệ thống Odoo."
                                     else:
                                         reply = "⚠️ Yêu cầu xác nhận này đã hết hạn, không tồn tại hoặc đã được xử lý."
                                     await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": reply})
@@ -543,8 +556,8 @@ async def main():
                                 
                                 if pending_conf:
                                     conf_id = pending_conf.get("confirmation_id")
-                                    preview_data = pending_conf.get("preview", {})
-                                    reply += f"\n\n⚠️ **Cần xác nhận:** {pending_conf.get('skill')}\n{json.dumps(preview_data, ensure_ascii=False, indent=2)[:300]}"
+                                    if "XEM TRƯỚC" not in reply and "YÊU CẦU XÁC NHẬN" not in reply:
+                                        reply += f"\n\n⚠️ **Yêu cầu xác nhận hành động:** `{pending_conf.get('skill')}`"
                                     send_payload["reply_markup"] = {
                                         "inline_keyboard": [
                                             [

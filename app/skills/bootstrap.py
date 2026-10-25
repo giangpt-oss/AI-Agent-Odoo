@@ -10,7 +10,7 @@ def build_default_registry() -> SkillRegistry:
     # 1. Odoo Skills
     try:
         from app.skills.odoo.hr_skill import OdooHrSkill
-        from app.skills.odoo.crm_skill import OdooCrmSkill
+        from app.skills.odoo.crm_skill import OdooCrmSkill, OdooCreateCrmLeadSkill
         from app.skills.odoo.partner_skill import OdooPartnerSkill
         from app.skills.odoo.profile_skill import UserProfileSkill
         from app.skills.odoo.product_skill import OdooProductSkill
@@ -19,6 +19,7 @@ def build_default_registry() -> SkillRegistry:
         
         registry.register(OdooHrSkill())
         registry.register(OdooCrmSkill())
+        registry.register(OdooCreateCrmLeadSkill())
         registry.register(OdooPartnerSkill())
         registry.register(UserProfileSkill())
         registry.register(OdooProductSkill())

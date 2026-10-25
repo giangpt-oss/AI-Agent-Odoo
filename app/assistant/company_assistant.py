@@ -76,6 +76,18 @@ class CompanyAssistant:
             logger.warning("Truy cập bị từ chối cho %s (%s): %s", profile.full_name, profile.job_title, q)
             return deny_reason, [], None
 
+        # 3.1. Luồng tạo cơ hội CRM nhiều lượt (Telegram -> tìm khách Odoo -> bổ sung -> xem trước -> duyệt)
+        from app.assistant.crm_flow import crm_opportunity_flow
+        if crm_opportunity_flow.is_crm_intent(q, chat_id):
+            handled, crm_text, crm_files, crm_conf = await crm_opportunity_flow.handle_crm_flow(
+                query=q,
+                chat_id=chat_id,
+                profile=profile,
+                odoo_client=odoo_client
+            )
+            if handled:
+                return crm_text, crm_files, crm_conf
+
         # 4. Xử lý câu hỏi: "Hôm nay tôi nên tập trung vào gì?" / "What should I focus on today?"
         focus_triggers = [
             "hôm nay tôi nên tập trung", "tập trung vào gì", "what should i focus on today",
@@ -250,29 +262,60 @@ class CompanyAssistant:
         actor_id: int
     ) -> StructuredTaskResult:
         """Thực thi hành động sau khi người dùng nhấn Xác nhận và trả về StructuredTaskResult."""
-        rec = confirmation_manager.get_record(confirmation_id)
-        if not rec:
+        from app.security.kill_switch import kill_switch
+        from app.services.employee import employee_service
+        from app.services.permissions import permission_service
+        from app.services.identity_store import identity_store
+        from app.agent.confirmation_manager import ConfirmationState
+
+        # 1. Kiểm tra Emergency Kill Switch
+        if await kill_switch.is_active():
             return StructuredTaskResult(
                 status="Failed",
-                summary="Yêu cầu xác nhận không tồn tại hoặc đã hết hạn."
+                summary="Hệ thống đang tạm ngừng bảo trì khẩn cấp (Kill Switch đang bật)."
             )
 
-        user_id = rec.user_id
+        # 2. Xác minh người bấm khớp với Telegram ID
+        if actor_id != chat_id:
+            return StructuredTaskResult(
+                status="Failed",
+                summary="Người thực hiện không khớp với phiên làm việc hiện tại."
+            )
+
+        # 3. Kiểm tra bản ghi xác nhận và thời hạn (5 phút TTL)
+        rec = confirmation_manager.get_record(confirmation_id)
+        if not rec or rec.status == ConfirmationState.EXPIRED:
+            return StructuredTaskResult(
+                status="Failed",
+                summary="Yêu cầu xác nhận không tồn tại hoặc đã hết hạn (quá 5 phút). Vui lòng tạo yêu cầu mới."
+            )
+
+        # 4. Định danh nhân viên (từ identity store hoặc từ context session)
+        employee = await employee_service.resolve_employee_identity(chat_id)
+        user_id = str(employee.get("id", "")) if employee else rec.user_id
+        if not user_id:
+            return StructuredTaskResult(
+                status="Failed",
+                summary="Phiên đăng nhập đã hết hạn hoặc chưa liên kết tài khoản Odoo. Vui lòng đăng nhập lại."
+            )
+
+        # 5. Phê duyệt trạng thái xác nhận (chỉ chủ sở hữu được duyệt)
         if not confirmation_manager.approve_confirmation(confirmation_id, user_id=user_id, chat_id=chat_id):
             return StructuredTaskResult(
                 status="Failed",
-                summary="Không thể duyệt yêu cầu (sai tài khoản hoặc đã xử lý)."
+                summary="Yêu cầu xác nhận này không thuộc tài khoản của bạn, đã hết hạn hoặc đã được xử lý."
             )
 
+        # 6. Tiêu thụ token phê duyệt một lần duy nhất (chống bấm đúp liên tiếp)
         if not confirmation_manager.check_and_consume_approval(
             rec.skill_name, rec.arguments, confirmation_id=confirmation_id, user_id=user_id, chat_id=chat_id
         ):
             return StructuredTaskResult(
                 status="Failed",
-                summary="Yêu cầu đã được thực thi trước đó."
+                summary="Yêu cầu này đã được thực thi trước đó."
             )
 
-        # Xử lý Bulk Send Drafts
+        # Xử lý Bulk Send Drafts (luồng nội bộ của trợ lý)
         if rec.skill_name == "bulk_send_email_drafts":
             session = draft_manager.get_session(user_id)
             total_items = len(session.items) if session else 0
@@ -287,10 +330,9 @@ class CompanyAssistant:
                         failed_reasons.append(f"Không thể gửi cho '{item.title}' vì thiếu địa chỉ email hợp lệ.")
 
             confirmation_manager.mark_executed(confirmation_id)
-
-            result = StructuredTaskResult(
+            return StructuredTaskResult(
                 status="Completed",
-                summary=f"Đã hoàn thành đợt gửi email chăm sóc khách hàng tự động.",
+                summary="Đã hoàn thành đợt gửi email chăm sóc khách hàng tự động.",
                 results_data=[
                     f"**{total_items} khách hàng** trong danh sách xử lý",
                     f"**{total_items} email** đã được soạn thảo và kiểm duyệt chất lượng",
@@ -307,15 +349,151 @@ class CompanyAssistant:
                     "Xuất báo cáo tổng kết đợt chăm sóc khách hàng ra file Excel (`export_data_to_excel`)."
                 ]
             )
-            return result
 
-        # Fallback cho các skill khác
-        confirmation_manager.mark_executed(confirmation_id)
+        # 7. Kiểm tra skill và quyền hạn (RBAC) cho skill thực tế
+        skill = skill_registry.get_skill(rec.skill_name)
+        if not skill:
+            return StructuredTaskResult(
+                status="Failed",
+                summary=f"Kỹ năng '{rec.skill_name}' chưa được hỗ trợ trong hệ thống."
+            )
+
+        user_roles = employee.get("roles", []) if employee else (rec.context.session.roles if rec and rec.context and hasattr(rec.context, "session") else [])
+        user_permissions = permission_service.get_permissions_for_roles(user_roles)
+        if not permission_service.check_permission(skill, user_permissions):
+            return StructuredTaskResult(
+                status="Failed",
+                summary=f"Từ chối quyền: Bạn không có quyền thực hiện thao tác '{rec.skill_name}'. Yêu cầu vai trò phù hợp (ví dụ: sales_manager, sales_write hoặc admin)."
+            )
+
+        # 8. Cấu hình context với tài khoản Odoo thực tế của nhân viên
+        linked = identity_store.get(chat_id)
+        if linked:
+            user_odoo_client = OdooAsyncClient(
+                base_url=self.settings.ODOO_URL,
+                db=self.settings.ODOO_DB,
+                username=linked["login"],
+                api_key=linked["credential"]
+            )
+            rec.context.providers["odoo"] = user_odoo_client
+
+        rec.context.session.roles = user_roles
+        rec.context.session.permissions = user_permissions
+
+        # 9. Thực thi Skill thật
+        try:
+            skill.validate_input(rec.arguments)
+            result = await skill.execute(rec.context, **rec.arguments)
+            skill.validate_output(result)
+            confirmation_manager.mark_executed(confirmation_id)
+        except Exception as e:
+            confirmation_manager.mark_executed(confirmation_id, failed=True)
+            logger.exception(f"Thực thi skill '{rec.skill_name}' thất bại: {e}")
+            err_msg = str(e)
+            if "TIMEOUT_UNDETERMINED" in err_msg:
+                return StructuredTaskResult(
+                    status="Failed",
+                    summary="Đã gửi lệnh tạo tới Odoo nhưng bị quá thời gian chờ (Timeout).",
+                    attention_required=[
+                        "Trạng thái bản ghi trên Odoo hiện chưa xác định.",
+                        "Hệ thống không tự động gửi lại lệnh để tránh trùng lặp.",
+                        "Vui lòng kiểm tra lại danh sách trên Odoo ERP trước khi thao tác tiếp."
+                    ]
+                )
+            elif "PERMISSION_DENIED" in err_msg or "AccessDenied" in err_msg:
+                return StructuredTaskResult(
+                    status="Failed",
+                    summary="Odoo từ chối quyền truy cập (Access Denied).",
+                    attention_required=["Tài khoản Odoo của bạn chưa được cấp quyền thao tác trên phân hệ này."]
+                )
+            else:
+                return StructuredTaskResult(
+                    status="Failed",
+                    summary=f"Thao tác gặp lỗi khi thực hiện trên Odoo: {err_msg}",
+                    attention_required=["Vui lòng kiểm tra lại thông tin và trạng thái dữ liệu trước khi tạo lại."]
+                )
+
+        # 10. Trả kết quả StructuredTaskResult theo từng Skill
+        if rec.skill_name == "create_crm_lead":
+            lead_id = result.get("lead_id")
+            lead_name = result.get("name")
+            partner_name = result.get("partner_name")
+            partner_id = result.get("partner_id")
+            rev_fmt = f"{result.get('expected_revenue', 0):,.0f}".replace(",", ".") + " VNĐ"
+            salesperson = employee.get("full_name") or linked.get("login") if linked else "N/A"
+            odoo_url = result.get("odoo_url")
+            read_back_error = result.get("read_back_error")
+
+            results_data = [
+                f"Mã cơ hội (Lead ID): **#{lead_id}**",
+                f"Tên cơ hội: **{lead_name}**",
+                f"Khách hàng: **{partner_name}** (ID: #{partner_id})",
+                f"Doanh thu dự kiến: **{rev_fmt}**",
+                f"Người phụ trách: **{salesperson}**",
+            ]
+            if odoo_url:
+                results_data.append(f"🔗 [Mở cơ hội trên Odoo Cloud]({odoo_url})")
+
+            attention = []
+            if read_back_error:
+                attention.append(f"⚠️ {read_back_error}")
+
+            return StructuredTaskResult(
+                status="Completed",
+                summary="🎉 Đã tạo mới cơ hội kinh doanh trên Odoo CRM thành công!",
+                results_data=results_data,
+                changes_performed=[
+                    f"Đã tạo bản ghi `crm.lead` (type=opportunity) trên Odoo ERP.",
+                    f"Đã gắn khách hàng #{partner_id} và người phụ trách tương ứng."
+                ],
+                attention_required=attention,
+                next_suggested_steps=[
+                    "Lên lịch theo dõi hoặc cuộc hẹn tiếp theo với khách hàng (`create_calendar_event`).",
+                    "Soạn thảo thư giới thiệu hoặc báo giá sơ bộ (`draft_email`)."
+                ],
+                raw_payload=result
+            )
+
+        elif rec.skill_name == "bulk_send_email_drafts":
+            session = draft_manager.get_session(user_id)
+            total_items = len(session.items) if session else 0
+            sent_count = 0
+            failed_reasons = []
+
+            if session:
+                for item in session.items:
+                    if item.recipient and "@" in item.recipient:
+                        sent_count += 1
+                    else:
+                        failed_reasons.append(f"Không thể gửi cho '{item.title}' vì thiếu địa chỉ email hợp lệ.")
+
+            return StructuredTaskResult(
+                status="Completed",
+                summary="Đã hoàn thành đợt gửi email chăm sóc khách hàng tự động.",
+                results_data=[
+                    f"**{total_items} khách hàng** trong danh sách xử lý",
+                    f"**{total_items} email** đã được soạn thảo và kiểm duyệt",
+                    f"**{sent_count} email** đã được chuyển phát qua bưu chính công ty",
+                    f"**{len(failed_reasons)} email** không thể gửi do thiếu địa chỉ email"
+                ],
+                changes_performed=[
+                    f"Đã cập nhật trạng thái chăm sóc cho {sent_count} khách hàng",
+                    f"Đã lưu lịch sử tương tác vào hồ sơ chăm sóc đối tác"
+                ],
+                attention_required=failed_reasons or ["Tất cả email đã được chuyển phát thành công."],
+                next_suggested_steps=[
+                    "Lên lịch theo dõi phản hồi sau 3 ngày làm việc (`create_calendar_event`).",
+                    "Xuất báo cáo tổng kết đợt chăm sóc khách hàng ra file Excel (`export_data_to_excel`)."
+                ]
+            )
+
+        # Trả kết quả chuẩn cho các skill khác (không trả hoàn tất giả)
         return StructuredTaskResult(
             status="Completed",
             summary=f"Đã thực hiện xong thao tác '{rec.skill_name}'.",
-            changes_performed=[f"Thực thi {rec.skill_name} thành công."],
-            next_suggested_steps=["Kiểm tra lại dữ liệu trên hệ thống nếu cần."]
+            results_data=[f"Kết quả: {result}"],
+            changes_performed=[f"Thực thi {rec.skill_name} thành công trên hệ thống."],
+            raw_payload=result if isinstance(result, dict) else {"result": result}
         )
 
 

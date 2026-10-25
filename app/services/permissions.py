@@ -4,6 +4,7 @@ from app.skills.base import BaseSkill
 PERMISSION_SKILLS = {
     "READ_PROFILE": "get_user_profile",
     "READ_ODOO_CRM": "get_crm_pipeline get_partners_and_customers",
+    "CREATE_ODOO_CRM": "create_crm_lead",
     "READ_ODOO_HR": "get_company_employees",
     "READ_ODOO_PRODUCTS": "get_products_and_inventory",
     "READ_ODOO_ORDERS": "get_sale_orders",
@@ -56,6 +57,8 @@ class PermissionService:
             perms.add("READ_ODOO_CRM")
             perms.add("READ_ODOO_ORDERS")
             perms.add("READ_ODOO_PRODUCTS")
+        if roles.intersection({"sales_manager", "sales_write", "admin"}):
+            perms.add("CREATE_ODOO_CRM")
         if roles.intersection({"hr_user", "hr_manager"}):
             perms.add("READ_ODOO_HR")
         return sorted(perms)
