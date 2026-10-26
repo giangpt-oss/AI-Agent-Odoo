@@ -64,21 +64,30 @@ class LocalTaskProvider(TaskProvider):
                     (task_id, title, description, "TODO", priority, due_at, timezone, project, tags_json, now, now, owner_key)
                 )
                 conn.commit()
-            return self._get_task_sync(task_id)
+            return self._get_task_sync(task_id, owner_key=owner_key)
         return await asyncio.to_thread(_exec)
 
-    def _get_task_sync(self, task_id: str) -> Dict[str, Any]:
+    def _get_task_sync(self, task_id: str, owner_key: Optional[str] = None) -> Dict[str, Any]:
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key FROM tasks WHERE id = ?", (task_id,))
+            if owner_key:
+                cursor = conn.execute(
+                    "SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key FROM tasks WHERE id = ? AND owner_key = ?",
+                    (task_id, owner_key),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key FROM tasks WHERE id = ? AND (owner_key IS NULL OR owner_key = '')",
+                    (task_id,),
+                )
             row = cursor.fetchone()
             if row:
                 return self._row_to_dict(row)
-            raise Exception(f"Task {task_id} not found")
+            raise KeyError(f"Task {task_id} not found or access denied")
 
-    async def get_task(self, task_id: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self._get_task_sync, task_id)
+    async def get_task(self, task_id: str, owner_key: Optional[str] = None) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._get_task_sync, task_id, owner_key)
 
-    async def list_tasks(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def list_tasks(self, filters: Dict[str, Any], owner_key: Optional[str] = None) -> List[Dict[str, Any]]:
         def _exec():
             query = "SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key FROM tasks WHERE 1=1"
             params = []
@@ -88,18 +97,24 @@ class LocalTaskProvider(TaskProvider):
             if "priority" in filters:
                 query += " AND priority = ?"
                 params.append(filters["priority"])
-            if "owner_key" in filters:
+
+            # Enforce owner scope at provider level
+            if owner_key:
                 query += " AND owner_key = ?"
-                params.append(filters["owner_key"])
+                params.append(owner_key)
+            else:
+                query += " AND (owner_key IS NULL OR owner_key = '')"
             
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(query, params)
                 return [self._row_to_dict(row) for row in cursor.fetchall()]
         return await asyncio.to_thread(_exec)
 
-    async def update_task(self, task_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_task(self, task_id: str, updates: Dict[str, Any], owner_key: Optional[str] = None) -> Dict[str, Any]:
         def _exec():
-            task = self._get_task_sync(task_id)
+            # Verify existence and ownership
+            self._get_task_sync(task_id, owner_key=owner_key)
+
             fields = []
             params = []
             for k, v in updates.items():
@@ -113,21 +128,29 @@ class LocalTaskProvider(TaskProvider):
                 fields.append("updated_at = ?")
                 params.append(datetime.now().isoformat())
                 
-                query = f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?"
-                params.append(task_id)
+                if owner_key:
+                    query = f"UPDATE tasks SET {', '.join(fields)} WHERE id = ? AND owner_key = ?"
+                    params.extend([task_id, owner_key])
+                else:
+                    query = f"UPDATE tasks SET {', '.join(fields)} WHERE id = ? AND (owner_key IS NULL OR owner_key = '')"
+                    params.append(task_id)
+
                 with sqlite3.connect(self.db_path) as conn:
                     conn.execute(query, params)
                     conn.commit()
-            return self._get_task_sync(task_id)
+            return self._get_task_sync(task_id, owner_key=owner_key)
         return await asyncio.to_thread(_exec)
 
-    async def complete_task(self, task_id: str) -> Dict[str, Any]:
-        return await self.update_task(task_id, {"status": "DONE"})
+    async def complete_task(self, task_id: str, owner_key: Optional[str] = None) -> Dict[str, Any]:
+        return await self.update_task(task_id, {"status": "DONE"}, owner_key=owner_key)
 
-    async def delete_task(self, task_id: str) -> bool:
+    async def delete_task(self, task_id: str, owner_key: Optional[str] = None) -> bool:
         def _exec():
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+                if owner_key:
+                    cursor = conn.execute("DELETE FROM tasks WHERE id = ? AND owner_key = ?", (task_id, owner_key))
+                else:
+                    cursor = conn.execute("DELETE FROM tasks WHERE id = ? AND (owner_key IS NULL OR owner_key = '')", (task_id,))
                 conn.commit()
                 return cursor.rowcount > 0
         return await asyncio.to_thread(_exec)

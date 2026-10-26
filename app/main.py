@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.api.v1.router import api_v1_router
 
 
@@ -30,8 +30,9 @@ async def lifespan(app: FastAPI):
     indexing_service.stop_worker()
 
 
-def create_application() -> FastAPI:
-    settings = get_settings()
+def create_application(settings: Settings | None = None) -> FastAPI:
+    if settings is None:
+        settings = get_settings()
 
     app = FastAPI(
         title=settings.APP_NAME,
@@ -41,6 +42,7 @@ def create_application() -> FastAPI:
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
     )
+    app.state.settings = settings
 
     # CORS Middleware
     app.add_middleware(
@@ -65,13 +67,15 @@ def create_application() -> FastAPI:
         return response
 
     # Mount API routers
-    app.include_router(api_v1_router)
+    from app.api.v1.router import get_api_v1_router
+    app.include_router(get_api_v1_router(settings))
 
     from app.api.v1.odoo_auth import router as odoo_auth_router
     app.include_router(odoo_auth_router)
 
-    from app.api.v1.internal import router as internal_router
-    app.include_router(internal_router)
+    if settings.INTEGRATION_MODE == "gateway":
+        from app.api.v1.internal import router as internal_router
+        app.include_router(internal_router)
 
     @app.get("/", tags=["Root"])
     async def root():

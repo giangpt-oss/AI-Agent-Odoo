@@ -8,6 +8,10 @@ class UserSessionContext(BaseModel):
     permissions: List[str] = Field(default_factory=list)
     email: str = "Chưa liên kết"
     chat_id: Optional[int] = None
+    tenant: Optional[str] = None
+    database: Optional[str] = None
+    odoo_uid: Optional[int] = None
+    owner_key: Optional[str] = None
 
 class FileAttachment(BaseModel):
     filename: str

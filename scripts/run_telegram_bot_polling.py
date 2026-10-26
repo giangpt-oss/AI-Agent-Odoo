@@ -35,6 +35,10 @@ if ENV_FILE.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
+if os.getenv("INTEGRATION_MODE") == "gateway":
+    print("❌ Lỗi: AI Agent đang chạy ở INTEGRATION_MODE=gateway. Polling bị từ chối để tránh xung đột hai bộ thu. Vui lòng chạy Telegram Poller từ Auth Gateway.")
+    sys.exit(1)
+
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     print("❌ Lỗi: TELEGRAM_BOT_TOKEN chưa được cấu hình trong file .env!")
