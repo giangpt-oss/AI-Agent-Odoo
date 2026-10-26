@@ -1,5 +1,8 @@
 # BÁO CÁO TỔNG KẾT TUẦN: HOPITA COMPANY AI ASSISTANT
 
+> [!NOTE]
+> **Tài liệu lịch sử (Historical Archive):** Đây là báo cáo công việc tại thời điểm ghi nhận ban đầu (tháng 10/2026). Các tuyên bố trạng thái, số liệu và kiến trúc trong báo cáo phản ánh cột mốc phát triển trước đây. Để xem hiện trạng triển khai, tính năng đã kiểm chứng và kiến trúc vận hành mới nhất, vui lòng tham khảo [Tổng quan dự án](../PROJECT_OVERVIEW.md) và [Hướng dẫn lập trình viên](../DEVELOPER_GUIDE.md).
+
 > **Dự án:** Hopita Enterprise AI Assistant (Trợ lý điều hành AI kết nối Odoo Cloud ERP & Google Workspace)  
 > **Thời gian:** Tháng 10/2026  
 > **Trạng thái:** Sẵn sàng đưa vào vận hành thực tế (**Production-Ready**)  

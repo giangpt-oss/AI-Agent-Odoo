@@ -1,167 +1,100 @@
-﻿# Enterprise AI Agent
+# Enterprise AI Agent — Trợ Lý Doanh Nghiệp Tích Hợp
 
-Trợ lý AI dành cho quy trình doanh nghiệp, cung cấp giao diện hội thoại qua Telegram và kết nối với Odoo, Google Workspace cùng các dịch vụ nội bộ. Dự án được triển khai như một backend độc lập, xây dựng bằng FastAPI và dùng LangGraph để điều phối yêu cầu.
+> Hệ thống Trợ lý AI điều hành và tự động hóa tác vụ văn phòng, phục vụ cán bộ nhân viên thông qua giao diện trò chuyện Telegram kết nối an toàn với Google Workspace và hệ sinh thái Odoo ERP.
 
-## Tổng quan
+---
 
-Tin nhắn Telegram được tiếp nhận qua webhook, gắn với danh tính nhân viên, đưa qua luồng phân tích và kiểm tra quyền, rồi chuyển đến skill hoặc công cụ phù hợp. Với các thao tác ghi, agent có luồng xác nhận của người dùng trước khi thực thi. Các tích hợp bên ngoài được tổ chức qua connector; nhiều chức năng nội bộ có provider riêng cho tác vụ, ghi chú, nhắc nhở, bộ nhớ và workflow.
+### 📌 Lộ Trình Đọc Tài Liệu
 
-```text
-Telegram ──► FastAPI ──► LangGraph Agent ──► Permission / Confirmation
-                              │
-                 ┌────────────┼─────────────┐
-                 ▼            ▼             ▼
-              Odoo        Google APIs    Local providers
-           JSON-RPC/2    Gmail/Calendar  Tasks, notes, ...
-                              │
-                     PostgreSQL / Redis
+Tùy theo nhu cầu và vai trò của bạn, vui lòng chọn tài liệu phù hợp:
+
+- 👔 **[Tổng quan dành cho quản lý (docs/PROJECT_OVERVIEW.md)](docs/PROJECT_OVERVIEW.md)**: Dành cho Ban Quản lý, Giám đốc và Trưởng bộ phận — Giải thích bài toán doanh nghiệp, giá trị mang lại, bảng hiện trạng chức năng (đã triển khai, đã kiểm chứng, đang phát triển) và các bước tiếp theo (thời gian đọc ~5 phút).
+- 💻 **[Hướng dẫn dành cho lập trình viên (docs/DEVELOPER_GUIDE.md)](docs/DEVELOPER_GUIDE.md)**: Dành cho kỹ sư backend và intern — Hướng dẫn cài đặt Python 3.11, thiết lập môi trường, chạy test suite, cấu trúc thư mục, luồng xử lý `/today` và quy trình đóng góp mã nguồn (TDD).
+- 🔌 **[Đặc tả tích hợp Auth Gateway (docs/INTEGRATION_GATEWAY.md)](docs/INTEGRATION_GATEWAY.md)**: Chi tiết hợp đồng API nội bộ, cơ chế hàng đợi Telegram, chống gửi trùng và bảo mật service secret.
+
+---
+
+## 1. Mục Đích Dự Án & Ví Dụ Công Việc Cụ Thể
+
+Hệ thống được xây dựng nhằm giải quyết bài toán phân mảnh thông tin trong doanh nghiệp. Thay vì nhân viên phải mở nhiều ứng dụng độc lập trên điện thoại để kiểm tra lịch họp, đọc email hay theo dõi công việc cá nhân, AI Agent cung cấp một điểm tiếp nhận tập trung ngay trên Telegram.
+
+**Ví dụ công việc cụ thể:**
+Vào đầu ngày làm việc (8:00 sáng), nhân viên mở Telegram nhắn `/today` hoặc *"Hôm nay tôi có gì?"*. Hệ thống lập tức nhận diện nhân sự và phản hồi bản tin tổng hợp gồm:
+1. **Lịch làm việc hôm nay:** Danh sách các cuộc họp từ Google Calendar kèm giờ bắt đầu, kết thúc và link cuộc họp.
+2. **Hộp thư Gmail:** Số lượng thư chưa đọc trong hòm thư công ty và danh sách các thư quan trọng mới nhất.
+3. **Công việc cá nhân:** Các đầu việc cần hoàn thành đến hạn hôm nay và danh sách việc quá hạn từ kho dữ liệu cá nhân.
+
+Toàn bộ thông tin được tổng hợp từ dữ liệu thật trong vòng vài giây, giúp nhân viên chủ động sắp xếp ngày làm việc hiệu quả.
+
+---
+
+## 2. Kiến Trúc Tích Hợp & Phân Định Trách Nhiệm
+
+Hệ thống vận hành theo mô hình kiến trúc phân tách ranh giới an toàn giữa cổng xác thực ngoại vi (**External Auth Gateway**) và dịch vụ xử lý nghiệp vụ thông minh (**AI Agent**):
+
+```mermaid
+flowchart LR
+    Telegram[Người dùng Telegram] --> Gateway[External Auth Gateway]
+    Gateway --> Agent[AI Agent]
+    Agent --> Gateway
+    Gateway --> External[Google Workspace / Odoo ERP]
 ```
 
-## Tính năng
+### Phân công trách nhiệm rõ ràng:
+- **External Auth Gateway (`auth-gateway`):**
+  - Đóng vai trò là chốt chặn an toàn ngoại vi: duy nhất Gateway kết nối với Telegram Bot API và tiếp nhận tin nhắn người dùng.
+  - Quản trị toàn bộ thông tin đăng nhập, token OAuth của Google Workspace (Calendar, Gmail) và Odoo ERP.
+  - Quản lý hàng đợi bền vững chống mất mát dữ liệu và ngăn chặn gửi trùng tin nhắn khi có sự cố mạng.
+  - Cung cấp cổng thông tin (Portal) để nhân viên tự đăng nhập và liên kết tài khoản.
+- **AI Agent (`AI-Agent`):**
+  - Đóng vai trò là bộ não xử lý nghiệp vụ: nhận yêu cầu đã được Gateway xác thực danh tính qua kênh nội bộ có bảo vệ bằng service secret.
+  - Phân tích ý định người dùng (Intent Dispatcher) và điều phối tổng hợp dữ liệu.
+  - Quản lý kho công việc cá nhân được cách ly nghiêm ngặt theo mã định danh nhân sự (`owner_key`).
+  - Tuyệt đối không lưu trữ credential hay OAuth refresh token của người dùng.
 
-- Hội thoại riêng với Telegram Bot, định tuyến yêu cầu đến các skill nghiệp vụ.
-- Tích hợp Odoo cho dữ liệu CRM, nhân sự, đối tác, sản phẩm và đơn hàng.
-- Tích hợp Gmail và Google Calendar qua Google OAuth.
-- Các chức năng trợ lý cho email, lịch, công việc, nhắc nhở, ghi chú, cuộc họp, tài liệu, bảng tính và workflow.
-- Kiểm tra quyền, bước xác nhận cho một số thao tác ghi, kill switch và circuit breaker.
-- API cho health check, webhook Telegram/Odoo, Google OAuth và trạng thái hệ thống.
+---
 
-Các tính năng cần dịch vụ ngoài chỉ hoạt động sau khi cấu hình thông tin xác thực, quyền API và webhook tương ứng.
+## 3. Phân Biệt Các Chế Độ Hoạt Động & Tính Năng
 
-## Công nghệ
+Hệ thống hỗ trợ 2 chế độ vận hành (cấu hình qua biến môi trường `INTEGRATION_MODE`):
 
-| Thành phần | Công nghệ |
-| --- | --- |
-| Runtime | Python 3.11 |
-| API | FastAPI, Uvicorn, Pydantic Settings |
-| Agent | LangGraph, LangChain |
-| Cơ sở dữ liệu và cache | PostgreSQL, SQLAlchemy, Alembic, Redis |
-| Tích hợp | Telegram Bot API, Odoo API, Google OAuth/Gmail/Calendar |
-| Kiểm thử | pytest, pytest-asyncio |
+### Chế độ Gateway (`INTEGRATION_MODE=gateway`) — *Trọng tâm hiện tại*
+Đây là chế độ vận hành tiêu chuẩn phối hợp cùng Auth Gateway. Các tính năng đang được mở bao gồm:
+- **Bản tin buổi sáng (`/today`):** Tổng hợp lịch Google Calendar, thư Gmail chưa đọc và công việc cá nhân từ 100% dữ liệu thực tế.
+- **Tra cứu hồ sơ định danh:** Kiểm tra tài khoản Odoo, phòng ban và quyền hạn của nhân sự.
+- **Kiểm tra trạng thái kết nối:** Tra cứu tình trạng liên kết Odoo và quyền Google Workspace.
+- **Tra cứu công việc cá nhân:** Liệt kê việc quá hạn và việc cần làm hôm nay, cách ly tuyệt đối giữa các nhân viên.
+- **Từ chối an toàn:** Các câu hỏi nằm ngoài phạm vi hỗ trợ sẽ được thông báo lịch sự, không tự suy đoán thông tin ngoài thẩm quyền.
 
-## Yêu cầu
+### Chế độ Trực tiếp (`INTEGRATION_MODE=direct`) & Tính năng đang phát triển
+- **Chế độ Direct (Cục bộ):** Kế thừa từ giai đoạn phát triển ban đầu phục vụ kiểm thử nội bộ module AI. Hỗ trợ kết nối trực tiếp Odoo qua XML-RPC, LangGraph orchestration và các kỹ năng xử lý tài liệu cục bộ (PDF, Excel, ghi chú).
+- **Tính năng đang phát triển:** Các thao tác ghi dữ liệu (tạo cuộc họp, gửi email, cập nhật đơn hàng Odoo) qua bot Telegram sẽ được triển khai trong giai đoạn tiếp theo sau khi hoàn thiện cơ chế xác nhận người dùng 2 bước (Human-in-the-loop).
 
-- Python 3.11.
-- Docker Desktop và Docker Compose để chạy theo cấu hình container; hoặc PostgreSQL và Redis nếu chạy local.
-- API key của ít nhất một provider LLM đã cấu hình.
-- Thông tin xác thực tương ứng nếu sử dụng Telegram, Odoo hoặc Google Workspace.
+---
 
-## Khởi chạy bằng Docker Compose
+## 4. Bắt Đầu Nhanh Dành Cho Lập Trình Viên
 
-Từ thư mục gốc của dự án, tạo file cấu hình môi trường:
+1. **Khởi tạo môi trường ảo Python 3.11:**
+   ```powershell
+   py -3.11 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+2. **Kiểm tra bộ kiểm thử tự động:**
+   ```powershell
+   python -m pytest -q
+   ```
+   *(Toàn bộ 169 kiểm thử tự động phải vượt qua mà không có lỗi).*
+3. **Cấu hình môi trường:**
+   Sao chép `.env.example` thành `.env` và điền các khóa bí mật nội bộ theo hướng dẫn tại [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md).
 
-```powershell
-Copy-Item .env.example .env
-```
+---
 
-Mở `.env`, điền các giá trị cần thiết, sau đó chạy:
+## 5. Danh Mục Tài Liệu Tham Khảo
 
-```bash
-docker compose up --build
-```
-
-API mặc định lắng nghe tại `http://localhost:8000`. Theo dõi log của backend:
-
-```bash
-docker compose logs -f ai-agent
-```
-
-Dừng các dịch vụ bằng `Ctrl+C` hoặc `docker compose down`. Dữ liệu PostgreSQL và Redis nằm trong Docker volumes. Lệnh `docker compose down -v` sẽ xóa các volumes đó.
-
-> Cấu hình `docker-compose.yml` hiện phù hợp để khởi chạy và phát triển: mật khẩu PostgreSQL được khai báo trực tiếp trong file và cổng PostgreSQL/Redis được mở ra máy host. Hãy thay đổi cấu hình này, quản lý secrets an toàn và giới hạn truy cập trước khi triển khai trên môi trường dùng chung.
-
-## Khởi chạy local
-
-Khởi động PostgreSQL và Redis trước. Tại thư mục gốc dự án, tạo virtual environment và cài dependencies:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-Cập nhật `.env` với URL database/cache và các thông tin xác thực cần dùng. Khởi động API:
-
-```powershell
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Tài liệu OpenAPI tại `/docs` và `/redoc` bị tắt theo mặc định. Để bật trong môi trường phát triển, đặt `APP_DEBUG=true` trong `.env` rồi khởi động lại server. Không bật debug trên môi trường công khai.
-
-## Cấu hình
-
-Các biến môi trường được khai báo trong `.env.example` và đọc tại `app/core/config.py`.
-
-| Nhóm | Các biến chính |
-| --- | --- |
-| Ứng dụng | `APP_ENV`, `APP_SECRET_KEY`, `APP_DEBUG`, `HOST`, `PORT` |
-| Database / cache | `DATABASE_URL`, `REDIS_URL` |
-| LLM | `DEFAULT_LLM_PROVIDER`, `DEFAULT_LLM_MODEL`, `GEMINI_API_KEY`, `OPENAI_API_KEY` |
-| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` |
-| Odoo | `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY`, `ODOO_WEBHOOK_SECRET` |
-| Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
-| Mã hóa token | `TOKEN_ENCRYPTION_KEY` |
-
-Có thể tạo Fernet key bằng lệnh:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Không commit `.env` hoặc đưa API key, bot token, mật khẩu database và secret vào mã nguồn. Thay các giá trị mặc định bằng secrets riêng trước khi kết nối dữ liệu thật.
-
-## API
-
-| Phương thức | Đường dẫn | Mục đích |
-| --- | --- | --- |
-| `GET` | `/` | Thông tin Gateway |
-| `GET` | `/api/v1/health` | Health check |
-| `GET` | `/api/v1/system/status` | Trạng thái kill switch và circuit breaker |
-| `POST` | `/api/v1/system/kill-switch` | Bật/tắt kill switch; cần header `x-admin-key` khớp `APP_SECRET_KEY` |
-| `POST` | `/api/v1/telegram/webhook` | Webhook nhận tin nhắn Telegram; cần secret token hợp lệ |
-| `POST` | `/api/v1/webhooks/odoo` | Webhook sự kiện Odoo; cần header `x-odoo-webhook-secret` |
-| `GET` | `/api/v1/oauth/google/authorize` | Bắt đầu Google OAuth |
-| `GET` | `/api/v1/oauth/google/callback` | Callback của Google OAuth |
-| `GET`, `POST` | `/auth/odoo-verify` | Trang và xử lý xác minh tài khoản Odoo |
-
-## Kiểm thử
-
-Chạy toàn bộ suite:
-
-```bash
-pytest
-```
-
-Chạy một file kiểm thử cụ thể:
-
-```bash
-pytest tests/test_security.py -v
-pytest tests/test_e2e_full_system.py -v
-```
-
-## Cấu trúc dự án
-
-```text
-app/
-├── agent/        # Graph, orchestration, router và các node
-├── api/v1/       # API routes và webhooks
-├── connectors/   # Kết nối Telegram, Odoo và Google
-├── core/         # Cấu hình, database và Redis
-├── domain/       # Kiểu dữ liệu và quy tắc nghiệp vụ
-├── providers/    # Provider cho tích hợp và lưu trữ cục bộ
-├── security/     # Permission, token, kill switch, circuit breaker
-├── services/     # Dịch vụ nghiệp vụ
-├── skills/       # Skill của trợ lý
-└── workflows/    # Workflow tích hợp và dựng sẵn
-tests/            # Kiểm thử tự động
-scripts/          # Script phát triển và tích hợp
-```
-
-## Lưu ý triển khai
-
-- Kiểm tra quyền truy cập của Telegram bot, Odoo API key và Google OAuth trước khi bật tích hợp.
-- Thay `APP_SECRET_KEY`, webhook secrets và Fernet key bằng giá trị mới, duy nhất cho từng môi trường.
-- Đánh giá việc lưu trữ, ghi log và quyền truy cập trước khi đưa dữ liệu doanh nghiệp thật vào hệ thống.
-- Giới hạn mạng truy cập PostgreSQL và Redis; không mở các cổng này ra Internet.
+- 📄 [Tổng quan dự án dành cho quản lý](docs/PROJECT_OVERVIEW.md)
+- 📄 [Hướng dẫn phát triển dành cho lập trình viên](docs/DEVELOPER_GUIDE.md)
+- 📄 [Đặc tả kỹ thuật tích hợp Gateway](docs/INTEGRATION_GATEWAY.md)
+- 🗄️ [Lưu trữ báo cáo tiến độ lịch sử](docs/reports/)
+  - [Báo cáo công việc tuần 1](docs/reports/WEEKLY_REPORT.md)
+  - [Báo cáo tổng kết tuần 2](docs/reports/WEEKLY_DEVELOPMENT_REPORT.md)
