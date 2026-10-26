@@ -70,6 +70,9 @@ def create_application() -> FastAPI:
     from app.api.v1.odoo_auth import router as odoo_auth_router
     app.include_router(odoo_auth_router)
 
+    from app.api.v1.internal import router as internal_router
+    app.include_router(internal_router)
+
     @app.get("/", tags=["Root"])
     async def root():
         return {

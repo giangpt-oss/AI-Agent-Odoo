@@ -27,9 +27,14 @@ class LocalTaskProvider(TaskProvider):
                     project TEXT,
                     tags TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    owner_key TEXT
                 )
             """)
+            cursor = conn.execute("PRAGMA table_info(tasks)")
+            cols = [r[1] for r in cursor.fetchall()]
+            if "owner_key" not in cols:
+                conn.execute("ALTER TABLE tasks ADD COLUMN owner_key TEXT")
             conn.commit()
 
     def _row_to_dict(self, row) -> Dict[str, Any]:
@@ -44,18 +49,19 @@ class LocalTaskProvider(TaskProvider):
             "project": row[7],
             "tags": json.loads(row[8]) if row[8] else [],
             "created_at": row[9],
-            "updated_at": row[10]
+            "updated_at": row[10],
+            "owner_key": row[11] if len(row) > 11 else None,
         }
 
-    async def create_task(self, title: str, description: str, priority: str, due_at: Optional[str], timezone: str, project: Optional[str], tags: List[str]) -> Dict[str, Any]:
+    async def create_task(self, title: str, description: str, priority: str, due_at: Optional[str], timezone: str, project: Optional[str], tags: List[str], owner_key: Optional[str] = None) -> Dict[str, Any]:
         def _exec():
             task_id = f"task_{uuid.uuid4().hex[:8]}"
             now = datetime.now().isoformat()
             tags_json = json.dumps(tags)
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
-                    "INSERT INTO tasks (id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (task_id, title, description, "TODO", priority, due_at, timezone, project, tags_json, now, now)
+                    "INSERT INTO tasks (id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (task_id, title, description, "TODO", priority, due_at, timezone, project, tags_json, now, now, owner_key)
                 )
                 conn.commit()
             return self._get_task_sync(task_id)
@@ -63,7 +69,7 @@ class LocalTaskProvider(TaskProvider):
 
     def _get_task_sync(self, task_id: str) -> Dict[str, Any]:
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at FROM tasks WHERE id = ?", (task_id,))
+            cursor = conn.execute("SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key FROM tasks WHERE id = ?", (task_id,))
             row = cursor.fetchone()
             if row:
                 return self._row_to_dict(row)
@@ -74,7 +80,7 @@ class LocalTaskProvider(TaskProvider):
 
     async def list_tasks(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         def _exec():
-            query = "SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at FROM tasks WHERE 1=1"
+            query = "SELECT id, title, description, status, priority, due_at, timezone, project, tags, created_at, updated_at, owner_key FROM tasks WHERE 1=1"
             params = []
             if "status" in filters:
                 query += " AND status = ?"
@@ -82,6 +88,9 @@ class LocalTaskProvider(TaskProvider):
             if "priority" in filters:
                 query += " AND priority = ?"
                 params.append(filters["priority"])
+            if "owner_key" in filters:
+                query += " AND owner_key = ?"
+                params.append(filters["owner_key"])
             
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(query, params)

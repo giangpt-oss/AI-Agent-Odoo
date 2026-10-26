@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # Security & Encryption
     TOKEN_ENCRYPTION_KEY: str = "W3u59Z0b-4j_1KqgW72Z46v1qG8k0e3HwKxP0aM9tN4="
 
+    # Integration Mode: 'direct' or 'gateway'
+    INTEGRATION_MODE: Literal["direct", "gateway"] = "direct"
+
+    # Gateway Integration Settings
+    GATEWAY_BASE_URL: str = "http://localhost:8080"
+    GATEWAY_TO_AGENT_SECRET: str = "dev-gateway-to-agent-secret-min32ch"
+    AGENT_TO_GATEWAY_SECRET: str = "dev-agent-to-gateway-secret-min32ch"
+
     # Emergency Kill Switch
     EMERGENCY_KILL_SWITCH: bool = False
 
