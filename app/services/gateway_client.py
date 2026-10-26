@@ -6,6 +6,11 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+class GatewayServiceError(Exception):
+    """Lỗi dịch vụ phía Gateway (timeout, không thể kết nối hoặc HTTP 5xx)."""
+    pass
+
+
 class GatewayClient:
     """Client kết nối trực tiếp đến External Auth Gateway qua các endpoint nội bộ."""
 
@@ -29,8 +34,18 @@ class GatewayClient:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
+                if resp.status_code in (401, 404):
+                    logger.warning("Gateway identity unlinked (HTTP %s): %s", resp.status_code, resp.text)
+                    return None
+                if resp.status_code >= 500:
+                    raise GatewayServiceError(f"Gateway returned HTTP {resp.status_code}: {resp.text}")
                 logger.warning("Gateway identity resolve returned %s: %s", resp.status_code, resp.text)
                 return None
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as e:
+            logger.error("Network error calling Gateway identity resolve: %s", e)
+            raise GatewayServiceError(f"Không thể kết nối đến Gateway: {e}") from e
+        except GatewayServiceError:
+            raise
         except Exception as e:
             logger.error("Error calling Gateway identity resolve: %s", e)
             return None

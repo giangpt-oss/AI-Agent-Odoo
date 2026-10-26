@@ -1,8 +1,10 @@
-# Tích hợp Agent với Auth Gateway
+# API Gateway dành cho Agent
 
 [Trang chính](../README.md) · [Hướng dẫn lập trình viên](DEVELOPER_GUIDE.md)
 
-Tài liệu này dành cho lúc kết nối hai dịch vụ. Nếu mới đọc repo, hãy bắt đầu từ hướng dẫn lập trình viên.
+Tài liệu này mô tả cách Agent sử dụng API của dịch vụ Auth Gateway bên ngoài. Người phụ trách dự án cấu hình và vận hành Gateway; intern phát triển Agent và sử dụng URL/cấu hình tích hợp được cấp. Bạn không cần clone, cài đặt hoặc tự cấu hình Gateway.
+
+Nếu mới đọc repo, hãy bắt đầu từ hướng dẫn lập trình viên. Test của Agent không cần Gateway đang chạy.
 
 ## 1. Ranh giới hai bên
 
@@ -102,7 +104,7 @@ Authorization: Bearer <AGENT_TO_GATEWAY_SECRET>
 
 | API Gateway | Dữ liệu gửi | Agent dùng kết quả để |
 |---|---|---|
-| `POST /internal/v1/identity/resolve` | JSON gồm `telegram_user_id`, `chat_id` | Xác minh nhân viên; lấy `user_id`, `tenant`, `database`, `odoo_uid`, tên, login và múi giờ |
+| `POST /internal/v1/identity/resolve` | JSON gồm `telegram_user_id`, `chat_id` | Xác minh nhân viên; lấy `user_id`, `tenant`, `database`, `odoo_uid`, tên, login, múi giờ, `job_title`, `department`, `permissions` và `authorization_checked_at` |
 | `GET /internal/v1/users/{user_id}/connections` | User ID trong URL | Đọc trạng thái Odoo/Telegram/Google và `google.scopes` |
 | `GET /internal/v1/users/{user_id}/calendar/events` | Query `time_min`, `time_max` dạng ISO có timezone | Đọc danh sách `events` cho khoảng ngày được yêu cầu |
 | `GET /internal/v1/users/{user_id}/gmail/unread` | User ID trong URL | Đọc `total_unread` và danh sách `messages` |

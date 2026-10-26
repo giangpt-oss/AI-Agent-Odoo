@@ -2,7 +2,9 @@
 
 Dự án giúp nhân viên xem lịch, email chưa đọc và công việc cá nhân từ một cuộc trò chuyện Telegram.
 
-**Repo này chứa dịch vụ Agent.** Dịch vụ Auth Gateway nằm ở repo riêng, phụ trách đăng nhập, liên kết tài khoản và nhận/gửi tin Telegram.
+**Đây là repo Agent độc lập.** Bạn chỉ cần clone repo này để đọc code, chạy test và phát triển Agent. Không cần clone hoặc sửa repo Gateway.
+
+Auth Gateway là dịch vụ bên ngoài, phụ trách đăng nhập, liên kết tài khoản và nhận/gửi tin Telegram. Khi chạy tích hợp, Agent sử dụng URL và API do người phụ trách Gateway cung cấp; hai repo không cần nằm cùng máy hoặc cùng thư mục.
 
 - **Muốn xem dự án làm được gì:** đọc [Tổng quan dự án](docs/PROJECT_OVERVIEW.md).
 - **Muốn bắt đầu làm code:** đọc [Hướng dẫn lập trình viên](docs/DEVELOPER_GUIDE.md).

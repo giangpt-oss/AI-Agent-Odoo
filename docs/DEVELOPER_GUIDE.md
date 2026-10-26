@@ -2,7 +2,20 @@
 
 [Trang chính](../README.md) · [Tổng quan dự án](PROJECT_OVERVIEW.md) · [API tích hợp](INTEGRATION_GATEWAY.md)
 
-Bạn phụ trách **repo Agent**. Người phụ trách Gateway quản lý đăng nhập, credential và giao tiếp Telegram. Hãy bắt đầu bằng test và luồng Gateway; chưa cần đọc toàn bộ các module AI trong repo.
+Bạn phụ trách **repo Agent độc lập**. Chỉ cần clone repo này để đọc code, chạy test và phát triển. Không cần clone hoặc hiểu mã nguồn Gateway.
+
+## Ai phụ trách phần nào?
+
+| Người phụ trách dự án | Intern phát triển Agent |
+|---|---|
+| Cấu hình và vận hành Auth Gateway | Phát triển tính năng, API và phản hồi trong repo Agent |
+| Thiết lập kết nối Odoo, Google và Telegram | Gọi API Gateway từ Agent và xử lý dữ liệu/lỗi trả về |
+| Cung cấp URL và cấu hình tích hợp cho môi trường phát triển | Dùng cấu hình được cấp để chạy Agent khi cần tích hợp |
+| Phối hợp thay đổi API phía Gateway | Viết test Agent và đề xuất yêu cầu API khi thiếu dữ liệu |
+
+Bạn không có nhiệm vụ cài đặt hoặc cấu hình Gateway. Phần cần hiểu là dữ liệu gửi/nhận qua API. Bạn vẫn đọc code và chạy test Agent được khi chưa có cấu hình tích hợp.
+
+Hãy bắt đầu bằng test và luồng xử lý yêu cầu từ Gateway; chưa cần đọc toàn bộ các module AI trong repo.
 
 ## 1. Chạy test trước
 

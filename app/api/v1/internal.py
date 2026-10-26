@@ -5,9 +5,10 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.core.config import get_settings
+from app.domain.gateway_context import GatewayPermission, GatewayUserContext, build_gateway_user_context
 from app.domain.task_identity import build_owner_key
 from app.providers.tasks.local import LocalTaskProvider
-from app.services.gateway_client import gateway_client
+from app.services.gateway_client import GatewayServiceError, gateway_client
 from app.services.morning_briefing_service import morning_briefing_service
 
 logger = logging.getLogger(__name__)
@@ -136,18 +137,32 @@ def is_task_list_intent(text: str) -> bool:
     return any(p in lower for p in phrases)
 
 
-def format_whoami(user_info: dict[str, Any]) -> str:
+def format_whoami(user_info: Any) -> str:
+    if not isinstance(user_info, GatewayUserContext):
+        ctx = build_gateway_user_context(user_info)
+    else:
+        ctx = user_info
+
     lines = [
         "👤 **Thông tin tài khoản đã xác minh qua Gateway:**",
-        f"- **Họ và tên:** {user_info.get('name') or 'Chưa cập nhật'}",
-        f"- **Email / Đăng nhập:** {user_info.get('login') or 'Chưa cập nhật'}",
-        f"- **Mã nhân viên (Odoo UID):** {user_info.get('odoo_uid')}",
-        f"- **Hệ thống Odoo (Tenant):** {user_info.get('tenant')}",
-        f"- **Cơ sở dữ liệu (Database):** {user_info.get('database')}",
-        f"- **Múi giờ:** {user_info.get('tz') or 'Asia/Bangkok'}",
-        f"- **Chức danh:** {user_info.get('job_title') or 'Nhân viên'}",
-        f"- **Phòng ban:** {user_info.get('department') or 'Chưa phân bổ'}",
+        f"- **Họ và tên:** {ctx.name}",
+        f"- **Email / Đăng nhập:** {ctx.login}",
+        f"- **Mã nhân viên (Odoo UID):** {ctx.odoo_uid}",
+        f"- **Hệ thống Odoo (Tenant):** {ctx.tenant}",
+        f"- **Cơ sở dữ liệu (Database):** {ctx.database}",
+        f"- **Múi giờ:** {ctx.timezone}",
+        f"- **Chức danh:** {ctx.display_job_title}",
+        f"- **Phòng ban:** {ctx.display_department}",
     ]
+
+    if ctx.permissions:
+        lines.append(f"- **Quyền nghiệp vụ:** {', '.join(sorted(ctx.permissions))}")
+    else:
+        lines.append("- **Quyền nghiệp vụ:** Chưa có quyền bổ sung")
+
+    if ctx.authorization_checked_at:
+        lines.append(f"- **Thời điểm kiểm tra quyền:** {ctx.authorization_checked_at}")
+
     return "\n".join(lines)
 
 
@@ -288,10 +303,21 @@ async def handle_telegram_turn(
     request: Request,
 ):
     # 1. Xác thực lại danh tính từ Gateway (không chỉ tin user_id trong payload)
-    user_info = await gateway_client.resolve_identity(
-        telegram_user_id=req.telegram_user_id,
-        chat_id=req.chat_id,
-    )
+    try:
+        user_info = await gateway_client.resolve_identity(
+            telegram_user_id=req.telegram_user_id,
+            chat_id=req.chat_id,
+        )
+    except GatewayServiceError as e:
+        logger.warning("Gateway service error resolving identity: %s", e)
+        return TelegramTurnResponse(
+            request_id=req.request_id,
+            messages=[
+                f"⚠️ Không thể kết nối đến Cổng Gateway để xác minh danh tính. "
+                f"Vui lòng thử lại sau ít phút (Mã đối soát: {req.request_id})."
+            ],
+        )
+
     if not user_info:
         logger.warning(
             "Identity resolution failed for telegram_user_id=%s chat_id=%s",
@@ -301,17 +327,20 @@ async def handle_telegram_turn(
         return TelegramTurnResponse(
             request_id=req.request_id,
             messages=[
-                "⚠️ Không thể xác minh danh tính tài khoản của bạn qua Gateway. "
-                "Vui lòng truy cập Cổng Portal để liên kết tài khoản."
+                "⚠️ Tài khoản Telegram của bạn chưa được liên kết với tài khoản Odoo qua Cổng Gateway. "
+                "Vui lòng truy cập Cổng Portal để liên kết tài khoản trước khi tiếp tục."
             ],
         )
 
+    # Xây dựng context người dùng thống nhất từ Gateway identity
+    context = build_gateway_user_context(user_info)
+
     # Đảm bảo gateway_user_id khớp với user_id được giải quyết
-    if user_info.get("user_id") != req.gateway_user_id:
+    if context.user_id != req.gateway_user_id:
         logger.warning(
             "Gateway user ID mismatch: payload=%s, resolved=%s",
             req.gateway_user_id,
-            user_info.get("user_id"),
+            context.user_id,
         )
         return TelegramTurnResponse(
             request_id=req.request_id,
@@ -333,26 +362,27 @@ async def handle_telegram_turn(
 
         # Nhóm 3: Thông tin "Tôi là ai?" / Hồ sơ
         elif is_whoami_intent(clean_text):
-            messages = [format_whoami(user_info)]
+            messages = [format_whoami(context)]
 
         # Nhóm 4: Trạng thái kết nối dịch vụ
         elif is_connection_status_intent(clean_text):
-            conns = await gateway_client.get_user_connections(user_info["user_id"])
+            conns = await gateway_client.get_user_connections(context.user_id)
             messages = [format_connection_status(user_info, conns)]
 
-        # Nhóm 5: Danh sách công việc cá nhân
+        # Nhóm 5: Danh sách công việc cá nhân (Yêu cầu quyền tasks.read và owner_key xác thực)
         elif is_task_list_intent(clean_text):
-            tenant = user_info.get("tenant")
-            database = user_info.get("database")
-            odoo_uid = user_info.get("odoo_uid")
-            if not tenant or not database or odoo_uid is None:
+            if not context.has_permission(GatewayPermission.TASKS_READ):
+                messages = [
+                    "⚠️ Tài khoản của bạn chưa được cấp quyền tra cứu công việc (`tasks.read`). "
+                    "Vui lòng liên hệ quản trị viên hoặc kiểm tra quyền trên Cổng Gateway."
+                ]
+            elif not context.tenant or not context.database or context.odoo_uid is None:
                 messages = [
                     "⚠️ Không thể tải danh sách công việc: Thông tin định danh không đầy đủ "
                     "để xác định chủ sở hữu (yêu cầu tenant, database và Odoo UID)."
                 ]
             else:
-                owner_key = build_owner_key(tenant, database, odoo_uid)
-                tasks = await local_task_provider.list_tasks(filters={}, owner_key=owner_key)
+                tasks = await local_task_provider.list_tasks(filters={}, owner_key=context.owner_key)
                 messages = [format_task_list(tasks)]
 
         # Nhóm khác: Từ chối trước thực thi (không rơi vào fallback direct hay dữ liệu mẫu)

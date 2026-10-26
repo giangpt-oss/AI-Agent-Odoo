@@ -32,6 +32,7 @@ MOCK_USER = {
     "tz": "Asia/Ho_Chi_Minh",
     "job_title": "Trưởng phòng Kinh doanh",
     "department": "Kinh doanh",
+    "permissions": ["tasks.read", "calendar.read", "gmail.read"],
 }
 
 
