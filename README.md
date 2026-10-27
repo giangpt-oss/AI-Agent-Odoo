@@ -162,11 +162,21 @@ Compose đã được cấu hình gắn volume bền vững `agent_sqlite_data` 
 ## Kiểm thử và kết quả xác minh
 
 ```powershell
-# Chạy toàn bộ test suite của Agent (221 passed, 1 skipped):
+# Chạy toàn bộ test suite của Agent (221 passed, 1 skipped, 0 failed):
 .\.venv\Scripts\python.exe -m pytest -v
+
+# (Tùy chọn) Chạy riêng integration test kiểm tra endpoint turn nội bộ:
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_internal_turn.py -v
 ```
 
-Toàn bộ **221 test** tự động đều đã chạy thành công (bao gồm unit test cho identity context v2, task/calendar/crm dispatching, turn cache verification, atomic confirmations và idempotency).
+### Kết quả xác minh và phạm vi đã kiểm chứng
+
+- **221 test đạt 100%**: Bao gồm unit test cho identity context contract v2, dispatcher định tuyến lệnh/preview, xác thực token xác nhận nguyên tử, turn ledger idempotency, và bộ định dạng hiển thị kết quả.
+- **Giải thích test bị bỏ qua (1 skipped)**: Test `tests/test_security.py::test_traversal_via_symlink` bị bỏ qua có chủ đích khi chạy trên môi trường Windows không bật quyền Administrator hoặc Developer Mode (`pytest.skip("Cannot create symlinks on this Windows setup")`). Đây là cơ chế bảo vệ tiêu chuẩn của bộ test khi hệ điều hành hạn chế quyền tạo symbolic link, hoàn toàn không ảnh hưởng đến an toàn vận hành hay tính năng của ứng dụng.
+- **Git diff**: Kiểm tra `git diff --check` đạt chuẩn, không có lỗi khoảng trắng hay định dạng thừa.
+
+> **Lưu ý quan trọng về kiểm thử tự động so với nghiệm thu thực tế:**
+> Bộ 221 test tự động được thực hiện độc lập trong môi trường mock nội bộ (giả lập Gateway response, SQLite tạm thời, không gọi ra dịch vụ AI hoặc Telegram thật). Kiểm thử tự động chứng minh sự ổn định của contract API và cơ chế chống trùng lặp, nhưng **không thay thế việc nghiệm thu thực tế bằng tài khoản thật**. Người dùng cần chạy thử nghiệm trên bot Telegram thật kết nối với Gateway theo checklist dưới đây.
 
 ### Trạng thái các lỗi chặn nghiệp vụ đã giải quyết
 
@@ -174,6 +184,29 @@ Toàn bộ **221 test** tự động đều đã chạy thành công (bao gồm 
 2. **Xác minh trước khi đọc cache turn:** Agent resolve identity từ Gateway trước khi truy xuất cache hoặc nhận turn. Đối chiếu `telegram_binding_id`, từ chối replay các bản ghi cũ thiếu binding/hash, và trả HTTP 503 khi gặp sự cố mạng Gateway tạm thời.
 3. **Thống nhất kết quả CRM:** Formatter đọc trực tiếp `result.id` (và fallback `result.lead.id`), hiển thị chính xác mã cơ hội và chỉ hiển thị doanh thu khi có dữ liệu thực tế.
 4. **Chuẩn hóa trạng thái chưa rõ kết quả:** `UNKNOWN_RESULT`, timeout và lỗi mạng được lưu trạng thái `unknown_result` mà không bị ghi đè thành thất bại; giữ nguyên operation ID cố định từ preview và chặn thực thi nếu thiếu ID để ngăn chặn duplicate execution.
+
+## Checklist tự nghiệm thu bằng tài khoản thật (Dành cho người dùng)
+
+Người dùng thực hiện 5 bước kiểm thử thực tế trên bot Telegram sau khi khởi động Gateway và Agent ở chế độ `gateway`:
+
+1. **Đăng nhập Odoo và liên kết Telegram/Google:**
+   - Hoàn tất đăng nhập Odoo và liên kết Telegram/Google tại portal Gateway ([http://localhost:8080](http://localhost:8080)).
+   - Đảm bảo tài khoản Google đã cấp đủ quyền Calendar và Gmail.
+2. **Kiểm tra hồ sơ, quyền, lịch, Gmail và CRM:**
+   - Trên bot Telegram, gửi các tin nhắn kiểm tra: `Tôi là ai?`, `Kiểm tra kết nối`, `/calendar list`, `/email list`, `/crm search <từ khóa>`.
+   - Xác nhận bot hiển thị chính xác tên nhân viên, phòng ban, chức vụ từ Odoo, danh sách sự kiện lịch thật và số lượng email chưa đọc.
+3. **Tạo/sửa dữ liệu thử nghiệm (Task cá nhân, Lịch, CRM):**
+   - Thử tạo task cá nhân: `/task create [TEST] Việc cần làm hôm nay | 2026-11-05T18:00:00+07:00 | medium`.
+   - Thử tạo sự kiện lịch: `/calendar create [TEST] Họp nội bộ | 2026-11-05T14:00:00+07:00 | 2026-11-05T15:00:00+07:00`.
+   - Thử tạo cơ hội CRM: `/crm create [TEST] Khách hàng ABC | 0912345678 | testabc@example.com | 10000000`.
+   - Đọc kỹ tin nhắn preview do bot trả về, kiểm tra thông tin và mã xác nhận. Sau đó gửi `/confirm <mã>` và kiểm tra dữ liệu đã tạo thành công trên Google Calendar / Odoo CRM.
+4. **Gửi một email thử nghiệm:**
+   - Gửi lệnh: `/email send <email-nhận-thử-nghiệm> | [TEST] Email chào mừng | Đây là nội dung thử nghiệm gửi qua bot.`
+   - Kiểm tra tin nhắn preview, gửi `/confirm <mã>` và xác nhận email thực tế đã đến hộp thư đến.
+5. **Kiểm tra thiếu quyền, hủy xác nhận, confirm lại và ngắt/ghép nối lại Telegram:**
+   - Thử tạo một preview rồi gửi `/cancel <mã>` -> kiểm tra bot thông báo đã hủy và không có thao tác nào được thực thi ra ngoài.
+   - Thử gửi lại `/confirm <mã>` sau khi đã hủy hoặc đã hoàn tất -> kiểm tra bot từ chối hoặc báo mã không hợp lệ/đã xử lý, không thực thi lặp lại.
+   - Thử hủy liên kết Telegram trên portal Gateway rồi gửi lệnh trên bot -> kiểm tra bot yêu cầu liên kết lại danh tính. Sau khi liên kết lại, xác nhận bot tiếp tục phục vụ bình thường.
 
 ## Giới hạn còn lại và lưu ý vận hành
 
