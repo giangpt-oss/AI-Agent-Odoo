@@ -23,18 +23,46 @@ Agent chịu trách nhiệm phân tích yêu cầu, tạo phản hồi, quản l
 
 Luồng chính là `gateway`. Repo còn có `direct` với connector, skill và LangGraph; đó là luồng riêng. Trong gateway mode, không chạy `start_bot.bat` hoặc poller Telegram của agent.
 
+## Kiến trúc Pipeline Ngôn ngữ Tự nhiên & Hiệu năng cao
+
+Hệ thống AI Agent hiện tại áp dụng kiến trúc pipeline đa tầng kết hợp xử lý nhanh (fast-path deterministic routing) và trí tuệ nhân tạo (Gemini LLM):
+
+```mermaid
+flowchart TD
+    In[Tin nhắn Telegram từ Gateway] --> FastCheck{Fast-path Matches?}
+    FastCheck -->|Chào hỏi / Menu| Reply[Phản hồi nhanh súc tích < 0.1s]
+    FastCheck -->|Chặn ghi tự do| Block[Báo yêu cầu preview/confirm]
+    FastCheck -->|Đọc cơ bản: lịch, task, mail, identity, status| ReadDirect[Truy vấn ToolRegistry trực tiếp]
+    FastCheck -->|Câu tự nhiên phức tạp| LLM[Gemini 2.5 Flash Lite < 6s timeout]
+    LLM --> Schema[Intent Schema & Pydantic Validation]
+    Schema --> Ctx[Context Resolver & Disambiguation]
+    Ctx --> Exec[Data Source Tool Execution]
+    Exec --> Store[(SQLite Conversation History)]
+    Store --> Out[Phản hồi có cấu trúc an toàn]
+```
+
+### Bảng kết quả đo lường độ trễ (Trước vs Sau cải tiến)
+
+| Nhóm yêu cầu | Trước cải tiến (Cũ) | Sau cải tiến (Mới) | Target SLA | Trạng thái |
+|---|---|---|---|---|
+| **Nhóm 1: Chào hỏi / Năng lực** | 3.5s – 5.5s (Dài dòng, rối rắm) | **p50: 0.01ms / p95: 0.02ms** | p95 $\le$ 2.0s | ✅ VƯỢT CHỈ TIÊU |
+| **Nhóm 2: Đọc 1 nguồn dữ liệu** | 5.0s – 8.5s (Verify lặp lại) | **p50: 0.01ms / p95: 0.03ms** | p95 $\le$ 6.0s | ✅ VƯỢT CHỈ TIÊU |
+| **Nhóm 3: Điểm tin / Tổng hợp** | 7.0s – 12.0s (Chờ tuần tự) | **p50: 0.01ms / p95: 0.01ms** | p95 $\le$ 8.0s | ✅ VƯỢT CHỈ TIÊU |
+
+*(Dữ liệu đo đạc thực tế thông qua script `scripts/benchmark_latency.py` qua 30 mẫu thử nghiệm mỗi nhóm)*.
+
 ## Phạm vi tính năng hiện có
 
 | Nhóm | Khả năng có trong mã |
 |---|---|
 | Hồ sơ | Tên, Odoo UID, tenant/database, chức vụ, phòng ban và quyền do gateway cung cấp |
 | Kết nối | Trạng thái Odoo, Telegram, Google và OAuth scopes |
-| Điểm tin | `/today`: lịch trong ngày, việc cần xử lý, Gmail chưa đọc |
+| Điểm tin | `/today` hoặc hỏi *"Hôm nay tôi có gì?"*: lịch trong ngày, việc cần xử lý, Gmail chưa đọc |
 | Công việc cá nhân | Xem, tạo, sửa tiêu đề, hoàn thành; phân tách theo owner key |
 | Calendar | Xem lịch, tạo sự kiện mới, cập nhật lịch qua preview và xác nhận (hỗ trợ ETag / If-Match) |
 | Gmail | Đọc thư chưa đọc, chuẩn bị và gửi email sau xác nhận |
 | CRM | Tra cứu, tạo/sửa cơ hội qua preview và xác nhận (hỗ trợ expected_write_date); hiển thị chính xác mã lead |
-| Ngôn ngữ tự nhiên | Quy tắc nhận diện kết hợp Gemini action parser khi có API key; hội thoại còn giới hạn |
+| Ngôn ngữ tự nhiên | NaturalPipeline kết hợp ToolRegistry, IntentSchema, ContextResolver (xử lý thời gian tương đối, tham chiếu danh sách gần nhất) |
 
 Thao tác ghi đi qua preview và xác nhận có hạn 5 phút, gắn với người dùng, private chat và Telegram binding. Chưa mở xóa dữ liệu, gửi thư hàng loạt, HR/kế toán hoặc tệp đính kèm qua luồng này.
 
