@@ -2,7 +2,7 @@
 
 [Trang chính](../README.md) · [Hướng dẫn lập trình viên](DEVELOPER_GUIDE.md)
 
-Tài liệu này mô tả cách Agent sử dụng API của dịch vụ Auth Gateway bên ngoài. Người phụ trách dự án cấu hình và vận hành Gateway; intern phát triển Agent và sử dụng URL/cấu hình tích hợp được cấp. Bạn không cần clone, cài đặt hoặc tự cấu hình Gateway.
+Tài liệu này mô tả cách Agent sử dụng API của dịch vụ Auth Gateway bên ngoài. A phụ trách dự án cấu hình và vận hành Gateway; B phát triển Agent và sử dụng URL/cấu hình tích hợp được cấp. Bạn không cần clone, cài đặt hoặc tự cấu hình Gateway.
 
 Nếu mới đọc repo, hãy bắt đầu từ hướng dẫn lập trình viên. Test của Agent không cần Gateway đang chạy.
 
