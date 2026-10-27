@@ -8,15 +8,18 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.core.config import get_settings
 from app.domain.gateway_context import GatewayPermission, GatewayUserContext, build_gateway_user_context
+from app.domain.intent_schema import IntentType
 from app.domain.task_identity import build_owner_key
 from app.providers.tasks.local import LocalTaskProvider
+from app.services.conversation_history_store import conversation_history_store
+from app.services.gateway_agent_dispatcher import gateway_agent_dispatcher
 from app.services.gateway_client import (
     GatewayContractIncompatibleError,
     GatewayServiceError,
     gateway_client,
 )
 from app.services.morning_briefing_service import morning_briefing_service
-from app.services.gateway_agent_dispatcher import gateway_agent_dispatcher
+from app.services.natural_pipeline import natural_pipeline
 from app.services.turn_ledger import turn_ledger
 
 logger = logging.getLogger(__name__)
@@ -213,7 +216,7 @@ def format_connection_status(user_info: dict[str, Any], conns: dict[str, Any]) -
         scopes = google_conn.get("scopes") or []
 
         if g_raw_status == "OK":
-            google_status = "Đã kết nối"
+            google_status = "**Đã kết nối**"
             has_cal = any(
                 any(token in s for token in ["calendar.events", "calendar.readonly", "calendar"])
                 for s in scopes
@@ -228,10 +231,10 @@ def format_connection_status(user_info: dict[str, Any], conns: dict[str, Any]) -
 
             google_scopes_line = f"Quyền: {cal_scope} | {gmail_scope}"
         elif g_raw_status == "NOT_CONNECTED":
-            google_status = "Chưa kết nối"
+            google_status = "**Chưa kết nối**"
             google_scopes_line = "Quyền: Chưa cấp quyền (chưa liên kết)"
         elif g_raw_status == "RECONNECT_REQUIRED":
-            google_status = "Cần kết nối lại"
+            google_status = "**Cần kết nối lại**"
             google_scopes_line = "Quyền: Cần kết nối lại tài khoản để làm mới quyền truy cập"
         else:
             google_status = "Không thể xác định trạng thái"
@@ -244,9 +247,9 @@ def format_connection_status(user_info: dict[str, Any], conns: dict[str, Any]) -
     else:
         odoo_raw = odoo_conn.get("status")
         if odoo_raw == "OK":
-            odoo_status = "Đã kết nối"
+            odoo_status = "**Đã kết nối**"
         elif odoo_raw == "NOT_CONNECTED":
-            odoo_status = "Chưa kết nối"
+            odoo_status = "**Chưa kết nối**"
         else:
             odoo_status = "Không thể xác định trạng thái"
 
@@ -259,11 +262,11 @@ def format_connection_status(user_info: dict[str, Any], conns: dict[str, Any]) -
     else:
         tele_raw = tele_conn.get("status")
         if tele_raw == "OK":
-            tele_status = "Đã kết nối"
+            tele_status = "**Đã kết nối**"
         elif tele_raw == "NOT_CONNECTED":
-            tele_status = "Chưa kết nối"
+            tele_status = "**Chưa kết nối**"
         elif tele_raw == "BLOCKED":
-            tele_status = "Bị chặn"
+            tele_status = "**Bị chặn**"
         else:
             tele_status = "Không thể xác định trạng thái"
 
@@ -480,50 +483,126 @@ async def handle_telegram_turn(
         )
 
     clean_text = req.text.strip()
+    lower_text = clean_text.lower()
+    session_ctx = conversation_history_store.get_session(
+        tenant=context.tenant,
+        user_id=context.user_id,
+        chat_id=req.chat_id,
+        binding_id=context.telegram_binding_id,
+    )
 
     try:
-        # 2. Dedicated Gateway Dispatcher with strict whitelist
-        # Nhóm 1: Điểm tin hàng ngày
-        if is_today_briefing_intent(clean_text):
-            briefing_text = await morning_briefing_service.generate_real_briefing(user_info)
-            messages = [briefing_text]
-
-        # Nhóm 2: Chào hỏi / Trợ giúp
-        elif is_greeting_or_help_intent(clean_text):
-            messages = [format_greeting_help()]
-
-        # Nhóm 3: Thông tin "Tôi là ai?" / Hồ sơ
-        elif is_whoami_intent(clean_text):
-            messages = [format_whoami(context)]
-
-        # Nhóm 4: Trạng thái kết nối dịch vụ
-        elif is_connection_status_intent(clean_text):
-            conns = await gateway_client.get_user_connections(context.user_id)
-            messages = [format_connection_status(user_info, conns)]
-
-        # Nhóm 5: Danh sách công việc cá nhân (Yêu cầu quyền tasks.read và owner_key xác thực)
-        elif is_task_list_intent(clean_text):
-            if not context.has_permission(GatewayPermission.TASKS_READ):
-                messages = [
-                    "⚠️ Tài khoản của bạn chưa được cấp quyền tra cứu công việc (`tasks.read`). "
-                    "Vui lòng liên hệ quản trị viên hoặc kiểm tra quyền trên Cổng Gateway."
-                ]
-            elif not context.tenant or not context.database or context.odoo_uid is None:
-                messages = [
-                    "⚠️ Không thể tải danh sách công việc: Thông tin định danh không đầy đủ "
-                    "để xác định chủ sở hữu (yêu cầu tenant, database và Odoo UID)."
-                ]
-            else:
-                tasks = await local_task_provider.list_tasks(filters={}, owner_key=context.owner_key)
-                messages = [format_task_list(tasks)]
-
-        # Nhóm 6: Điều phối các tác vụ nghiệp vụ nâng cao (Calendar, Gmail, CRM, Tasks ghi, Xác nhận)
-        else:
+        # 1. Các lệnh nghiệp vụ chuyên biệt, lệnh xác nhận 2 bước và slash commands
+        dispatcher_prefixes = (
+            "/confirm",
+            "/cancel",
+            "/calendar",
+            "/gmail",
+            "/email",
+            "/crm",
+            "/task create",
+            "/task update",
+            "/task done",
+            "/task complete",
+        )
+        if any(lower_text.startswith(p) for p in dispatcher_prefixes):
             messages = await gateway_agent_dispatcher.dispatch(
                 context=context,
                 chat_id=req.chat_id,
                 telegram_user_id=req.telegram_user_id,
                 raw_text=clean_text,
+            )
+        else:
+            # 2. Unified Natural Pipeline (Fast-path & LLM Schema)
+            intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
+
+            if intent_res.intent_type == IntentType.REPLY:
+                messages = [intent_res.reply_text or ""]
+
+            elif intent_res.intent_type == IntentType.CLARIFY:
+                clarify_text = intent_res.clarification_prompt or "Vui lòng làm rõ yêu cầu."
+                if intent_res.candidate_options:
+                    options_str = "\n".join(f"• {opt}" for opt in intent_res.candidate_options)
+                    clarify_text += f"\n\nDanh sách lựa chọn:\n{options_str}"
+                messages = [clarify_text]
+
+            elif intent_res.intent_type == IntentType.UNSUPPORTED:
+                messages = [intent_res.reply_text or "⚠️ Yêu cầu ngoài phạm vi hỗ trợ."]
+
+            elif intent_res.intent_type == IntentType.DRAFT:
+                if intent_res.draft:
+                    conversation_history_store.set_active_draft(
+                        context.tenant,
+                        context.user_id,
+                        req.chat_id,
+                        context.telegram_binding_id,
+                        intent_res.draft.model_dump(),
+                    )
+                messages = [
+                    intent_res.reply_text
+                    or "📝 Đã lưu bản nháp thành công. Bạn có thể yêu cầu 'viết ngắn hơn' hoặc 'gửi bản vừa soạn'."
+                ]
+
+            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "identity.whoami":
+                messages = [format_whoami(context)]
+
+            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "connections.status":
+                conns = await gateway_client.get_user_connections(context.user_id)
+                messages = [format_connection_status(user_info, conns)]
+
+            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "briefing.today":
+                briefing_text = await morning_briefing_service.generate_real_briefing(user_info)
+                messages = [briefing_text]
+
+            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "tasks.personal.list":
+                if not context.has_permission(GatewayPermission.TASKS_READ):
+                    messages = [
+                        "⚠️ Tài khoản của bạn chưa được cấp quyền tra cứu công việc (`tasks.read`). "
+                        "Vui lòng liên hệ quản trị viên hoặc kiểm tra quyền trên Cổng Gateway."
+                    ]
+                elif not context.tenant or not context.database or context.odoo_uid is None:
+                    messages = [
+                        "⚠️ Không thể tải danh sách công việc: Thông tin định danh không đầy đủ "
+                        "để xác định chủ sở hữu (yêu cầu tenant, database và Odoo UID)."
+                    ]
+                else:
+                    tasks = await local_task_provider.list_tasks(filters={}, owner_key=context.owner_key)
+                    conversation_history_store.set_last_read_data(
+                        context.tenant,
+                        context.user_id,
+                        req.chat_id,
+                        context.telegram_binding_id,
+                        "tasks",
+                        tasks,
+                    )
+                    messages = [format_task_list(tasks)]
+
+            else:
+                # Điều phối các tác vụ nghiệp vụ nâng cao (Calendar, Gmail, CRM, Xác nhận /confirm, Hủy /cancel)
+                messages = await gateway_agent_dispatcher.dispatch(
+                    context=context,
+                    chat_id=req.chat_id,
+                    telegram_user_id=req.telegram_user_id,
+                    raw_text=clean_text,
+                )
+
+        # Lưu lịch sử phiên hội thoại
+        conversation_history_store.append_turn(
+            context.tenant,
+            context.user_id,
+            req.chat_id,
+            context.telegram_binding_id,
+            "user",
+            clean_text,
+        )
+        if messages:
+            conversation_history_store.append_turn(
+                context.tenant,
+                context.user_id,
+                req.chat_id,
+                context.telegram_binding_id,
+                "assistant",
+                messages[0],
             )
 
     except Exception as e:

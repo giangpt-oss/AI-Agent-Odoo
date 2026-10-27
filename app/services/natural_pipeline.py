@@ -88,8 +88,8 @@ class NaturalPipeline:
                 )
 
         # 2. Fast-path: Chào hỏi phổ biến
-        greetings = {"hello", "hi", "xin chào", "chào bạn", "chào bot", "alo", "hey"}
-        if lower in greetings or any(lower == g for g in greetings):
+        greetings = ["hello", "hi", "xin chào", "chào bạn", "chào bot", "chào em", "chào", "alo", "hey"]
+        if lower in greetings or any(lower == g or lower.startswith(g + " ") or g in lower for g in ["xin chào", "chào bot", "chào bạn"]):
             return IntentAnalysisResult(
                 intent_type=IntentType.REPLY,
                 reply_text=(
@@ -104,7 +104,19 @@ class NaturalPipeline:
                 ),
             )
 
-        # 3. Fast-path: Hỏi khả năng & menu hướng dẫn
+        # 3. Fast-path: Chặn thao tác ghi trực tiếp/chưa được hỗ trợ qua Gateway
+        unsupported_writes = ["soạn email", "gửi email", "gửi thư", "tạo cuộc họp", "xóa khách hàng", "xóa database"]
+        if any(w in lower for w in unsupported_writes):
+            return IntentAnalysisResult(
+                intent_type=IntentType.UNSUPPORTED,
+                reply_text=(
+                    "⚠️ Yêu cầu thao tác ghi tự do chưa được hỗ trợ qua Gateway.\n"
+                    "Để đảm bảo an toàn dữ liệu, các thao tác ghi (tạo lịch, tạo task) "
+                    "cần tuân thủ cú pháp có xác nhận 2 bước hoặc qua giao diện chuyên dụng."
+                ),
+            )
+
+        # 4. Fast-path: Hỏi khả năng & menu hướng dẫn
         capability_phrases = [
             "bạn có thể làm gì",
             "bạn giúp tôi được việc gì",
@@ -124,22 +136,55 @@ class NaturalPipeline:
                 reply_text=self.registry.generate_capability_overview(list(context.permissions)),
             )
 
-        # 4. Fast-path: Danh tính & Trạng thái kết nối
-        whoami_phrases = ["tôi là ai", "hồ sơ của tôi", "thông tin tài khoản", "hồ sơ cá nhân", "whoami"]
-        if any(lower == p or lower.startswith(p) for p in whoami_phrases):
+        # 5. Fast-path: Danh tính
+        whoami_phrases = ["tôi là ai", "hồ sơ của tôi", "thông tin tài khoản", "hồ sơ cá nhân", "whoami", "thông tin của tôi", "tài khoản của tôi"]
+        if any(p in lower for p in whoami_phrases):
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="identity.whoami",
             )
 
-        conn_phrases = ["trạng thái kết nối", "kiểm tra kết nối", "kết nối dịch vụ"]
-        if any(lower == p or lower.startswith(p) for p in conn_phrases):
+        # 6. Fast-path: Trạng thái kết nối
+        conn_phrases = ["trạng thái kết nối", "kiểm tra kết nối", "kết nối dịch vụ", "tình trạng kết nối", "kết nối odoo", "kết nối google", "connection status"]
+        if any(p in lower for p in conn_phrases):
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="connections.status",
             )
 
-        # 5. LLM Dispatcher cho các câu hội thoại tự nhiên phức tạp
+        # 7. Fast-path: Điểm tin ngày mới
+        briefing_phrases = ["hôm nay tôi có gì", "hôm nay tôi cần làm gì", "hôm nay có gì", "lịch hôm nay", "công việc hôm nay", "điểm tin"]
+        if any(p in lower for p in briefing_phrases):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="briefing.today",
+            )
+
+        # 8. Fast-path: Tra cứu danh sách công việc cá nhân
+        task_list_phrases = ["danh sách công việc", "công việc của tôi", "việc của tôi", "xem công việc", "nhiệm vụ của tôi", "danh sách task"]
+        if any(p in lower for p in task_list_phrases):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="tasks.personal.list",
+            )
+
+        # 9. Fast-path: Tra cứu Lịch Google
+        cal_list_phrases = ["xem lịch", "lịch họp", "lịch của tôi", "sự kiện của tôi"]
+        if any(p in lower for p in cal_list_phrases):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="calendar.events.list",
+            )
+
+        # 10. Fast-path: Tra cứu Thư Gmail chưa đọc
+        mail_list_phrases = ["thư chưa đọc", "email chưa đọc", "kiểm tra thư", "xem email", "hòm thư"]
+        if any(p in lower for p in mail_list_phrases):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="gmail.messages.unread",
+            )
+
+        # 11. LLM Dispatcher cho các câu hội thoại tự nhiên phức tạp
         return await self._dispatch_with_llm(clean_text, context, session_context)
 
     async def _call_gemini_raw(self, prompt: str) -> str:
