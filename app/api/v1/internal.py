@@ -187,20 +187,14 @@ def format_whoami(user_info: Any) -> str:
 
 def format_greeting_help() -> str:
     return (
-        "👋 **Xin chào! Tôi là Trợ lý AI kết nối qua Cổng Gateway.**\n\n"
-        "Trong phiên bản hiện tại, tôi hỗ trợ các tính năng sau:\n"
-        "1. 📅 **Điểm tin hàng ngày:** Gửi `/today` hoặc hỏi *\"Hôm nay tôi có gì?\"* để xem lịch họp Google Calendar, việc đến hạn và thư Gmail chưa đọc.\n"
-        "2. 👤 **Thông tin danh tính:** Hỏi *\"Tôi là ai?\"* hoặc *\"Hồ sơ của tôi\"* để xem thông tin tài khoản đã xác thực.\n"
-        "3. 🔗 **Kiểm tra kết nối:** Hỏi *\"Trạng thái kết nối\"* để kiểm tra liên kết tài khoản Odoo và Google Workspace.\n"
-        "4. 📋 **Công việc cá nhân:**\n"
-        "   - Xem việc: *\"Danh sách công việc\"* hoặc `/task list`\n"
-        "   - Tạo việc: `/task create Tiêu đề | [Hạn chót] | [Mức ưu tiên]`\n"
-        "   - Sửa việc: `/task update <Mã việc> <Tiêu đề mới>`\n"
-        "   - Hoàn thành: `/task done <Mã việc>`\n"
-        "5. 📆 **Google Calendar:** Hỏi *\"Xem lịch\"* hoặc `/calendar create Tiêu đề | Giờ bắt đầu | Giờ kết thúc`\n"
-        "6. ✉️ **Gmail:** Hỏi *\"Thư chưa đọc\"* hoặc `/email send Người_nhận | Tiêu đề | Nội dung`\n"
-        "7. 💼 **Odoo CRM:** `/crm search <từ khóa>` hoặc `/crm create Tên_cơ_hội | SĐT | Email | Doanh_thu`\n\n"
-        "⚠️ *Lưu ý: Mọi thao tác ghi dữ liệu đều yêu cầu xem trước và xác nhận qua cú pháp `/confirm <mã>` trong vòng 5 phút.*"
+        "👋 **Xin chào! Tôi có thể hỗ trợ gì cho bạn hôm nay?**\n\n"
+        "Bạn có thể nhắn tin tự nhiên hoặc dùng các lệnh nhanh sau:\n"
+        "• 📅 **Điểm tin hàng ngày:** Gửi `/today` hoặc hỏi *\"Hôm nay tôi có gì?\"*\n"
+        "• 👤 **Thông tin tài khoản:** Hỏi *\"Tôi là ai?\"* hoặc *\"Hồ sơ của tôi\"*\n"
+        "• 📆 **Lịch họp & Email:** Hỏi *\"Xem lịch\"* hoặc *\"Thư chưa đọc\"*\n"
+        "• 💼 **Odoo CRM:** Gửi `/crm search <từ khóa>` hoặc *\"Tìm khách hàng\"*\n"
+        "• 📋 **Công việc cá nhân:** Gửi `/task list` hoặc `/task create <nội dung>`\n\n"
+        "💡 *Các thao tác ghi dữ liệu luôn có bản xem trước để bạn xác nhận an toàn.*"
     )
 
 
