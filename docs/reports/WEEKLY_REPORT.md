@@ -1,6 +1,10 @@
 # BÁO CÁO CÔNG VIỆC TUẦN: HỆ THỐNG TRỢ LÝ ĐIỀU HÀNH AI DOANH NGHIỆP
 ## DỰ ÁN: TRỢ LÝ AI TÍCH HỢP ODOO ERP (HOPITA COMPANY AI ASSISTANT)
 
+> [!NOTE]
+> **Tài liệu lịch sử (Historical Archive):** Đây là báo cáo công việc tại thời điểm ghi nhận ban đầu (tháng 10/2026). Các nhận định, số liệu và kiến trúc trong báo cáo phản ánh cột mốc lịch sử khi xây dựng hệ thống. Để xem hiện trạng triển khai, tính năng đã kiểm chứng và kiến trúc vận hành mới nhất, vui lòng tham khảo [Tổng quan dự án](../PROJECT_OVERVIEW.md) và [Hướng dẫn lập trình viên](../DEVELOPER_GUIDE.md).
+
+
 > **Người thực hiện:** Giang Phạm Trường  
 > **Kênh vận hành:** Telegram Bot (`@hopita_bot`)  
 > **Hạ tầng liên kết:** Odoo Cloud ERP (`haiminhtsc-testing-support...`)  

@@ -12,7 +12,11 @@ class FileService:
     @property
     def data_dir(self) -> Path:
         """Thư mục tập trung lưu trữ SQLite, ChromaDB và artifacts runtime."""
-        d = self.workspace_root / "data"
+        env_data_dir = os.environ.get("AGENT_DATA_DIR")
+        if env_data_dir:
+            d = Path(env_data_dir).resolve()
+        else:
+            d = self.workspace_root / "data"
         d.mkdir(parents=True, exist_ok=True)
         return d
 

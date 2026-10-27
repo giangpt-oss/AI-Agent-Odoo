@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, model_validator
 
 
 class Settings(BaseSettings):
@@ -59,11 +59,22 @@ class Settings(BaseSettings):
 
     # Gateway Integration Settings
     GATEWAY_BASE_URL: str = "http://localhost:8080"
-    GATEWAY_TO_AGENT_SECRET: str = "dev-gateway-to-agent-secret-min32ch"
-    AGENT_TO_GATEWAY_SECRET: str = "dev-agent-to-gateway-secret-min32ch"
+    GATEWAY_TO_AGENT_SECRET: str = ""
+    AGENT_TO_GATEWAY_SECRET: str = ""
 
     # Emergency Kill Switch
     EMERGENCY_KILL_SWITCH: bool = False
+
+    @model_validator(mode="after")
+    def validate_gateway_mode_secrets(self) -> "Settings":
+        if self.INTEGRATION_MODE == "gateway":
+            if not self.GATEWAY_TO_AGENT_SECRET or not self.AGENT_TO_GATEWAY_SECRET:
+                raise ValueError("GATEWAY_TO_AGENT_SECRET và AGENT_TO_GATEWAY_SECRET bắt buộc phải có khi chạy INTEGRATION_MODE=gateway.")
+            if len(self.GATEWAY_TO_AGENT_SECRET) < 32 or len(self.AGENT_TO_GATEWAY_SECRET) < 32:
+                raise ValueError("Cả 2 service secret phải có độ dài tối thiểu 32 ký tự.")
+            if self.GATEWAY_TO_AGENT_SECRET == self.AGENT_TO_GATEWAY_SECRET:
+                raise ValueError("GATEWAY_TO_AGENT_SECRET và AGENT_TO_GATEWAY_SECRET phải khác nhau (different/distinct).")
+        return self
 
 
 @lru_cache()

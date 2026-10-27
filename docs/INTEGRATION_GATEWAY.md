@@ -1,105 +1,160 @@
-# Hướng dẫn Vận hành & Tích hợp: AI Agent & External Auth Gateway
+# API Gateway dành cho Agent
 
-Tài liệu này hướng dẫn cách kết nối, vận hành, kiểm thử và xử lý sự cố giữa **AI Agent** (`D:\Module AI - Agent`) và **External Auth Gateway** (`D:\Auth_gateway\auth-gateway`).
+[Trang chính](../README.md) · [Hướng dẫn lập trình viên](DEVELOPER_GUIDE.md)
 
----
+Tài liệu này mô tả cách Agent sử dụng API của dịch vụ Auth Gateway bên ngoài. Người phụ trách dự án cấu hình và vận hành Gateway; intern phát triển Agent và sử dụng URL/cấu hình tích hợp được cấp. Bạn không cần clone, cài đặt hoặc tự cấu hình Gateway.
 
-## 1. Kiến trúc tổng quan & Phân định trách nhiệm
+Nếu mới đọc repo, hãy bắt đầu từ hướng dẫn lập trình viên. Test của Agent không cần Gateway đang chạy.
 
-```text
-[Người dùng Telegram]
-        │
-        ▼ (Tin nhắn /start, /help, /status, /crm) ──► Xử lý trực tiếp tại Gateway
-  [Auth Gateway: 8080]
-        │
-        ▼ (Tin nhắn /today, "Hôm nay tôi có gì?", câu hỏi nghiệp vụ)
-    [POST /internal/v1/telegram/turn]
-        │
-        ▼
-   [AI Agent: 8000]
-        │
-        ├─► POST /internal/v1/identity/resolve (Gateway) ──► Xác thực (tenant, db, odoo_uid)
-        ├─► GET  /internal/v1/users/{id}/calendar/events (Gateway) ──► Dữ liệu Google Calendar thật
-        ├─► GET  /internal/v1/users/{id}/gmail/unread (Gateway)    ──► Dữ liệu Gmail thật
-        └─► LocalTaskProvider (Kho SQLite cục bộ AI Agent)         ──► Lọc task theo owner_key
+## 1. Ranh giới hai bên
+
+| Gateway — repo riêng | Agent — repo này |
+|---|---|
+| Liên kết Odoo, Google và Telegram | Nhận turn và xác minh lại danh tính |
+| Giữ credential, gọi API Google/Odoo | Gọi API nội bộ Gateway để đọc dữ liệu |
+| Nhận/gửi Telegram, quản lý hàng đợi và giao phản hồi | Xử lý các nhóm yêu cầu được mở và trả nội dung |
+| Portal kết nối/ngắt kết nối tài khoản | Kho công việc cá nhân trong Agent |
+
+Trong gateway mode, Agent không cần repo Gateway trên cùng ổ đĩa. Hai bên cần truy cập HTTP tới nhau và thống nhất URL, secret, request/response.
+
+Cơ chế queue, retry và đối soát Telegram thuộc Gateway. Tài liệu này không hướng dẫn sửa database hoặc worker của Gateway.
+
+## 2. Cấu hình Agent
+
+Từ thư mục gốc repo:
+
+```powershell
+Copy-Item .env.example .env
 ```
 
-### Phân công trách nhiệm
-- **Gateway (Cổng xác thực & ngoại vi):**
-  - Quản lý đăng nhập Odoo, mã hóa token AES-256 Fernet.
-  - Quản lý OAuth Google (Calendar, Gmail) và duy trì làm mới token tự động.
-  - Điểm tiếp nhận Telegram bot duy nhất (Webhook hoặc Poller).
-  - Cổng Portal người dùng (`http://localhost:8080/portal/dashboard`).
-- **AI Agent (Điều phối nghiệp vụ & Điểm tin):**
-  - Xử lý ngôn ngữ tự nhiên, phân tích ngữ cảnh người dùng.
-  - Tổng hợp điểm tin `/today` từ 100% dữ liệu thật, không dùng số liệu minh họa.
-  - Quản lý công việc cá nhân (`LocalTaskProvider`) phân tách theo `owner_key = "{tenant}:{database}:{odoo_uid}"`.
+Đặt các biến sau trong `.env` bằng giá trị của môi trường phát triển được cấp:
 
----
-
-## 2. Cấu hình biến môi trường (`.env`)
-
-### Trên AI Agent (`D:\Module AI - Agent\.env`)
-```bash
-PORT=8000
+```dotenv
 INTEGRATION_MODE=gateway
-GATEWAY_BASE_URL=http://localhost:8080
-GATEWAY_TO_AGENT_SECRET=your_gateway_to_agent_secret_min32chars
-AGENT_TO_GATEWAY_SECRET=your_agent_to_gateway_secret_min32chars
+GATEWAY_BASE_URL=http://127.0.0.1:8080
+GATEWAY_TO_AGENT_SECRET=<secret-cho-chieu-gateway-den-agent>
+AGENT_TO_GATEWAY_SECRET=<secret-cho-chieu-agent-den-gateway>
 ```
 
-### Trên Auth Gateway (`D:\Auth_gateway\auth-gateway\.env`)
-```bash
-PUBLIC_BASE_URL=http://localhost:8080
-ENABLE_AI_AGENT_FORWARDING=true
-AI_AGENT_BASE_URL=http://localhost:8000
-GATEWAY_TO_AGENT_SECRET=your_gateway_to_agent_secret_min32chars
-AGENT_TO_GATEWAY_SECRET=your_agent_to_gateway_secret_min32chars
+Hai secret phải khác nhau, mỗi secret ít nhất 32 ký tự. Nội dung trong dấu `<...>` chỉ mô tả trường cần điền, không phải secret để dùng nguyên.
+
+- `GATEWAY_TO_AGENT_SECRET`: Gateway dùng khi gọi endpoint Agent.
+- `AGENT_TO_GATEWAY_SECRET`: Agent dùng khi gọi các API Gateway.
+
+Mỗi biến phải khớp giữa hai dịch vụ. Người phụ trách Gateway cấu hình URL trỏ về Agent và bật chuyển tiếp bên Gateway.
+
+Chạy Agent ở cổng đã thống nhất:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-> [!IMPORTANT]
-> Hai secret `GATEWAY_TO_AGENT_SECRET` và `AGENT_TO_GATEWAY_SECRET` phải khớp nhau ở cả 2 phía. Mọi endpoint nội bộ đều sử dụng so sánh hằng số thời gian (`secrets.compare_digest`) để chống timing attack.
+URL loopback trong ví dụ chỉ áp dụng khi hai dịch vụ cùng máy. Khi chạy khác máy hoặc container, dùng địa chỉ mà dịch vụ bên kia truy cập được.
 
----
+## 3. Gateway gọi Agent
 
-## 3. Quy trình kết nối của nhân viên (Portal)
+**Endpoint:** `POST /internal/v1/telegram/turn`
 
-1. **Bước 1 — Đăng nhập Portal:**
-   - Mở trình duyệt truy cập `http://localhost:8080`.
-   - Nhập thông tin tài khoản Odoo của nhân viên (Email và Mật khẩu hoặc Personal API Key).
-2. **Bước 2 — Ghép nối Telegram:**
-   - Tại màn hình Dashboard, bấm **"Liên kết Telegram"**.
-   - Bấm vào link mở Telegram bot hoặc quét mã QR trên màn hình.
-   - Nhấn **Start** trên Telegram. Gateway xác thực liên kết bảo mật vào tài khoản Odoo của nhân viên.
-3. **Bước 3 — Cấp quyền Google Workspace:**
-   - Bấm **"Kết nối Google Workspace"**.
-   - Đăng nhập tài khoản Google công ty (kiểm tra miền `hd`).
-   - Cấp đủ 2 quyền: **Google Calendar** và **Gmail (chỉ đọc)**.
-   *(Nếu tài khoản đã liên kết từ trước thiếu quyền Gmail, trên Portal sẽ hiển thị nút cấp bổ sung quyền Gmail).*
+**Header:**
 
----
+```http
+Authorization: Bearer <GATEWAY_TO_AGENT_SECRET>
+Content-Type: application/json
+```
 
-## 4. Kiểm thử luồng điểm tin trên Telegram
+Ví dụ dữ liệu giả:
 
-Mở bot Telegram và gửi một trong các câu lệnh:
-- `/today`
-- *"Hôm nay tôi có gì?"*
-- *"Hôm nay tôi cần làm gì?"*
+```json
+{
+  "request_id": "tg-1001",
+  "gateway_user_id": 7,
+  "telegram_user_id": 7001,
+  "chat_id": 7001,
+  "text": "/today",
+  "received_at": "2026-10-26T08:00:00+07:00"
+}
+```
 
-### Kết quả mong đợi:
-Agent trả về điểm tin định dạng Markdown chuẩn:
-1. **Lịch làm việc hôm nay:** Giờ bắt đầu - kết thúc, tên sự kiện, đường link Google Calendar (xử lý chuẩn sự kiện cả ngày).
-2. **Công việc cần xử lý:** Phân tách rõ ràng giữa *Việc quá hạn* và *Việc đến hạn hôm nay*, không hiển thị task của nhân viên khác.
-3. **Hộp thư Gmail:** Tổng số thư chưa đọc thật từ hộp thư đến và danh sách tối đa 5 email gần nhất kèm link mở trực tiếp.
-4. **Thời điểm truy xuất:** Hiển thị rõ mốc giờ và múi giờ nhân viên (`Asia/Bangkok`).
+ID người dùng và chat phải đến từ liên kết đã được Gateway xác minh. Agent gọi lại API identity và đối chiếu `gateway_user_id` trước khi xử lý.
 
----
+Phản hồi có dạng:
 
-## 5. Quy trình Rollback & Tách rời độc lập
+```json
+{
+  "request_id": "tg-1001",
+  "messages": [
+    "Nội dung phản hồi cho người dùng."
+  ]
+}
+```
 
-Nếu cần tạm dừng tích hợp để bảo trì hoặc điều tra sự cố:
-1. Đặt `ENABLE_AI_AGENT_FORWARDING=false` trong file `.env` của Auth Gateway.
-2. Khởi động lại dịch vụ Gateway.
-3. **Trạng thái sau rollback:**
-   - Gateway vẫn hoạt động bình thường, phục vụ đăng nhập portal, liên kết tài khoản và các lệnh `/start`, `/help`, `/status`, `/crm`.
-   - Các tin nhắn trò chuyện hoặc `/today` sẽ được Gateway phản hồi lịch sự rằng tính năng AI đang bảo trì, không chuyển tiếp sang AI Agent.
+`messages` là danh sách chuỗi. Gateway chịu trách nhiệm gửi các chuỗi này lên Telegram. HTTP 200 chỉ cho biết Agent đã tạo phản hồi; nội dung phản hồi vẫn có thể thông báo chưa kết nối hoặc không hỗ trợ yêu cầu.
+
+Thiếu/sai Bearer secret trả HTTP 401; request sai schema trả HTTP 422. Xem schema trong [internal.py](../app/api/v1/internal.py).
+
+## 4. Agent gọi lại Gateway
+
+Mọi lời gọi dùng header:
+
+```http
+Authorization: Bearer <AGENT_TO_GATEWAY_SECRET>
+```
+
+[GatewayClient](../app/services/gateway_client.py) thực hiện các lời gọi sau:
+
+| API Gateway | Dữ liệu gửi | Agent dùng kết quả để |
+|---|---|---|
+| `POST /internal/v1/identity/resolve` | JSON gồm `telegram_user_id`, `chat_id` | Xác minh nhân viên; lấy `user_id`, `tenant`, `database`, `odoo_uid`, tên, login, múi giờ, `job_title`, `department`, `permissions` và `authorization_checked_at` |
+| `GET /internal/v1/users/{user_id}/connections` | User ID trong URL | Đọc trạng thái Odoo/Telegram/Google và `google.scopes` |
+| `GET /internal/v1/users/{user_id}/calendar/events` | Query `time_min`, `time_max` dạng ISO có timezone | Đọc danh sách `events` cho khoảng ngày được yêu cầu |
+| `GET /internal/v1/users/{user_id}/gmail/unread` | User ID trong URL | Đọc `total_unread` và danh sách `messages` |
+
+Ví dụ phần Google trong phản hồi connections:
+
+```json
+{
+  "status": "OK",
+  "user_id": 7,
+  "google": {
+    "status": "OK",
+    "email": "employee@example.invalid",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  }
+}
+```
+
+Đây là ví dụ trích phần Google, không phải toàn bộ payload connections; phản hồi thực còn có `odoo` và `telegram`. Không dùng `status="connected"` hoặc tự thêm hai boolean `calendar`/`gmail` để thay cho contract này.
+
+Với dữ liệu lịch/email, Agent phân biệt:
+
+| Trạng thái | Ý nghĩa |
+|---|---|
+| `OK` | Truy xuất thành công; danh sách rỗng là một kết quả hợp lệ |
+| `NOT_CONNECTED` | Chưa liên kết dịch vụ |
+| `PERMISSION_DENIED` | Thiếu quyền truy cập |
+| `RECONNECT_REQUIRED` | Cần kết nối lại tài khoản |
+| `TIMEOUT` / `ERROR` | Không lấy được dữ liệu |
+
+`total_unread=null` nghĩa là chưa xác định được tổng, không phải không có thư. Công việc cá nhân lấy từ [LocalTaskProvider](../app/providers/tasks/local.py), không phải API công việc của Gateway.
+
+## 5. Kiểm tra và xử lý lỗi
+
+| Hiện tượng | Kiểm tra trước |
+|---|---|
+| Agent không khởi động trong gateway mode | Hai secret đã được điền, đủ dài và khác nhau chưa? |
+| Gateway gọi Agent nhận 401 | Header Bearer và `GATEWAY_TO_AGENT_SECRET` có khớp không? |
+| Agent không xác minh được danh tính | URL Gateway, secret chiều Agent → Gateway, liên kết Telegram và trạng thái nhân viên |
+| Điểm tin thiếu lịch hoặc Gmail | Trạng thái nguồn trong phản hồi; tài khoản đã liên kết và cấp quyền chưa? |
+| HTTP 200 nhưng trả “chưa hỗ trợ” | Câu hỏi có thuộc các nhóm trong [README](../README.md#phạm-vi-tính-năng-hiện-có) không? |
+
+Các kiểm thử liên quan:
+
+- [Endpoint turn](../tests/integration/test_internal_turn.py).
+- [Dispatcher](../tests/unit/test_gateway_dispatcher.py).
+- [Contract trạng thái kết nối](../tests/unit/test_connection_formatter_contract.py).
+- [Điểm tin](../tests/unit/test_morning_briefing_real.py).
+
+Test dùng mock giúp kiểm tra Agent. Kiểm chứng hai dịch vụ và tài khoản thật là một bước riêng; không suy ra kết quả đó chỉ từ test của repo này.

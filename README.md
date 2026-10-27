@@ -1,167 +1,188 @@
-﻿# Enterprise AI Agent
+# AI Agent — Trợ lý công việc qua Telegram
 
-Trợ lý AI dành cho quy trình doanh nghiệp, cung cấp giao diện hội thoại qua Telegram và kết nối với Odoo, Google Workspace cùng các dịch vụ nội bộ. Dự án được triển khai như một backend độc lập, xây dựng bằng FastAPI và dùng LangGraph để điều phối yêu cầu.
+Dịch vụ Python/FastAPI xử lý yêu cầu công việc từ Telegram qua Auth Gateway: tổng hợp điểm tin, đọc lịch/email/CRM, quản lý công việc cá nhân và chuẩn bị thao tác ghi để người dùng xác nhận.
 
-## Tổng quan
+README này hướng dẫn riêng dự án agent. Có thể cài dependencies và chạy unit test bằng repository này; không cần mã nguồn của dịch vụ bên ngoài. Khi chạy tích hợp, cần URL và secret của dịch vụ xác thực/API được cấp.
 
-Tin nhắn Telegram được tiếp nhận qua webhook, gắn với danh tính nhân viên, đưa qua luồng phân tích và kiểm tra quyền, rồi chuyển đến skill hoặc công cụ phù hợp. Với các thao tác ghi, agent có luồng xác nhận của người dùng trước khi thực thi. Các tích hợp bên ngoài được tổ chức qua connector; nhiều chức năng nội bộ có provider riêng cho tác vụ, ghi chú, nhắc nhở, bộ nhớ và workflow.
+> **Trạng thái:** đang phát triển. Một số luồng ghi và xử lý retry còn lỗi đã biết; chưa nghiệm thu toàn bộ bằng tài khoản thật. Xem phần giới hạn cuối README.
 
-```text
-Telegram ──► FastAPI ──► LangGraph Agent ──► Permission / Confirmation
-                              │
-                 ┌────────────┼─────────────┐
-                 ▼            ▼             ▼
-              Odoo        Google APIs    Local providers
-           JSON-RPC/2    Gmail/Calendar  Tasks, notes, ...
-                              │
-                     PostgreSQL / Redis
+## Kiến trúc
+
+```mermaid
+flowchart LR
+    T[Nhân viên trên Telegram] --> G[Auth Gateway]
+    G --> A[AI Agent]
+    A --> G
+    G --> O[Odoo: danh tính, quyền, CRM]
+    G --> W[Google Calendar / Gmail]
+    A --> D[SQLite: task, xác nhận, turn ledger]
+    G --> T
 ```
 
-## Tính năng
+Agent chịu trách nhiệm phân tích yêu cầu, tạo phản hồi, quản lý task cá nhân, bản xem trước và xác nhận. Trong gateway mode, danh tính/quyền và dữ liệu Odoo/Google được lấy qua API bên ngoài; việc nhận/gửi Telegram do bên gọi endpoint turn đảm nhiệm.
 
-- Hội thoại riêng với Telegram Bot, định tuyến yêu cầu đến các skill nghiệp vụ.
-- Tích hợp Odoo cho dữ liệu CRM, nhân sự, đối tác, sản phẩm và đơn hàng.
-- Tích hợp Gmail và Google Calendar qua Google OAuth.
-- Các chức năng trợ lý cho email, lịch, công việc, nhắc nhở, ghi chú, cuộc họp, tài liệu, bảng tính và workflow.
-- Kiểm tra quyền, bước xác nhận cho một số thao tác ghi, kill switch và circuit breaker.
-- API cho health check, webhook Telegram/Odoo, Google OAuth và trạng thái hệ thống.
+Luồng chính là `gateway`. Repo còn có `direct` với connector, skill và LangGraph; đó là luồng riêng. Trong gateway mode, không chạy `start_bot.bat` hoặc poller Telegram của agent.
 
-Các tính năng cần dịch vụ ngoài chỉ hoạt động sau khi cấu hình thông tin xác thực, quyền API và webhook tương ứng.
+## Phạm vi tính năng hiện có
 
-## Công nghệ
+| Nhóm | Khả năng có trong mã |
+|---|---|
+| Hồ sơ | Tên, Odoo UID, tenant/database, chức vụ, phòng ban và quyền do gateway cung cấp |
+| Kết nối | Trạng thái Odoo, Telegram, Google và OAuth scopes |
+| Điểm tin | `/today`: lịch trong ngày, việc cần xử lý, Gmail chưa đọc |
+| Công việc cá nhân | Xem, tạo, sửa tiêu đề, hoàn thành; phân tách theo owner key |
+| Calendar | Xem lịch, tạo sự kiện mới, cập nhật lịch qua preview và xác nhận (hỗ trợ ETag / If-Match) |
+| Gmail | Đọc thư chưa đọc, chuẩn bị và gửi email sau xác nhận |
+| CRM | Tra cứu, tạo/sửa cơ hội qua preview và xác nhận (hỗ trợ expected_write_date); hiển thị chính xác mã lead |
+| Ngôn ngữ tự nhiên | Quy tắc nhận diện kết hợp Gemini action parser khi có API key; hội thoại còn giới hạn |
 
-| Thành phần | Công nghệ |
-| --- | --- |
-| Runtime | Python 3.11 |
-| API | FastAPI, Uvicorn, Pydantic Settings |
-| Agent | LangGraph, LangChain |
-| Cơ sở dữ liệu và cache | PostgreSQL, SQLAlchemy, Alembic, Redis |
-| Tích hợp | Telegram Bot API, Odoo API, Google OAuth/Gmail/Calendar |
-| Kiểm thử | pytest, pytest-asyncio |
+Thao tác ghi đi qua preview và xác nhận có hạn 5 phút, gắn với người dùng, private chat và Telegram binding. Chưa mở xóa dữ liệu, gửi thư hàng loạt, HR/kế toán hoặc tệp đính kèm qua luồng này.
 
-## Yêu cầu
+Chức vụ dùng cho ngữ cảnh/cá nhân hóa, không tự cấp quyền. Tài khoản Google có thể là Gmail cá nhân nếu gateway cho phép; lịch và thư thuộc tài khoản Google đã liên kết, quyền CRM vẫn thuộc Odoo.
 
-- Python 3.11.
-- Docker Desktop và Docker Compose để chạy theo cấu hình container; hoặc PostgreSQL và Redis nếu chạy local.
-- API key của ít nhất một provider LLM đã cấu hình.
-- Thông tin xác thực tương ứng nếu sử dụng Telegram, Odoo hoặc Google Workspace.
+## Cài đặt
 
-## Khởi chạy bằng Docker Compose
-
-Từ thư mục gốc của dự án, tạo file cấu hình môi trường:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Mở `.env`, điền các giá trị cần thiết, sau đó chạy:
-
-```bash
-docker compose up --build
-```
-
-API mặc định lắng nghe tại `http://localhost:8000`. Theo dõi log của backend:
-
-```bash
-docker compose logs -f ai-agent
-```
-
-Dừng các dịch vụ bằng `Ctrl+C` hoặc `docker compose down`. Dữ liệu PostgreSQL và Redis nằm trong Docker volumes. Lệnh `docker compose down -v` sẽ xóa các volumes đó.
-
-> Cấu hình `docker-compose.yml` hiện phù hợp để khởi chạy và phát triển: mật khẩu PostgreSQL được khai báo trực tiếp trong file và cổng PostgreSQL/Redis được mở ra máy host. Hãy thay đổi cấu hình này, quản lý secrets an toàn và giới hạn truy cập trước khi triển khai trên môi trường dùng chung.
-
-## Khởi chạy local
-
-Khởi động PostgreSQL và Redis trước. Tại thư mục gốc dự án, tạo virtual environment và cài dependencies:
+Yêu cầu Python 3.11. Chạy từ thư mục chứa `requirements.txt` trên PowerShell:
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pytest tests/unit tests/integration/test_internal_turn.py -q
+```
+
+Nhóm test này dùng dữ liệu tạm và mock; không cần gateway, Telegram token, LLM key, PostgreSQL hoặc Redis thật. Các module ngoài nhóm test này có thể có yêu cầu riêng.
+
+## Cấu hình gateway mode
+
+```powershell
+# Bỏ qua nếu đã có .env, tránh ghi đè cấu hình hiện tại.
 Copy-Item .env.example .env
 ```
 
-Cập nhật `.env` với URL database/cache và các thông tin xác thực cần dùng. Khởi động API:
+Thiết lập tối thiểu:
+
+```dotenv
+APP_ENV=development
+APP_DEBUG=false
+PORT=8000
+INTEGRATION_MODE=gateway
+GATEWAY_BASE_URL=http://localhost:8080
+GATEWAY_TO_AGENT_SECRET=<secret-chieu-gateway-den-agent>
+AGENT_TO_GATEWAY_SECRET=<secret-chieu-agent-den-gateway>
+# Để trống nếu chỉ thử lệnh xác định, không dùng Gemini parser.
+GEMINI_API_KEY=
+```
+
+Hai secret phải khác nhau, mỗi secret ít nhất 32 ký tự và khớp với gateway. Sinh secret bằng:
 
 ```powershell
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48)); print(secrets.token_urlsafe(48))"
 ```
 
-Tài liệu OpenAPI tại `/docs` và `/redoc` bị tắt theo mặc định. Để bật trong môi trường phát triển, đặt `APP_DEBUG=true` trong `.env` rồi khởi động lại server. Không bật debug trên môi trường công khai.
+Thay các giá trị mẫu trước khi dùng. Khi bật phân tích ngôn ngữ tự nhiên, đặt `GEMINI_API_KEY` và `DEFAULT_LLM_MODEL` phù hợp với môi trường được cấp. Parser gateway hiện dùng Gemini; chỉ điền `OPENAI_API_KEY` chưa thay thế được parser này.
 
-## Cấu hình
+Credential Odoo, bot token Telegram và OAuth Google của người dùng được cấu hình/quản lý tại gateway. Những biến tương ứng trong file mẫu agent chủ yếu phục vụ direct mode; không sao chép credential người dùng sang agent để khắc phục lỗi tích hợp.
 
-Các biến môi trường được khai báo trong `.env.example` và đọc tại `app/core/config.py`.
+Yêu cầu đối với dịch vụ bên ngoài: cung cấp identity contract v2, API dữ liệu/action và chuyển yêu cầu tới endpoint turn của agent. Thống nhất URL cùng hai secret với người vận hành dịch vụ đó; không cần cấu hình hoặc clone mã nguồn dịch vụ trong repository này.
 
-| Nhóm | Các biến chính |
-| --- | --- |
-| Ứng dụng | `APP_ENV`, `APP_SECRET_KEY`, `APP_DEBUG`, `HOST`, `PORT` |
-| Database / cache | `DATABASE_URL`, `REDIS_URL` |
-| LLM | `DEFAULT_LLM_PROVIDER`, `DEFAULT_LLM_MODEL`, `GEMINI_API_KEY`, `OPENAI_API_KEY` |
-| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` |
-| Odoo | `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY`, `ODOO_WEBHOOK_SECRET` |
-| Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
-| Mã hóa token | `TOKEN_ENCRYPTION_KEY` |
+`.env.example` không tự cập nhật `.env` đang dùng; code agent mặc định `direct` nếu không đặt mode.
 
-Có thể tạo Fernet key bằng lệnh:
+## Khởi động
 
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Không commit `.env` hoặc đưa API key, bot token, mật khẩu database và secret vào mã nguồn. Thay các giá trị mặc định bằng secrets riêng trước khi kết nối dữ liệu thật.
+- Healthcheck: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health).
+- OpenAPI: [http://localhost:8000/docs](http://localhost:8000/docs), chỉ khi đặt `APP_DEBUG=true`.
 
-## API
+Nhân viên đăng nhập và liên kết tài khoản tại portal gateway trước khi gửi yêu cầu tới bot. Agent tra identity qua gateway; người dùng không cần đăng nhập Odoo lần hai trong luồng này.
 
-| Phương thức | Đường dẫn | Mục đích |
-| --- | --- | --- |
-| `GET` | `/` | Thông tin Gateway |
-| `GET` | `/api/v1/health` | Health check |
-| `GET` | `/api/v1/system/status` | Trạng thái kill switch và circuit breaker |
-| `POST` | `/api/v1/system/kill-switch` | Bật/tắt kill switch; cần header `x-admin-key` khớp `APP_SECRET_KEY` |
-| `POST` | `/api/v1/telegram/webhook` | Webhook nhận tin nhắn Telegram; cần secret token hợp lệ |
-| `POST` | `/api/v1/webhooks/odoo` | Webhook sự kiện Odoo; cần header `x-odoo-webhook-secret` |
-| `GET` | `/api/v1/oauth/google/authorize` | Bắt đầu Google OAuth |
-| `GET` | `/api/v1/oauth/google/callback` | Callback của Google OAuth |
-| `GET`, `POST` | `/auth/odoo-verify` | Trang và xử lý xác minh tài khoản Odoo |
+API khởi động thành công không chứng minh Odoo/Google đã kết nối. Healthcheck không thay thế kiểm tra quyền và dữ liệu thật.
 
-## Kiểm thử
+## Ví dụ sử dụng
 
-Chạy toàn bộ suite:
+| Yêu cầu trên Telegram | Mục đích |
+|---|---|
+| `/today` | Điểm tin hôm nay |
+| `Tôi là ai?` | Hồ sơ đã xác minh |
+| `Kiểm tra kết nối` | Trạng thái các dịch vụ |
+| `/task list` | Danh sách công việc cá nhân |
+| `/task create Báo cáo tuần` | Preview tạo công việc |
+| `/task done task_12345678` | Preview hoàn thành công việc |
+| `/calendar list` | Lịch sắp tới |
+| `/email list` | Gmail chưa đọc |
+| `/crm search khách hàng` | Tra cứu lead |
+| `/confirm <mã>` hoặc `/cancel <mã>` | Thực thi hoặc hủy yêu cầu đang chờ |
 
-```bash
-pytest
-```
-
-Chạy một file kiểm thử cụ thể:
-
-```bash
-pytest tests/test_security.py -v
-pytest tests/test_e2e_full_system.py -v
-```
-
-## Cấu trúc dự án
+Ví dụ cú pháp đầy đủ để tạo preview, dùng dữ liệu thử nghiệm:
 
 ```text
-app/
-├── agent/        # Graph, orchestration, router và các node
-├── api/v1/       # API routes và webhooks
-├── connectors/   # Kết nối Telegram, Odoo và Google
-├── core/         # Cấu hình, database và Redis
-├── domain/       # Kiểu dữ liệu và quy tắc nghiệp vụ
-├── providers/    # Provider cho tích hợp và lưu trữ cục bộ
-├── security/     # Permission, token, kill switch, circuit breaker
-├── services/     # Dịch vụ nghiệp vụ
-├── skills/       # Skill của trợ lý
-└── workflows/    # Workflow tích hợp và dựng sẵn
-tests/            # Kiểm thử tự động
-scripts/          # Script phát triển và tích hợp
+/task create Báo cáo tuần | 2026-11-01T17:00:00+07:00 | high
+/calendar create Họp nhóm | 2026-11-01T09:00:00+07:00 | 2026-11-01T10:00:00+07:00
+/email send colleague@example.com | Tiêu đề thử nghiệm | Nội dung thử nghiệm
+/crm create Cơ hội thử nghiệm | 0900000000 | customer@example.com | 1000000
 ```
 
-## Lưu ý triển khai
+ID và mã xác nhận phải lấy từ phản hồi thật. Kiểm tra preview trước khi xác nhận; không tự gửi lại thao tác ghi khi kết quả trước đó chưa xác định.
 
-- Kiểm tra quyền truy cập của Telegram bot, Odoo API key và Google OAuth trước khi bật tích hợp.
-- Thay `APP_SECRET_KEY`, webhook secrets và Fernet key bằng giá trị mới, duy nhất cho từng môi trường.
-- Đánh giá việc lưu trữ, ghi log và quyền truy cập trước khi đưa dữ liệu doanh nghiệp thật vào hệ thống.
-- Giới hạn mạng truy cập PostgreSQL và Redis; không mở các cổng này ra Internet.
+## API và đường xử lý
+
+Gateway gọi `POST /internal/v1/telegram/turn` với `Authorization: Bearer <GATEWAY_TO_AGENT_SECRET>`. Agent trả `request_id` và danh sách chuỗi `messages`; gateway giao lên Telegram.
+
+Agent dùng `AGENT_TO_GATEWAY_SECRET` để gọi identity, connections, Calendar/Gmail/CRM và API actions. Identity yêu cầu contract v2. HTTP 200 có thể chứa thông báo lỗi quyền/kết nối hoặc yêu cầu xác nhận; không phải bằng chứng nghiệp vụ thành công.
+
+| Thành phần | Vị trí |
+|---|---|
+| Endpoint turn | `app/api/v1/internal.py` |
+| Dispatcher và Gemini parser | `app/services/gateway_agent_dispatcher.py` |
+| HTTP client gateway | `app/services/gateway_client.py` |
+| Xác nhận và sổ turn | `app/services/confirmation_service.py`, `app/services/turn_ledger.py` |
+| Task cá nhân | `app/providers/tasks/local.py` |
+| Điểm tin | `app/services/morning_briefing_service.py` |
+
+Thêm skill vào registry direct mode không tự mở skill đó qua gateway.
+
+## Lưu trữ và Docker
+
+Task và xác nhận nằm trong `data/tasks.db`; sổ turn nằm trong `data/turn_ledger.db`, tính từ thư mục chạy. Các module khác còn có dữ liệu runtime riêng. Không commit `.env`, `data/`, `.agent_data/`, token hoặc bản sao lưu.
+
+Compose hiện gồm agent, PostgreSQL và Redis; agent nối thêm mạng ngoài `auth_gateway_net`. Mạng này phải tồn tại trước khi khởi động. Khi chạy độc lập, tạo mạng nếu chưa có:
+
+```powershell
+docker network create auth_gateway_net
+docker compose up -d --build
+docker compose logs -f ai-agent
+```
+
+Đặt `GATEWAY_BASE_URL` theo địa chỉ dịch vụ API bên ngoài mà container truy cập được. Nếu dịch vụ nằm trên mạng chung, dùng tên service/alias và cổng nội bộ được cung cấp. Không dùng `localhost` để gọi container khác.
+
+Compose đã được cấu hình gắn volume bền vững `agent_sqlite_data` cho thư mục `/app/data` của agent (lưu trữ `tasks.db`, `turn_ledger.db`, `reminders.db`...) và kết nối mạng chung `auth_gateway_net`. Dữ liệu nghiệp vụ và trạng thái idempotency được bảo toàn qua các lần tạo lại container.
+
+## Kiểm thử và kết quả xác minh
+
+```powershell
+# Chạy toàn bộ test suite của Agent (221 passed, 1 skipped):
+.\.venv\Scripts\python.exe -m pytest -v
+```
+
+Toàn bộ **221 test** tự động đều đã chạy thành công (bao gồm unit test cho identity context v2, task/calendar/crm dispatching, turn cache verification, atomic confirmations và idempotency).
+
+### Trạng thái các lỗi chặn nghiệp vụ đã giải quyết
+
+1. **API đọc chi tiết Calendar/CRM:** Gateway đã sửa đúng chữ ký giải mã credential và kiểm tra quyền, cho phép Agent lấy snapshot và ETag/write_date thật để thực hiện preview/update.
+2. **Xác minh trước khi đọc cache turn:** Agent resolve identity từ Gateway trước khi truy xuất cache hoặc nhận turn. Đối chiếu `telegram_binding_id`, từ chối replay các bản ghi cũ thiếu binding/hash, và trả HTTP 503 khi gặp sự cố mạng Gateway tạm thời.
+3. **Thống nhất kết quả CRM:** Formatter đọc trực tiếp `result.id` (và fallback `result.lead.id`), hiển thị chính xác mã cơ hội và chỉ hiển thị doanh thu khi có dữ liệu thực tế.
+4. **Chuẩn hóa trạng thái chưa rõ kết quả:** `UNKNOWN_RESULT`, timeout và lỗi mạng được lưu trạng thái `unknown_result` mà không bị ghi đè thành thất bại; giữ nguyên operation ID cố định từ preview và chặn thực thi nếu thiếu ID để ngăn chặn duplicate execution.
+
+## Giới hạn còn lại và lưu ý vận hành
+
+- Phân tích yêu cầu hội thoại tự do phức tạp phụ thuộc vào mô hình LLM (Gemini API). Khi không có API key, các lệnh slash command xác định (`/today`, `/task`, `/calendar`, `/email`, `/crm`, `/confirm`) vẫn hoạt động bình thường.
+- Không tự ý thực thi lại hoặc hướng dẫn người dùng gửi lại ngay các thao tác đang có trạng thái `unknown_result` hoặc `in_progress` để tránh phát sinh tác vụ trùng lặp trên các dịch vụ bên ngoài.
+
+## Tài liệu bổ sung
+
+- [Tổng quan dự án](docs/PROJECT_OVERVIEW.md).
+- [Hướng dẫn lập trình viên](docs/DEVELOPER_GUIDE.md).
+- [Contract tích hợp gateway](docs/INTEGRATION_GATEWAY.md).
+- [Báo cáo lịch sử](docs/reports/).

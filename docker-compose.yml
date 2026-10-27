@@ -24,8 +24,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - agent_sqlite_data:/app/data
     networks:
       - agent_net
+      - gateway_net
 
   # ----------------------------------------------------
   # 2. PostgreSQL (Persistent Storage for Audit, Employees, Tokens)
@@ -74,7 +77,12 @@ volumes:
     driver: local
   agent_redis_data:
     driver: local
+  agent_sqlite_data:
+    driver: local
 
 networks:
   agent_net:
     driver: bridge
+  gateway_net:
+    name: auth_gateway_net
+    external: true

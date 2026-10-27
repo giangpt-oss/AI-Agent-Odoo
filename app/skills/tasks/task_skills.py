@@ -31,6 +31,7 @@ class TaskCreateSkill(BaseSkill):
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         provider = get_task_provider(context)
+        owner_key = getattr(context.session, "owner_key", None)
         
         due_at = None
         tz = getattr(context.session, "metadata", {}).get("timezone", "Asia/Ho_Chi_Minh") if context.session else "Asia/Ho_Chi_Minh"
@@ -49,7 +50,8 @@ class TaskCreateSkill(BaseSkill):
             due_at=due_at,
             timezone=tz,
             project=kwargs.get("project"),
-            tags=kwargs.get("tags", [])
+            tags=kwargs.get("tags", []),
+            owner_key=owner_key,
         )
         
         audit_logger.log_external_action(
@@ -79,7 +81,8 @@ class TaskListSkill(BaseSkill):
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         provider = get_task_provider(context)
-        return await provider.list_tasks(kwargs)
+        owner_key = getattr(context.session, "owner_key", None)
+        return await provider.list_tasks(kwargs, owner_key=owner_key)
 
 class TaskUpdateSkill(BaseSkill):
     name = "update_task"
@@ -99,6 +102,7 @@ class TaskUpdateSkill(BaseSkill):
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         provider = get_task_provider(context)
+        owner_key = getattr(context.session, "owner_key", None)
         updates = kwargs["updates"]
         
         if "due_text" in updates:
@@ -109,7 +113,7 @@ class TaskUpdateSkill(BaseSkill):
                 updates["timezone"] = parsed["timezone"]
             del updates["due_text"]
             
-        task = await provider.update_task(kwargs["task_id"], updates)
+        task = await provider.update_task(kwargs["task_id"], updates, owner_key=owner_key)
         return {"status": "SUCCESS", "task": task}
 
 class TaskCompleteSkill(BaseSkill):
@@ -129,7 +133,8 @@ class TaskCompleteSkill(BaseSkill):
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         provider = get_task_provider(context)
-        task = await provider.complete_task(kwargs["task_id"])
+        owner_key = getattr(context.session, "owner_key", None)
+        task = await provider.complete_task(kwargs["task_id"], owner_key=owner_key)
         
         audit_logger.log_external_action(
             action="COMPLETE_TASK",
@@ -159,7 +164,8 @@ class TaskDeleteSkill(BaseSkill):
 
     async def preview(self, context: SkillExecutionContext, **kwargs) -> Any:
         provider = get_task_provider(context)
-        task = await provider.get_task(kwargs["task_id"])
+        owner_key = getattr(context.session, "owner_key", None)
+        task = await provider.get_task(kwargs["task_id"], owner_key=owner_key)
         return {
             "action": "DELETE_TASK",
             "task_id": kwargs["task_id"],
@@ -169,7 +175,11 @@ class TaskDeleteSkill(BaseSkill):
 
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         provider = get_task_provider(context)
-        success = await provider.delete_task(kwargs["task_id"])
+        owner_key = getattr(context.session, "owner_key", None)
+        try:
+            success = await provider.delete_task(kwargs["task_id"], owner_key=owner_key)
+        except Exception:
+            success = False
         if success:
             audit_logger.log_external_action(
                 action="DELETE_TASK",
@@ -222,6 +232,7 @@ class TaskBulkCreateSkill(BaseSkill):
     async def execute(self, context: SkillExecutionContext, **kwargs) -> Any:
         tasks = kwargs["tasks"]
         provider = get_task_provider(context)
+        owner_key = getattr(context.session, "owner_key", None)
         tz = getattr(context.session, "metadata", {}).get("timezone", "Asia/Ho_Chi_Minh") if context.session else "Asia/Ho_Chi_Minh"
         
         results = []
@@ -239,7 +250,8 @@ class TaskBulkCreateSkill(BaseSkill):
                 due_at=due_at,
                 timezone=tz,
                 project=t.get("project"),
-                tags=[]
+                tags=[],
+                owner_key=owner_key,
             )
             results.append(task)
             
