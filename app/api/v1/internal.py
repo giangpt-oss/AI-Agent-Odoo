@@ -163,38 +163,38 @@ def format_whoami(user_info: Any) -> str:
         ctx = user_info
 
     lines = [
-        "👤 **Thông tin tài khoản đã xác minh qua Gateway:**",
-        f"- **Họ và tên:** {ctx.name}",
-        f"- **Email / Đăng nhập:** {ctx.login}",
-        f"- **Mã nhân viên (Odoo UID):** {ctx.odoo_uid}",
-        f"- **Hệ thống Odoo (Tenant):** {ctx.tenant}",
-        f"- **Cơ sở dữ liệu (Database):** {ctx.database}",
-        f"- **Múi giờ:** {ctx.timezone}",
-        f"- **Chức danh:** {ctx.display_job_title}",
-        f"- **Phòng ban:** {ctx.display_department}",
+        "👤 Thông tin tài khoản đã xác minh qua Gateway:",
+        f"• Họ và tên: {ctx.name}",
+        f"• Email / Đăng nhập: {ctx.login}",
+        f"• Mã nhân viên (Odoo UID): {ctx.odoo_uid}",
+        f"• Hệ thống Odoo (Tenant): {ctx.tenant}",
+        f"• Cơ sở dữ liệu (Database): {ctx.database}",
+        f"• Múi giờ: {ctx.timezone}",
+        f"• Chức danh: {ctx.display_job_title}",
+        f"• Phòng ban: {ctx.display_department}",
     ]
 
     if ctx.permissions:
-        lines.append(f"- **Quyền nghiệp vụ:** {', '.join(sorted(ctx.permissions))}")
+        lines.append(f"• Quyền nghiệp vụ: {', '.join(sorted(ctx.permissions))}")
     else:
-        lines.append("- **Quyền nghiệp vụ:** Chưa có quyền bổ sung")
+        lines.append("• Quyền nghiệp vụ: Chưa có quyền bổ sung")
 
     if ctx.authorization_checked_at:
-        lines.append(f"- **Thời điểm kiểm tra quyền:** {ctx.authorization_checked_at}")
+        lines.append(f"• Thời điểm kiểm tra quyền: {ctx.authorization_checked_at}")
 
     return "\n".join(lines)
 
 
 def format_greeting_help() -> str:
     return (
-        "👋 **Xin chào! Tôi có thể hỗ trợ gì cho bạn hôm nay?**\n\n"
-        "Bạn có thể nhắn tin tự nhiên hoặc dùng các lệnh nhanh sau:\n"
-        "• 📅 **Điểm tin hàng ngày:** Gửi `/today` hoặc hỏi *\"Hôm nay tôi có gì?\"*\n"
-        "• 👤 **Thông tin tài khoản:** Hỏi *\"Tôi là ai?\"* hoặc *\"Hồ sơ của tôi\"*\n"
-        "• 📆 **Lịch họp & Email:** Hỏi *\"Xem lịch\"* hoặc *\"Thư chưa đọc\"*\n"
-        "• 💼 **Odoo CRM:** Gửi `/crm search <từ khóa>` hoặc *\"Tìm khách hàng\"*\n"
-        "• 📋 **Công việc cá nhân:** Gửi `/task list` hoặc `/task create <nội dung>`\n\n"
-        "💡 *Các thao tác ghi dữ liệu luôn có bản xem trước để bạn xác nhận an toàn.*"
+        "👋 Xin chào! Tôi có thể hỗ trợ gì cho bạn hôm nay?\n\n"
+        "Bạn có thể nhắn tin tự nhiên hoặc dùng các gợi ý nhanh sau:\n"
+        "• 📅 Điểm tin hàng ngày: Gửi /today hoặc hỏi \"Hôm nay tôi có gì?\"\n"
+        "• 👤 Thông tin tài khoản: Hỏi \"Tôi là ai?\" hoặc \"Hồ sơ của tôi\"\n"
+        "• 📆 Lịch họp & Email: Hỏi \"Xem lịch\" hoặc \"Thư chưa đọc\"\n"
+        "• 💼 Odoo CRM: Gửi /crm search <từ khóa> hoặc \"Tìm khách hàng\"\n"
+        "• 📋 Công việc cá nhân: Gửi /task list hoặc /task create <nội dung>\n\n"
+        "💡 Các thao tác ghi dữ liệu luôn có bản xem trước để bạn xác nhận an toàn."
     )
 
 
@@ -268,20 +268,20 @@ def format_connection_status(user_info: dict[str, Any], conns: dict[str, Any]) -
             tele_status = "Không thể xác định trạng thái"
 
     lines = [
-        "🔗 **Trạng thái kết nối dịch vụ ngoại vi:**",
+        "🔗 Trạng thái kết nối dịch vụ ngoại vi:",
         "",
-        "**1. Google Workspace:**",
-        f"- Trạng thái: **{google_status}** ({google_email})",
-        f"- {google_scopes_line}",
+        "1. Google Workspace:",
+        f"• Trạng thái: {google_status} ({google_email})",
+        f"• {google_scopes_line}",
         "",
-        "**2. Hệ thống Odoo ERP:**",
-        f"- Trạng thái: **{odoo_status}** (Odoo UID: {odoo_uid})",
-        f"- Tenant: `{user_info.get('tenant')}`",
-        f"- Database: `{user_info.get('database')}`",
+        "2. Hệ thống Odoo ERP:",
+        f"• Trạng thái: {odoo_status} (Odoo UID: {odoo_uid})",
+        f"• Tenant: {user_info.get('tenant')}",
+        f"• Database: {user_info.get('database')}",
         "",
-        "**3. Telegram Bot:**",
-        f"- Người dùng: `{user_info.get('name')}`",
-        f"- Trạng thái liên kết: **{tele_status}**",
+        "3. Telegram Bot:",
+        f"• Người dùng: {user_info.get('name')}",
+        f"• Trạng thái liên kết: {tele_status}",
     ]
     return "\n".join(lines)
 
