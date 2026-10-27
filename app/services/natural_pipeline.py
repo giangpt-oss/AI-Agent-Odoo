@@ -255,17 +255,13 @@ class NaturalPipeline:
             data = json.loads(cleaned)
             return IntentAnalysisResult.model_validate(data)
 
-        except asyncio.TimeoutError:
-            logger.warning("LLM dispatch timed out after 6s for text: %s", text)
-            return IntentAnalysisResult(
-                intent_type=IntentType.UNSUPPORTED,
-                reply_text="⏱️ Yêu cầu xử lý ngôn ngữ tự nhiên phản hồi quá lâu. Vui lòng thử lại hoặc sử dụng các lệnh gợi ý nhanh.",
-            )
         except Exception as e:
             logger.error("LLM dispatch error: %s", e)
+            from app.services.error_handler import classify_exception
+            _, err_msg = classify_exception(e)
             return IntentAnalysisResult(
                 intent_type=IntentType.UNSUPPORTED,
-                reply_text="⚠️ Không thể xử lý yêu cầu lúc này. Bạn có thể thử diễn đạt ngắn gọn hơn hoặc dùng các lệnh /crm, /today, /task list.",
+                reply_text=err_msg,
             )
 
 

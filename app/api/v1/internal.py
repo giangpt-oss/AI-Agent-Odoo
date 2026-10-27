@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -491,7 +492,7 @@ async def handle_telegram_turn(
         binding_id=context.telegram_binding_id,
     )
 
-    try:
+    async def _execute_turn() -> list[str]:
         # 1. Các lệnh nghiệp vụ chuyên biệt, lệnh xác nhận 2 bước và slash commands
         dispatcher_prefixes = (
             "/confirm",
@@ -506,85 +507,88 @@ async def handle_telegram_turn(
             "/task complete",
         )
         if any(lower_text.startswith(p) for p in dispatcher_prefixes):
-            messages = await gateway_agent_dispatcher.dispatch(
+            return await gateway_agent_dispatcher.dispatch(
                 context=context,
                 chat_id=req.chat_id,
                 telegram_user_id=req.telegram_user_id,
                 raw_text=clean_text,
             )
-        else:
-            # 2. Unified Natural Pipeline (Fast-path & LLM Schema)
-            intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
 
-            if intent_res.intent_type == IntentType.REPLY:
-                messages = [intent_res.reply_text or ""]
+        # 2. Unified Natural Pipeline (Fast-path & LLM Schema)
+        intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
 
-            elif intent_res.intent_type == IntentType.CLARIFY:
-                clarify_text = intent_res.clarification_prompt or "Vui lòng làm rõ yêu cầu."
-                if intent_res.candidate_options:
-                    options_str = "\n".join(f"• {opt}" for opt in intent_res.candidate_options)
-                    clarify_text += f"\n\nDanh sách lựa chọn:\n{options_str}"
-                messages = [clarify_text]
+        if intent_res.intent_type == IntentType.REPLY:
+            return [intent_res.reply_text or ""]
 
-            elif intent_res.intent_type == IntentType.UNSUPPORTED:
-                messages = [intent_res.reply_text or "⚠️ Yêu cầu ngoài phạm vi hỗ trợ."]
+        elif intent_res.intent_type == IntentType.CLARIFY:
+            clarify_text = intent_res.clarification_prompt or "Vui lòng làm rõ yêu cầu."
+            if intent_res.candidate_options:
+                options_str = "\n".join(f"• {opt}" for opt in intent_res.candidate_options)
+                clarify_text += f"\n\nDanh sách lựa chọn:\n{options_str}"
+            return [clarify_text]
 
-            elif intent_res.intent_type == IntentType.DRAFT:
-                if intent_res.draft:
-                    conversation_history_store.set_active_draft(
-                        context.tenant,
-                        context.user_id,
-                        req.chat_id,
-                        context.telegram_binding_id,
-                        intent_res.draft.model_dump(),
-                    )
-                messages = [
-                    intent_res.reply_text
-                    or "📝 Đã lưu bản nháp thành công. Bạn có thể yêu cầu 'viết ngắn hơn' hoặc 'gửi bản vừa soạn'."
-                ]
+        elif intent_res.intent_type == IntentType.UNSUPPORTED:
+            return [intent_res.reply_text or "⚠️ Yêu cầu ngoài phạm vi hỗ trợ."]
 
-            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "identity.whoami":
-                messages = [format_whoami(context)]
-
-            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "connections.status":
-                conns = await gateway_client.get_user_connections(context.user_id)
-                messages = [format_connection_status(user_info, conns)]
-
-            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "briefing.today":
-                briefing_text = await morning_briefing_service.generate_real_briefing(user_info)
-                messages = [briefing_text]
-
-            elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "tasks.personal.list":
-                if not context.has_permission(GatewayPermission.TASKS_READ):
-                    messages = [
-                        "⚠️ Tài khoản của bạn chưa được cấp quyền tra cứu công việc (`tasks.read`). "
-                        "Vui lòng liên hệ quản trị viên hoặc kiểm tra quyền trên Cổng Gateway."
-                    ]
-                elif not context.tenant or not context.database or context.odoo_uid is None:
-                    messages = [
-                        "⚠️ Không thể tải danh sách công việc: Thông tin định danh không đầy đủ "
-                        "để xác định chủ sở hữu (yêu cầu tenant, database và Odoo UID)."
-                    ]
-                else:
-                    tasks = await local_task_provider.list_tasks(filters={}, owner_key=context.owner_key)
-                    conversation_history_store.set_last_read_data(
-                        context.tenant,
-                        context.user_id,
-                        req.chat_id,
-                        context.telegram_binding_id,
-                        "tasks",
-                        tasks,
-                    )
-                    messages = [format_task_list(tasks)]
-
-            else:
-                # Điều phối các tác vụ nghiệp vụ nâng cao (Calendar, Gmail, CRM, Xác nhận /confirm, Hủy /cancel)
-                messages = await gateway_agent_dispatcher.dispatch(
-                    context=context,
-                    chat_id=req.chat_id,
-                    telegram_user_id=req.telegram_user_id,
-                    raw_text=clean_text,
+        elif intent_res.intent_type == IntentType.DRAFT:
+            if intent_res.draft:
+                conversation_history_store.set_active_draft(
+                    context.tenant,
+                    context.user_id,
+                    req.chat_id,
+                    context.telegram_binding_id,
+                    intent_res.draft.model_dump(),
                 )
+            return [
+                intent_res.reply_text
+                or "📝 Đã lưu bản nháp thành công. Bạn có thể yêu cầu 'viết ngắn hơn' hoặc 'gửi bản vừa soạn'."
+            ]
+
+        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "identity.whoami":
+            return [format_whoami(context)]
+
+        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "connections.status":
+            conns = await gateway_client.get_user_connections(context.user_id)
+            return [format_connection_status(user_info, conns)]
+
+        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "briefing.today":
+            briefing_text = await morning_briefing_service.generate_real_briefing(user_info)
+            return [briefing_text]
+
+        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "tasks.personal.list":
+            if not context.has_permission(GatewayPermission.TASKS_READ):
+                return [
+                    "⚠️ Tài khoản của bạn chưa được cấp quyền tra cứu công việc (`tasks.read`). "
+                    "Vui lòng liên hệ quản trị viên hoặc kiểm tra quyền trên Cổng Gateway."
+                ]
+            elif not context.tenant or not context.database or context.odoo_uid is None:
+                return [
+                    "⚠️ Không thể tải danh sách công việc: Thông tin định danh không đầy đủ "
+                    "để xác định chủ sở hữu (yêu cầu tenant, database và Odoo UID)."
+                ]
+            else:
+                tasks = await local_task_provider.list_tasks(filters={}, owner_key=context.owner_key)
+                conversation_history_store.set_last_read_data(
+                    context.tenant,
+                    context.user_id,
+                    req.chat_id,
+                    context.telegram_binding_id,
+                    "tasks",
+                    tasks,
+                )
+                return [format_task_list(tasks)]
+
+        else:
+            # Điều phối các tác vụ nghiệp vụ nâng cao (Calendar, Gmail, CRM, Xác nhận /confirm, Hủy /cancel)
+            return await gateway_agent_dispatcher.dispatch(
+                context=context,
+                chat_id=req.chat_id,
+                telegram_user_id=req.telegram_user_id,
+                raw_text=clean_text,
+            )
+
+    try:
+        messages = await asyncio.wait_for(_execute_turn(), timeout=18.0)
 
         # Lưu lịch sử phiên hội thoại
         conversation_history_store.append_turn(
@@ -605,12 +609,16 @@ async def handle_telegram_turn(
                 messages[0],
             )
 
+    except asyncio.TimeoutError:
+        logger.warning("Turn processing timed out after 18s for request_id: %s", req.request_id)
+        from app.services.error_handler import ErrorCode, format_error_message
+        messages = [format_error_message(ErrorCode.TURN_TIMEOUT)]
+
     except Exception as e:
         logger.error("Error in gateway turn dispatcher: %s", e, exc_info=True)
-        messages = [
-            f"⚠️ Đã có lỗi xảy ra trong quá trình xử lý yêu cầu (Mã đối soát: {req.request_id}). "
-            "Vui lòng thử lại sau."
-        ]
+        from app.services.error_handler import classify_exception
+        _, err_msg = classify_exception(e)
+        messages = [err_msg]
 
     # Ghi nhận kết quả turn vào sổ nhật ký (idempotency)
     turn_ledger.record_turn_completed(req.request_id, messages)
