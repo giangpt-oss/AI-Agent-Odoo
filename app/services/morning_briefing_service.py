@@ -82,7 +82,12 @@ class MorningBriefingService:
                 logger.warning("Error or timeout fetching gmail: %s", e)
                 return {"status": "TIMEOUT" if isinstance(e, asyncio.TimeoutError) else "ERROR", "total_unread": None, "messages": []}
 
+        raw_permissions = user_info.get("permissions")
+        perms_set = set(raw_permissions) if raw_permissions is not None else None
+
         async def fetch_tasks():
+            if perms_set is not None and "tasks.read" not in perms_set:
+                return {"status": "PERMISSION_DENIED", "tasks": []}
             try:
                 # Chỉ lấy task thuộc owner_key xác thực của user này
                 tasks = await self.task_provider.list_tasks({}, owner_key=owner_key)
@@ -143,7 +148,9 @@ class MorningBriefingService:
         # --- Section 2: Công việc cá nhân (Tasks) ---
         lines.append("📋 **CÔNG VIỆC CẦN XỬ LÝ (TASKS):**")
         task_status = task_res.get("status")
-        if task_status != "OK":
+        if task_status == "PERMISSION_DENIED":
+            lines.append("• ⚠️ _Chưa được cấp quyền đọc công việc cá nhân (`tasks.read`)._")
+        elif task_status != "OK":
             lines.append("• ⚠️ _Không thể tải danh sách công việc (Lỗi cơ sở dữ liệu nội bộ)._")
         else:
             all_tasks = task_res.get("tasks", [])

@@ -132,9 +132,9 @@ async def test_internal_turn_identity_mismatch(client, gateway_settings):
     with patch("app.services.gateway_client.gateway_client.resolve_identity", new_callable=AsyncMock) as mock_res:
         mock_res.return_value = mock_user
         resp = client.post("/internal/v1/telegram/turn", json=payload, headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 403
         data = resp.json()
-        assert "sai lệch thông tin danh tính" in data["messages"][0]
+        assert data.get("detail", {}).get("code") == "IDENTITY_MISMATCH"
 
 
 @pytest.mark.asyncio

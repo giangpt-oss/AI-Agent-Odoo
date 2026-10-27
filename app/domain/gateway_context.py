@@ -10,8 +10,9 @@ class GatewayPermission:
     CALENDAR_READ = "calendar.read"
     CALENDAR_WRITE = "calendar.write"
     GMAIL_READ = "gmail.read"
-    GMAIL_WRITE = "gmail.write"
+    GMAIL_SEND = "gmail.send"
     CRM_READ = "crm.read"
+    CRM_CREATE = "crm.create"
     CRM_WRITE = "crm.write"
 
 
@@ -33,8 +34,10 @@ class GatewayUserContext:
     name: str = "Chưa cập nhật"
     login: str = "Chưa cập nhật"
     timezone: str = "Asia/Bangkok"
+    telegram_binding_id: Optional[str] = None
     job_title: Optional[str] = None
     department: Optional[str] = None
+    manager_name: Optional[str] = None
     permissions: Set[str] = field(default_factory=set)
     authorization_checked_at: Optional[str] = None
 
@@ -57,6 +60,12 @@ class GatewayUserContext:
     def display_department(self) -> str:
         if self.department and str(self.department).strip():
             return str(self.department).strip()
+        return "Chưa có thông tin"
+
+    @property
+    def display_manager_name(self) -> str:
+        if self.manager_name and str(self.manager_name).strip():
+            return str(self.manager_name).strip()
         return "Chưa có thông tin"
 
 
@@ -86,8 +95,10 @@ def build_gateway_user_context(raw: dict[str, Any]) -> GatewayUserContext:
         name=str(raw.get("name") or "Chưa cập nhật"),
         login=str(raw.get("login") or "Chưa cập nhật"),
         timezone=str(tz),
+        telegram_binding_id=raw.get("telegram_binding_id"),
         job_title=raw.get("job_title"),
         department=raw.get("department"),
+        manager_name=raw.get("manager_name"),
         permissions=perms,
         authorization_checked_at=raw.get("authorization_checked_at"),
     )

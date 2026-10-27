@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
@@ -231,9 +232,10 @@ class TestGatewayDispatcherPermissionsAndErrors:
         with patch("app.services.gateway_client.gateway_client.resolve_identity", new_callable=AsyncMock) as mock_res:
             mock_res.side_effect = GatewayServiceError("Gateway upstream connection timeout")
             resp = client.post("/internal/v1/telegram/turn", json=payload, headers=headers)
-            assert resp.status_code == 200
-            data = resp.json()
-            msg = data["messages"][0]
+            # Per Task 2: Transient identity error returns HTTP 503 for gateway retry
+            assert resp.status_code == 503
+            err_data = resp.json()
+            err_msg = json.dumps(err_data, ensure_ascii=False)
             # Bắt buộc: Gateway tạm lỗi không được trình bày thành “Sai mật khẩu” hoặc “Mất liên kết”
-            assert "Sai mật khẩu" not in msg
-            assert "kết nối đến Cổng Gateway" in msg or "sự cố kết nối" in msg
+            assert "Sai mật khẩu" not in err_msg
+            assert "kết nối đến Gateway" in err_msg or "GATEWAY_SERVICE_UNAVAILABLE" in err_msg

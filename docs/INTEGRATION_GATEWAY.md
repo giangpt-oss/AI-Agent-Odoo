@@ -148,7 +148,7 @@ Với dữ liệu lịch/email, Agent phân biệt:
 | Gateway gọi Agent nhận 401 | Header Bearer và `GATEWAY_TO_AGENT_SECRET` có khớp không? |
 | Agent không xác minh được danh tính | URL Gateway, secret chiều Agent → Gateway, liên kết Telegram và trạng thái nhân viên |
 | Điểm tin thiếu lịch hoặc Gmail | Trạng thái nguồn trong phản hồi; tài khoản đã liên kết và cấp quyền chưa? |
-| HTTP 200 nhưng trả “chưa hỗ trợ” | Câu hỏi có thuộc các nhóm trong [README](../README.md#hiện-tại-dùng-được-gì) không? |
+| HTTP 200 nhưng trả “chưa hỗ trợ” | Câu hỏi có thuộc các nhóm trong [README](../README.md#phạm-vi-tính-năng-hiện-có) không? |
 
 Các kiểm thử liên quan:
 

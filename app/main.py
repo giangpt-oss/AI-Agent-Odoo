@@ -70,10 +70,10 @@ def create_application(settings: Settings | None = None) -> FastAPI:
     from app.api.v1.router import get_api_v1_router
     app.include_router(get_api_v1_router(settings))
 
-    from app.api.v1.odoo_auth import router as odoo_auth_router
-    app.include_router(odoo_auth_router)
-
-    if settings.INTEGRATION_MODE == "gateway":
+    if settings.INTEGRATION_MODE != "gateway":
+        from app.api.v1.odoo_auth import router as odoo_auth_router
+        app.include_router(odoo_auth_router)
+    else:
         from app.api.v1.internal import router as internal_router
         app.include_router(internal_router)
 
