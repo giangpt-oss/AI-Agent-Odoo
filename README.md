@@ -41,15 +41,36 @@ flowchart TD
     Store --> Out[Phản hồi có cấu trúc an toàn]
 ```
 
-### Bảng kết quả đo lường độ trễ (Trước vs Sau cải tiến)
+### Kết quả đo lường độ trễ & độ chính xác (Benchmark 2026-10-27)
 
-| Nhóm yêu cầu | Trước cải tiến (Cũ) | Sau cải tiến (Mới) | Target SLA | Trạng thái |
-|---|---|---|---|---|
-| **Nhóm 1: Chào hỏi / Năng lực** | 3.5s – 5.5s (Dài dòng, rối rắm) | **p50: 0.01ms / p95: 0.02ms** | p95 $\le$ 2.0s | ✅ VƯỢT CHỈ TIÊU |
-| **Nhóm 2: Đọc 1 nguồn dữ liệu** | 5.0s – 8.5s (Verify lặp lại) | **p50: 0.01ms / p95: 0.03ms** | p95 $\le$ 6.0s | ✅ VƯỢT CHỈ TIÊU |
-| **Nhóm 3: Điểm tin / Tổng hợp** | 7.0s – 12.0s (Chờ tuần tự) | **p50: 0.01ms / p95: 0.01ms** | p95 $\le$ 8.0s | ✅ VƯỢT CHỈ TIÊU |
+Hệ thống cung cấp công cụ kiểm chuẩn độc lập `scripts/benchmark_latency.py` với hai chế độ đo lường minh bạch:
 
-*(Dữ liệu đo đạc thực tế thông qua script `scripts/benchmark_latency.py` qua 30 mẫu thử nghiệm mỗi nhóm)*.
+#### 1. Benchmark Router / Pipeline phân tích ý định (`--mode router`)
+*Phạm vi: Đo tốc độ phân loại ý định, trích xuất tham số trong bộ nhớ (offline logic).*
+
+| Nhóm yêu cầu | Số mẫu | Độ chính xác | p50 | p95 | Max |
+|---|---|---|---|---|---|
+| **Greeting / Menu** | 60 | 100.0% | 0.014 ms | 0.079 ms | 0.111 ms |
+| **Task with greeting** | 15 | 100.0% | 0.013 ms | 0.026 ms | 0.026 ms |
+| **Read Data (Lịch, Task, Mail, CRM)** | 90 | 100.0% | 0.011 ms | 0.023 ms | 5.052 ms |
+| **Draft & Write (Bản nháp & Soạn gửi)** | 30 | 100.0% | 0.015 ms | 0.024 ms | 0.125 ms |
+| **Confirm / Status (/confirm, /status)** | 30 | 100.0% | 0.004 ms | 0.007 ms | 0.016 ms |
+
+#### 2. Benchmark Toàn trình Endpoint Turn (`--mode endpoint`)
+*Phạm vi: Toàn trình API `/internal/v1/telegram/turn` bao gồm xác thực định danh Identity, Turn sequential lease, Pipeline, UnifiedExecutor, lưu trữ SQLite và kết xuất phản hồi (ranh giới HTTP/SDK giả lập).*
+
+| Hạng mục Turn | Số mẫu | p50 | p90 | p95 | Min | Max |
+|---|---|---|---|---|---|---|
+| **Greeting** | 15 | 40.25 ms | 52.83 ms | 71.96 ms | 36.39 ms | 71.96 ms |
+| **Capability (/help)** | 15 | 36.19 ms | 47.00 ms | 47.15 ms | 34.34 ms | 47.15 ms |
+| **Identity (Whoami)** | 15 | 32.93 ms | 34.58 ms | 39.34 ms | 31.24 ms | 39.34 ms |
+| **Briefing (/today)** | 15 | 32.55 ms | 39.46 ms | 46.00 ms | 29.40 ms | 46.00 ms |
+| **Tasks List** | 15 | 38.10 ms | 42.26 ms | 44.78 ms | 33.55 ms | 44.78 ms |
+| **Calendar List** | 15 | 38.67 ms | 44.41 ms | 44.82 ms | 34.42 ms | 44.82 ms |
+| **Task Create Preview** | 15 | 35.56 ms | 39.44 ms | 43.16 ms | 33.25 ms | 43.16 ms |
+
+* Tỷ lệ hoàn tất turn thành công: **100.0% (105/105 lượt)**, không có request bị kẹt lease hay timeout.
+* **Lưu ý nghiệp vụ:** Các chỉ số trên đo đạc chi phí tính toán và điều phối nội bộ của Agent. Trong môi trường production thực tế, tổng thời gian người dùng chờ phản hồi sẽ bao gồm thêm độ trễ mạng mạng Telegram Bot API và thời gian phản hồi của mô hình LLM (nếu câu phức tạp kích hoạt Gemini Flash Lite, giới hạn deadline 6s).
 
 ## Phạm vi tính năng hiện có
 
@@ -190,8 +211,8 @@ Compose đã được cấu hình gắn volume bền vững `agent_sqlite_data` 
 ## Kiểm thử và kết quả xác minh
 
 ```powershell
-# Chạy toàn bộ test suite của Agent (221 passed, 1 skipped, 0 failed):
-.\.venv\Scripts\python.exe -m pytest -v
+# Chạy toàn bộ test suite của Agent trong môi trường cô lập (391 passed, 1 skipped, 0 failed):
+.\.venv\Scripts\python.exe -B -X utf8 -m pytest -q --disable-warnings --tb=short
 
 # (Tùy chọn) Chạy riêng integration test kiểm tra endpoint turn nội bộ:
 .\.venv\Scripts\python.exe -m pytest tests/integration/test_internal_turn.py -v
@@ -199,19 +220,22 @@ Compose đã được cấu hình gắn volume bền vững `agent_sqlite_data` 
 
 ### Kết quả xác minh và phạm vi đã kiểm chứng
 
-- **221 test đạt 100%**: Bao gồm unit test cho identity context contract v2, dispatcher định tuyến lệnh/preview, xác thực token xác nhận nguyên tử, turn ledger idempotency, và bộ định dạng hiển thị kết quả.
-- **Giải thích test bị bỏ qua (1 skipped)**: Test `tests/test_security.py::test_traversal_via_symlink` bị bỏ qua có chủ đích khi chạy trên môi trường Windows không bật quyền Administrator hoặc Developer Mode (`pytest.skip("Cannot create symlinks on this Windows setup")`). Đây là cơ chế bảo vệ tiêu chuẩn của bộ test khi hệ điều hành hạn chế quyền tạo symbolic link, hoàn toàn không ảnh hưởng đến an toàn vận hành hay tính năng của ứng dụng.
+- **391 test đạt, 1 test skipped**: Bao gồm unit test cho identity context contract v2, dispatcher định tuyến lệnh/preview, xác thực token xác nhận nguyên tử, turn ledger idempotency, bộ định dạng kết quả, NaturalPipeline, 98 ca hội thoại tự nhiên, và các bộ test hồi quy khắt khe cho execution hardening, task revision conflict, email draft CAS và lease recovery.
+- **Giải thích test bị bỏ qua (1 skipped)**: Test `tests/test_security.py::test_traversal_via_symlink` bị bỏ qua có chủ đích khi chạy trên môi trường Windows không bật quyền Administrator hoặc Developer Mode (`pytest.skip("Cannot create symlinks on this Windows setup")`). Đây là cơ chế bảo vệ tiêu chuẩn khi hệ điều hành hạn chế quyền tạo symbolic link, không ảnh hưởng đến logic nghiệp vụ hay an toàn của ứng dụng.
 - **Git diff**: Kiểm tra `git diff --check` đạt chuẩn, không có lỗi khoảng trắng hay định dạng thừa.
 
-> **Lưu ý quan trọng về kiểm thử tự động so với nghiệm thu thực tế:**
-> Bộ 221 test tự động được thực hiện độc lập trong môi trường mock nội bộ (giả lập Gateway response, SQLite tạm thời, không gọi ra dịch vụ AI hoặc Telegram thật). Kiểm thử tự động chứng minh sự ổn định của contract API và cơ chế chống trùng lặp, nhưng **không thay thế việc nghiệm thu thực tế bằng tài khoản thật**. Người dùng cần chạy thử nghiệm trên bot Telegram thật kết nối với Gateway theo checklist dưới đây.
+> **Lưu ý quan trọng về phạm vi kiểm thử:**
+> Bộ 391 test tự động được thực hiện trong môi trường kiểm thử cô lập (giả lập Gateway response, SQLite tạm thời, không gọi ra API bên ngoài hoặc LLM thật). Kiểm thử tự động chứng minh sự ổn định của contract API, logic nghiệp vụ nội bộ và cơ chế bảo vệ dữ liệu, nhưng **không thay thế việc nghiệm thu thực tế bằng tài khoản thật**. Người dùng cần chạy thử nghiệm trên bot Telegram thật kết nối với Gateway theo checklist dưới đây.
 
-### Trạng thái các lỗi chặn nghiệp vụ đã giải quyết
+### Trạng thái các cải tiến cốt lõi đã hoàn tất
 
-1. **API đọc chi tiết Calendar/CRM:** Gateway đã sửa đúng chữ ký giải mã credential và kiểm tra quyền, cho phép Agent lấy snapshot và ETag/write_date thật để thực hiện preview/update.
+1. **API đọc chi tiết Calendar/CRM:** Gateway đã sửa đúng chữ ký giải mã credential và kiểm tra quyền, cho phép Agent lấy snapshot và ETag/write_date thật để thực hiện preview/update an toàn.
 2. **Xác minh trước khi đọc cache turn:** Agent resolve identity từ Gateway trước khi truy xuất cache hoặc nhận turn. Đối chiếu `telegram_binding_id`, từ chối replay các bản ghi cũ thiếu binding/hash, và trả HTTP 503 khi gặp sự cố mạng Gateway tạm thời.
-3. **Thống nhất kết quả CRM:** Formatter đọc trực tiếp `result.id` (và fallback `result.lead.id`), hiển thị chính xác mã cơ hội và chỉ hiển thị doanh thu khi có dữ liệu thực tế.
-4. **Chuẩn hóa trạng thái chưa rõ kết quả:** `UNKNOWN_RESULT`, timeout và lỗi mạng được lưu trạng thái `unknown_result` mà không bị ghi đè thành thất bại; giữ nguyên operation ID cố định từ preview và chặn thực thi nếu thiếu ID để ngăn chặn duplicate execution.
+3. **Thống nhất kết quả CRM:** Formatter đọc trực tiếp `result.id` (và fallback `result.lead.id`), hiển thị chính xác mã cơ hội và chỉ hiển thị doanh thu khi có dữ liệu thực tế từ Odoo.
+4. **Chuẩn hóa trạng thái chưa rõ kết quả & Recovery:** `UNKNOWN_RESULT`, timeout và lỗi mạng được lưu trạng thái `unknown_result` mà không bị ghi đè thành thất bại. Confirmation cũ thiếu lease được tự động thu hồi an toàn về `unknown_result` và giữ nguyên operation ID để đối soát thủ công rõ ràng.
+5. **Ràng buộc Snapshot & Revision của Task:** Tự động tăng revision qua SQLite trigger; chặn mọi thao tác confirm nếu task bị sửa đổi sau thời điểm tạo bản xem trước.
+6. **Compare-and-Swap (CAS) nguyên tử cho Draft:** Transaction SQLite với `BEGIN IMMEDIATE` tuần tự hóa các thao tác cập nhật draft, loại bỏ race condition khi nhiều writer cùng sửa draft; bảo vệ định danh recipient/subject và version do application tự quản lý.
+7. **Ràng buộc Confirm Draft:** Chỉ cho phép xác nhận khi draft tồn tại, trùng ID và version bằng chính xác phiên bản preview; draft bị xóa hoặc sửa đổi đều chặn gọi Gateway (0 lần dispatch).
 
 ## Checklist tự nghiệm thu bằng tài khoản thật (Dành cho người dùng)
 
