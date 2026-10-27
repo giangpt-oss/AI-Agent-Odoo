@@ -9,25 +9,59 @@ from app.core.config import Settings, get_settings
 from app.api.v1.router import api_v1_router
 
 
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def _background_lease_reconciliation_loop():
+    """Tác vụ nền chạy mỗi 30 giây: chỉ GET trạng thái, chỉ xử lý lease đã hết hạn."""
+    from app.services.confirmation_service import reconcile_leases_with_gateway
+    while True:
+        try:
+            await asyncio.sleep(30)
+            await reconcile_leases_with_gateway()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Lỗi trong vòng lặp đối soát lease định kỳ: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Quản lý khởi tạo và dọn dẹp tài nguyên (DB Pool, Redis, Scheduler v.v.)."""
     settings = get_settings()
     print(f"[*] Starting {settings.APP_NAME} in [{settings.APP_ENV}] mode...")
     
-    # Khởi động Scheduler Service cho thông báo nhắc hẹn
+    # 1. Phục hồi executing hết lease sang trạng thái cần đối soát ngay khi boot
+    from app.services.confirmation_service import confirmation_service
+    recovered = confirmation_service.recover_expired_leases()
+    if recovered:
+        print(f"[*] Phục hồi {recovered} confirmation hết hạn lease sang trạng thái unknown_result.")
+
+    # 2. Khởi động Scheduler Service cho thông báo nhắc hẹn
     from app.services.scheduler import scheduler_service
     scheduler_service.start()
 
-    # Khởi động Indexing Worker để phục hồi các job gián đoạn ngay khi boot
+    # 3. Khởi động Indexing Worker để phục hồi các job gián đoạn ngay khi boot
     from app.knowledge.indexing import indexing_service
     await indexing_service.start_worker()
+
+    # 4. Khởi động background reconciliation task (chu kỳ 30s)
+    reconciliation_task = asyncio.create_task(_background_lease_reconciliation_loop())
     
     yield
     
     print(f"[*] Shutting down {settings.APP_NAME}...")
+    reconciliation_task.cancel()
+    try:
+        await reconciliation_task
+    except asyncio.CancelledError:
+        pass
     scheduler_service.stop()
     indexing_service.stop_worker()
+
 
 
 def create_application(settings: Settings | None = None) -> FastAPI:

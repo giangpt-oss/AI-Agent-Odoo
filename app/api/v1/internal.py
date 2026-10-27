@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import secrets
+import time
 from typing import Any, List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -326,305 +327,229 @@ async def handle_telegram_turn(
     req: TelegramTurnRequest,
     request: Request,
 ):
-    payload_hash = hashlib.sha256(req.text.encode("utf-8")).hexdigest()
+    turn_start_time = time.time()
+    turn_deadline = turn_start_time + 18.0
 
-    # 1. Luôn xác thực danh tính từ Gateway TRƯỚC KHI đọc cache hoặc nhận claim turn
-    try:
-        user_info = await gateway_client.resolve_identity(
-            telegram_user_id=req.telegram_user_id,
-            chat_id=req.chat_id,
-        )
-    except GatewayServiceError as e:
-        logger.warning("Gateway service error resolving identity for request_id=%s: %s", req.request_id, e)
-        # Lỗi identity tạm thời trả HTTP 503 để gateway retry, không ghi thành kết quả cuối cùng
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "GATEWAY_SERVICE_UNAVAILABLE", "message": f"Không thể kết nối đến Gateway để xác thực danh tính: {e}"},
-        )
-    except GatewayContractIncompatibleError as e:
-        logger.error("Gateway contract incompatible: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "CONTRACT_INCOMPATIBLE", "message": "Gateway contract version incompatible (contract v2 required)"},
-        )
+    async def _run_entire_turn() -> list[str]:
+        payload_hash = hashlib.sha256(req.text.encode("utf-8")).hexdigest()
 
-    if not user_info:
-        logger.warning(
-            "Identity resolution failed for telegram_user_id=%s chat_id=%s",
-            req.telegram_user_id,
-            req.chat_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "NOT_CONNECTED", "message": "Tài khoản Telegram chưa được liên kết hoặc đã bị ngắt kết nối"},
-        )
+        # 1. Luôn xác thực danh tính từ Gateway TRƯỚC KHI đọc cache hoặc nhận claim turn (giới hạn 5s)
+        try:
+            user_info = await asyncio.wait_for(
+                gateway_client.resolve_identity(
+                    telegram_user_id=req.telegram_user_id,
+                    chat_id=req.chat_id,
+                ),
+                timeout=5.0,
+            )
+        except GatewayServiceError as e:
+            logger.warning("Gateway service error resolving identity for request_id=%s: %s", req.request_id, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "GATEWAY_SERVICE_UNAVAILABLE", "message": f"Không thể kết nối đến Gateway để xác thực danh tính: {e}"},
+            )
+        except GatewayContractIncompatibleError as e:
+            logger.error("Gateway contract incompatible: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"code": "CONTRACT_INCOMPATIBLE", "message": "Gateway contract version incompatible (contract v2 required)"},
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "IDENTITY_TIMEOUT", "message": "Quá thời gian xác thực danh tính từ Gateway (5s)."},
+            )
 
-    # Xây dựng context người dùng thống nhất từ Gateway identity
-    context = build_gateway_user_context(user_info)
-    verified_binding_id = context.telegram_binding_id
-
-    # Đảm bảo gateway_user_id khớp với user_id được giải quyết
-    if context.user_id != req.gateway_user_id:
-        logger.warning(
-            "Gateway user ID mismatch: payload=%s, resolved=%s",
-            req.gateway_user_id,
-            context.user_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "IDENTITY_MISMATCH", "message": "User ID does not match resolved gateway identity"},
-        )
-
-    # Nếu request gửi kèm telegram_binding_id, đối chiếu với binding hiện hành
-    if req.telegram_binding_id and verified_binding_id and req.telegram_binding_id != verified_binding_id:
-        logger.warning(
-            "Telegram binding ID mismatch: payload=%s, verified=%s",
-            req.telegram_binding_id,
-            verified_binding_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "BINDING_MISMATCH", "message": "Request binding ID does not match current verified binding"},
-        )
-
-    # 2. Kiểm tra Idempotency theo request_id sau khi đã xác minh danh tính
-    turn_record = turn_ledger.get_turn_record(req.request_id)
-    if turn_record is not None:
-        # Kiểm tra danh tính người dùng và chat
-        if (
-            turn_record["user_id"] != context.user_id
-            or turn_record["telegram_user_id"] != req.telegram_user_id
-            or turn_record["chat_id"] != req.chat_id
-        ):
+        if not user_info:
             logger.warning(
-                "Turn identity mismatch for request_id=%s: recorded=(%s,%s,%s), incoming=(%s,%s,%s)",
-                req.request_id,
-                turn_record["user_id"],
-                turn_record["telegram_user_id"],
-                turn_record["chat_id"],
-                context.user_id,
+                "Identity resolution failed for telegram_user_id=%s chat_id=%s",
                 req.telegram_user_id,
                 req.chat_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail={"code": "IDENTITY_MISMATCH", "message": "Turn identity does not match existing turn record"},
+                detail={"code": "NOT_CONNECTED", "message": "Tài khoản Telegram chưa được liên kết hoặc đã bị ngắt kết nối"},
             )
 
-        # Đối chiếu binding: request cũ thuộc binding khác phải bị từ chối
-        record_binding = turn_record.get("telegram_binding_id")
-        if record_binding and verified_binding_id and record_binding != verified_binding_id:
+        context = build_gateway_user_context(user_info)
+        verified_binding_id = context.telegram_binding_id
+
+        if context.user_id != req.gateway_user_id:
             logger.warning(
-                "Turn binding changed for request_id=%s: recorded=%s, verified=%s",
-                req.request_id,
-                record_binding,
+                "Gateway user ID mismatch: payload=%s, resolved=%s",
+                req.gateway_user_id,
+                context.user_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "IDENTITY_MISMATCH", "message": "User ID does not match resolved gateway identity"},
+            )
+
+        if req.telegram_binding_id and verified_binding_id and req.telegram_binding_id != verified_binding_id:
+            logger.warning(
+                "Telegram binding ID mismatch: payload=%s, verified=%s",
+                req.telegram_binding_id,
                 verified_binding_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail={"code": "BINDING_CHANGED", "message": "Turn was recorded under a different binding ID"},
+                detail={"code": "BINDING_MISMATCH", "message": "Request binding ID does not match current verified binding"},
             )
 
-        # Ledger cũ thiếu binding/hash không được replay; trả yêu cầu gửi tin mới để không ghi lặp
-        if not record_binding or not turn_record.get("payload_hash"):
-            logger.warning(
-                "Turn record lacks binding or payload_hash for request_id=%s, refusing replay",
-                req.request_id,
-            )
-            return TelegramTurnResponse(
-                request_id=req.request_id,
-                messages=[
+        # 2. Idempotency Check
+        turn_record = turn_ledger.get_turn_record(req.request_id)
+        if turn_record is not None:
+            if (
+                turn_record["user_id"] != context.user_id
+                or turn_record["telegram_user_id"] != req.telegram_user_id
+                or turn_record["chat_id"] != req.chat_id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"code": "IDENTITY_MISMATCH", "message": "Turn identity does not match existing turn record"},
+                )
+
+            record_binding = turn_record.get("telegram_binding_id")
+            if record_binding and verified_binding_id and record_binding != verified_binding_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"code": "BINDING_CHANGED", "message": "Turn was recorded under a different binding ID"},
+                )
+
+            if not record_binding or not turn_record.get("payload_hash"):
+                return [
                     "⚠️ Bản ghi tin nhắn trước đây thiếu thông tin xác minh binding/hash để tái hiện an toàn. "
                     "Vui lòng gửi tin nhắn mới để đảm bảo không xử lý lặp lại."
-                ],
-            )
+                ]
 
-        # Kiểm tra payload hash
-        if turn_record["payload_hash"] != payload_hash:
-            logger.warning(
-                "Turn payload mismatch for request_id=%s: recorded=%s, incoming=%s",
-                req.request_id,
-                turn_record["payload_hash"],
-                payload_hash,
-            )
+            if turn_record["payload_hash"] != payload_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "PAYLOAD_MISMATCH", "message": "Request ID already used with different payload"},
+                )
+
+            if turn_record["status"] == "in_progress":
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"code": "TURN_IN_PROGRESS", "message": "Turn is currently being processed"},
+                )
+
+            if turn_record["status"] == "completed":
+                cached_msgs = json.loads(turn_record["messages_json"]) if turn_record.get("messages_json") else []
+                return cached_msgs
+
+        # 3. Claim turn lease trong SQLite để tuần tự hóa các turn cùng session
+        lease_token = conversation_history_store.claim_turn_lease(
+            tenant=context.tenant,
+            user_id=context.user_id,
+            chat_id=req.chat_id,
+            binding_id=context.telegram_binding_id,
+            database=context.database,
+            lease_seconds=18.0,
+        )
+        if not lease_token:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "PAYLOAD_MISMATCH", "message": "Request ID already used with different payload"},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "SESSION_LOCKED", "message": "Phiên hội thoại này đang xử lý một tin nhắn khác, vui lòng chờ giây lát."},
             )
 
-        # Kiểm tra trạng thái turn
-        if turn_record["status"] == "in_progress":
-            logger.info("Turn is currently in progress for request_id=%s, returning 503 for retry", req.request_id)
+        started = turn_ledger.record_turn_start(
+            request_id=req.request_id,
+            user_id=context.user_id,
+            telegram_user_id=req.telegram_user_id,
+            chat_id=req.chat_id,
+            telegram_binding_id=verified_binding_id,
+            payload_hash=payload_hash,
+        )
+        if not started:
+            conversation_history_store.release_turn_lease(
+                tenant=context.tenant,
+                user_id=context.user_id,
+                chat_id=req.chat_id,
+                binding_id=context.telegram_binding_id,
+                database=context.database,
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "TURN_IN_PROGRESS", "message": "Turn is currently being processed"},
             )
 
-        if turn_record["status"] == "completed":
-            logger.info("Returning cached turn response for request_id=%s", req.request_id)
-            cached_msgs = json.loads(turn_record["messages_json"]) if turn_record.get("messages_json") else []
-            return TelegramTurnResponse(
-                request_id=req.request_id,
-                messages=cached_msgs,
-            )
-
-    # 3. Ghi nhận claim turn với binding_id đã được Gateway xác minh
-    started = turn_ledger.record_turn_start(
-        request_id=req.request_id,
-        user_id=context.user_id,
-        telegram_user_id=req.telegram_user_id,
-        chat_id=req.chat_id,
-        telegram_binding_id=verified_binding_id,
-        payload_hash=payload_hash,
-    )
-    if not started:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "TURN_IN_PROGRESS", "message": "Turn is currently being processed"},
+        clean_text = req.text.strip()
+        session_ctx = conversation_history_store.get_session(
+            tenant=context.tenant,
+            user_id=context.user_id,
+            chat_id=req.chat_id,
+            binding_id=context.telegram_binding_id,
+            database=context.database,
         )
 
-    clean_text = req.text.strip()
-    lower_text = clean_text.lower()
-    session_ctx = conversation_history_store.get_session(
-        tenant=context.tenant,
-        user_id=context.user_id,
-        chat_id=req.chat_id,
-        binding_id=context.telegram_binding_id,
-    )
+        try:
+            # 4. Phân tích ý định duy nhất (NaturalPipeline: fast-path hoặc tối đa 1 LLM call)
+            intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
 
-    async def _execute_turn() -> list[str]:
-        # 1. Các lệnh nghiệp vụ chuyên biệt, lệnh xác nhận 2 bước và slash commands
-        dispatcher_prefixes = (
-            "/confirm",
-            "/cancel",
-            "/calendar",
-            "/gmail",
-            "/email",
-            "/crm",
-            "/task create",
-            "/task update",
-            "/task done",
-            "/task complete",
-        )
-        if any(lower_text.startswith(p) for p in dispatcher_prefixes):
-            return await gateway_agent_dispatcher.dispatch(
+            # 5. Thực thi trực tiếp qua UnifiedExecutor (không gọi parser phụ lần hai)
+            from app.services.unified_executor import unified_executor
+            messages = await unified_executor.execute(
+                intent=intent_res,
                 context=context,
                 chat_id=req.chat_id,
                 telegram_user_id=req.telegram_user_id,
-                raw_text=clean_text,
+                session_context=session_ctx,
+                deadline=turn_deadline,
+                user_info=user_info,
             )
 
-        # 2. Unified Natural Pipeline (Fast-path & LLM Schema)
-        intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
-
-        if intent_res.intent_type == IntentType.REPLY:
-            return [intent_res.reply_text or ""]
-
-        elif intent_res.intent_type == IntentType.CLARIFY:
-            clarify_text = intent_res.clarification_prompt or "Vui lòng làm rõ yêu cầu."
-            if intent_res.candidate_options:
-                options_str = "\n".join(f"• {opt}" for opt in intent_res.candidate_options)
-                clarify_text += f"\n\nDanh sách lựa chọn:\n{options_str}"
-            return [clarify_text]
-
-        elif intent_res.intent_type == IntentType.UNSUPPORTED:
-            return [intent_res.reply_text or "⚠️ Yêu cầu ngoài phạm vi hỗ trợ."]
-
-        elif intent_res.intent_type == IntentType.DRAFT:
-            if intent_res.draft:
-                conversation_history_store.set_active_draft(
-                    context.tenant,
-                    context.user_id,
-                    req.chat_id,
-                    context.telegram_binding_id,
-                    intent_res.draft.model_dump(),
-                )
-            return [
-                intent_res.reply_text
-                or "📝 Đã lưu bản nháp thành công. Bạn có thể yêu cầu 'viết ngắn hơn' hoặc 'gửi bản vừa soạn'."
-            ]
-
-        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "identity.whoami":
-            return [format_whoami(context)]
-
-        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "connections.status":
-            conns = await gateway_client.get_user_connections(context.user_id)
-            return [format_connection_status(user_info, conns)]
-
-        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "briefing.today":
-            briefing_text = await morning_briefing_service.generate_real_briefing(user_info)
-            return [briefing_text]
-
-        elif intent_res.intent_type == IntentType.READ and intent_res.tool_name == "tasks.personal.list":
-            if not context.has_permission(GatewayPermission.TASKS_READ):
-                return [
-                    "⚠️ Tài khoản của bạn chưa được cấp quyền tra cứu công việc (`tasks.read`). "
-                    "Vui lòng liên hệ quản trị viên hoặc kiểm tra quyền trên Cổng Gateway."
-                ]
-            elif not context.tenant or not context.database or context.odoo_uid is None:
-                return [
-                    "⚠️ Không thể tải danh sách công việc: Thông tin định danh không đầy đủ "
-                    "để xác định chủ sở hữu (yêu cầu tenant, database và Odoo UID)."
-                ]
-            else:
-                tasks = await local_task_provider.list_tasks(filters={}, owner_key=context.owner_key)
-                conversation_history_store.set_last_read_data(
-                    context.tenant,
-                    context.user_id,
-                    req.chat_id,
-                    context.telegram_binding_id,
-                    "tasks",
-                    tasks,
-                )
-                return [format_task_list(tasks)]
-
-        else:
-            # Điều phối các tác vụ nghiệp vụ nâng cao (Calendar, Gmail, CRM, Xác nhận /confirm, Hủy /cancel)
-            return await gateway_agent_dispatcher.dispatch(
-                context=context,
-                chat_id=req.chat_id,
-                telegram_user_id=req.telegram_user_id,
-                raw_text=clean_text,
-            )
-
-    try:
-        messages = await asyncio.wait_for(_execute_turn(), timeout=18.0)
-
-        # Lưu lịch sử phiên hội thoại
-        conversation_history_store.append_turn(
-            context.tenant,
-            context.user_id,
-            req.chat_id,
-            context.telegram_binding_id,
-            "user",
-            clean_text,
-        )
-        if messages:
+            # Lưu lịch sử phiên hội thoại
             conversation_history_store.append_turn(
                 context.tenant,
                 context.user_id,
                 req.chat_id,
                 context.telegram_binding_id,
-                "assistant",
-                messages[0],
+                "user",
+                clean_text,
+                database=context.database,
             )
+            if messages:
+                conversation_history_store.append_turn(
+                    context.tenant,
+                    context.user_id,
+                    req.chat_id,
+                    context.telegram_binding_id,
+                    "assistant",
+                    messages[0],
+                    database=context.database,
+                )
 
-    except asyncio.TimeoutError:
+            return messages
+
+        finally:
+            if lease_token:
+                conversation_history_store.release_turn_lease(
+                    tenant=context.tenant,
+                    user_id=context.user_id,
+                    chat_id=req.chat_id,
+                    binding_id=context.telegram_binding_id,
+                    database=context.database,
+                    lease_token=lease_token,
+                )
+
+    try:
+        messages = await asyncio.wait_for(_run_entire_turn(), timeout=18.0)
+    except HTTPException:
+        raise
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         logger.warning("Turn processing timed out after 18s for request_id: %s", req.request_id)
         from app.services.error_handler import ErrorCode, format_error_message
         messages = [format_error_message(ErrorCode.TURN_TIMEOUT)]
-
     except Exception as e:
-        logger.error("Error in gateway turn dispatcher: %s", e, exc_info=True)
+        logger.error("Error in turn execution: %s", e, exc_info=True)
         from app.services.error_handler import classify_exception
         _, err_msg = classify_exception(e)
         if req.request_id:
             err_msg = f"{err_msg}\n(Mã yêu cầu: {req.request_id})"
         messages = [err_msg]
 
-    # Ghi nhận kết quả turn vào sổ nhật ký (idempotency)
     turn_ledger.record_turn_completed(req.request_id, messages)
-
     return TelegramTurnResponse(
         request_id=req.request_id,
         messages=messages,

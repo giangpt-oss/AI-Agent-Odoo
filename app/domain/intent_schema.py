@@ -10,15 +10,37 @@ class IntentType(str, Enum):
     PREPARE_WRITE = "prepare_write"
     CLARIFY = "clarify"
     UNSUPPORTED = "unsupported"
+    ACTION_CONFIRM = "action_confirm"
+    ACTION_CANCEL = "action_cancel"
+    ACTION_STATUS = "action_status"
 
 
 class DraftPayload(BaseModel):
     draft_type: Literal["email", "task"]
     draft_action: Literal["create", "update", "cancel"]
+    draft_id: Optional[str] = None
+    version: int = 1
     recipient: Optional[str] = None
+    to: Optional[str] = None
     subject: Optional[str] = None
     content: str
+    body: Optional[str] = None
     target_id: Optional[str] = None
+    expected_version: Optional[int] = None
+    expected_draft_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def sync_field_aliases(self) -> "DraftPayload":
+        if self.to and not self.recipient:
+            self.recipient = self.to
+        elif self.recipient and not self.to:
+            self.to = self.recipient
+
+        if self.body and not self.content:
+            self.content = self.body
+        elif self.content and not self.body:
+            self.body = self.content
+        return self
 
 
 class IntentAnalysisResult(BaseModel):
@@ -30,6 +52,7 @@ class IntentAnalysisResult(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     candidate_options: list[str] = Field(default_factory=list)
     draft: Optional[DraftPayload] = None
+    confirmation_id: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_intent_consistency(self) -> "IntentAnalysisResult":
@@ -48,5 +71,9 @@ class IntentAnalysisResult(BaseModel):
         if self.intent_type == IntentType.DRAFT:
             if not self.draft:
                 raise ValueError("draft payload bắt buộc phải có khi intent_type là draft")
+
+        if self.intent_type in (IntentType.ACTION_CONFIRM, IntentType.ACTION_CANCEL, IntentType.ACTION_STATUS):
+            if not self.confirmation_id and self.parameters.get("confirmation_id"):
+                self.confirmation_id = str(self.parameters["confirmation_id"])
 
         return self

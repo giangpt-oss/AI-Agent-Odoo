@@ -1386,7 +1386,7 @@ Yêu cầu người dùng: "{text}"
 Múi giờ: {context.timezone}
 Thời gian hiện tại: {datetime.now(UTC).isoformat()}
 """
-        try:
+        def _sync_call():
             from google import genai
             client = genai.Client(api_key=api_key)
             resp = client.models.generate_content(
@@ -1394,8 +1394,11 @@ Thời gian hiện tại: {datetime.now(UTC).isoformat()}
                 contents=prompt,
                 config={"response_mime_type": "application/json"},
             )
-            data = json.loads(resp.text)
-            if data.get("action") in allowed_actions:
+            return json.loads(resp.text)
+
+        try:
+            data = await asyncio.wait_for(asyncio.to_thread(_sync_call), timeout=6.0)
+            if data and data.get("action") in allowed_actions:
                 return data
             return None
         except Exception as e:

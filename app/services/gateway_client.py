@@ -166,8 +166,9 @@ class GatewayClient:
         telegram_binding_id: str,
         action: str,
         arguments: dict[str, Any],
+        timeout: float = 12.0,
     ) -> dict[str, Any]:
-        """Thực thi action ngoại vi qua Gateway với đối soát binding_id."""
+        """Thực thi action ngoại vi qua Gateway với đối soát binding_id và dynamic timeout."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/actions"
         payload = {
             "operation_id": operation_id,
@@ -178,7 +179,7 @@ class GatewayClient:
             "arguments": arguments,
         }
         try:
-            async with httpx.AsyncClient(timeout=25.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     data = resp.json()
@@ -206,6 +207,36 @@ class GatewayClient:
         except Exception as e:
             logger.error("Error calling Gateway execute_action: %s", e)
             return {"status": "SERVICE_ERROR", "message": str(e)}
+
+    async def get_action_status(
+        self,
+        user_id: int,
+        operation_id: str,
+        telegram_user_id: int,
+        chat_id: int,
+        telegram_binding_id: str,
+        timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        """Tra cứu trạng thái thao tác ghi đã thực hiện qua Gateway để đối soát."""
+        url = f"{self.base_url}/internal/v1/users/{user_id}/actions/{operation_id}"
+        params = {
+            "telegram_user_id": telegram_user_id,
+            "chat_id": chat_id,
+            "telegram_binding_id": telegram_binding_id,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url, params=params, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                elif resp.status_code == 404:
+                    return {"status": "not_found", "message": "Không tìm thấy thao tác trên ledger của Gateway."}
+                elif resp.status_code == 403:
+                    return {"status": "permission_denied", "message": "Không khớp quyền hoặc binding của người dùng."}
+                return {"status": "unknown_result", "message": resp.text}
+        except Exception as e:
+            logger.error("Error calling Gateway get_action_status: %s", e)
+            return {"status": "unknown_result", "message": str(e)}
 
 
 gateway_client = GatewayClient()

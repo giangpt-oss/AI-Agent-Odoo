@@ -23,7 +23,25 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def get_tool(self, name: str) -> Optional[ToolDefinition]:
-        return self._tools.get(name)
+        if name in self._tools:
+            return self._tools[name]
+        aliases = {
+            "gmail.send": "gmail.messages.send",
+            "gmail.unread": "gmail.messages.unread",
+            "calendar.create": "calendar.events.create",
+            "calendar.update": "calendar.events.update",
+            "crm.create": "crm.leads.create",
+            "crm.update": "crm.leads.update",
+            "crm.write": "crm.leads.update",
+            "tasks.create": "tasks.personal.create",
+            "tasks.update": "tasks.personal.update",
+            "tasks.done": "tasks.personal.done",
+            "tasks.complete": "tasks.personal.done",
+        }
+        canonical = aliases.get(name)
+        if canonical and canonical in self._tools:
+            return self._tools[canonical]
+        return None
 
     def list_all_tools(self) -> list[ToolDefinition]:
         return list(self._tools.values())
@@ -37,21 +55,32 @@ class ToolRegistry:
         ]
 
     def generate_capability_overview(self, user_permissions: Optional[list[str]] = None) -> str:
-        """Sinh tài liệu giới thiệu khả năng trực tiếp từ danh mục tool đã đăng ký."""
-        perms = set(user_permissions or [])
+        """Sinh tài liệu giới thiệu khả năng trực tiếp từ danh mục tool đã đăng ký và lọc theo quyền."""
+        perms = set(user_permissions or []) if user_permissions is not None else None
         lines = [
             "👋 Xin chào! Tôi có thể hỗ trợ bạn các công việc sau:",
             "",
             "• 📅 Điểm tin hàng ngày: Gửi /today hoặc hỏi \"Hôm nay tôi có gì?\" để xem lịch họp, email và việc cần làm.",
             "• 👤 Thông tin cá nhân: Hỏi \"Tôi là ai?\" hoặc \"Hồ sơ của tôi\" để xem tài khoản Odoo đã liên kết.",
             "• 🔗 Kết nối dịch vụ: Hỏi \"Trạng thái kết nối\" để kiểm tra liên kết Google Workspace và Odoo.",
-            "• 📆 Google Calendar: Hỏi \"Xem lịch\" hoặc tạo sự kiện lịch mới.",
-            "• ✉️ Hòm thư Gmail: Hỏi \"Thư chưa đọc\" hoặc soạn thảo gửi email công việc.",
-            "• 💼 Odoo CRM: Tra cứu khách hàng/cơ hội qua lệnh /crm search <từ khóa> hoặc tạo cơ hội mới.",
-            "• 📋 Công việc cá nhân: Xem việc bằng /task list, tạo việc mới hoặc đánh dấu hoàn thành.",
+        ]
+
+        if perms is None or any("calendar" in p for p in perms):
+            lines.append("• 📆 Google Calendar: Hỏi \"Xem lịch\" hoặc tạo sự kiện lịch mới.")
+
+        if perms is None or any("gmail" in p for p in perms):
+            lines.append("• ✉️ Hòm thư Gmail: Hỏi \"Thư chưa đọc\" hoặc soạn thảo gửi email công việc.")
+
+        if perms is None or any("crm" in p for p in perms):
+            lines.append("• 💼 Odoo CRM: Tra cứu khách hàng/cơ hội qua lệnh /crm search <từ khóa> hoặc tạo cơ hội mới.")
+
+        if perms is None or any("task" in p for p in perms):
+            lines.append("• 📋 Công việc cá nhân: Xem việc bằng /task list, tạo việc mới hoặc đánh dấu hoàn thành.")
+
+        lines.extend([
             "",
             "💡 Lưu ý an toàn: Mọi thao tác thêm mới hoặc cập nhật dữ liệu đều luôn gửi Bản xem trước (Preview) để bạn xác nhận trước khi thực hiện.",
-        ]
+        ])
         return "\n".join(lines)
 
 
