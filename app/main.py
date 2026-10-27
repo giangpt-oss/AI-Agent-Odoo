@@ -84,6 +84,19 @@ def create_application(settings: Settings | None = None) -> FastAPI:
             "docs": "/docs" if settings.DEBUG else "disabled"
         }
 
+    @app.get("/oauth/google/callback", include_in_schema=False)
+    async def forward_google_oauth_callback(request: Request):
+        from starlette.responses import RedirectResponse
+
+        gateway_base = (settings.GATEWAY_BASE_URL or "http://localhost:8080").rstrip("/")
+        query = str(request.query_params)
+        dest_url = (
+            f"{gateway_base}/oauth/google/callback?{query}"
+            if query
+            else f"{gateway_base}/oauth/google/callback"
+        )
+        return RedirectResponse(url=dest_url, status_code=307)
+
     return app
 
 
