@@ -88,8 +88,8 @@ class NaturalPipeline:
                 )
 
         # 2. Fast-path: Chào hỏi phổ biến
-        greetings = ["hello", "hi", "xin chào", "chào bạn", "chào bot", "chào em", "chào", "alo", "hey"]
-        if lower in greetings or any(lower == g or lower.startswith(g + " ") or g in lower for g in ["xin chào", "chào bot", "chào bạn"]):
+        greetings = ["hello", "hi", "xin chào", "chào bạn", "chào bot", "chào em", "chào", "alo", "hey", "hello bot", "hi bot"]
+        if lower in greetings or any(lower.startswith(g + " ") for g in greetings) or any(g in lower for g in ["xin chào", "chào bot", "chào bạn"]):
             return IntentAnalysisResult(
                 intent_type=IntentType.REPLY,
                 reply_text=(
@@ -105,7 +105,10 @@ class NaturalPipeline:
             )
 
         # 3. Fast-path: Chặn thao tác ghi trực tiếp/chưa được hỗ trợ qua Gateway
-        unsupported_writes = ["soạn email", "gửi email", "gửi thư", "tạo cuộc họp", "xóa khách hàng", "xóa database"]
+        unsupported_writes = [
+            "soạn email", "gửi email", "gửi thư", "tạo cuộc họp",
+            "xóa khách hàng", "xóa database", "tạo cơ hội", "tạo crm", "tạo lead"
+        ]
         if any(w in lower for w in unsupported_writes):
             return IntentAnalysisResult(
                 intent_type=IntentType.UNSUPPORTED,

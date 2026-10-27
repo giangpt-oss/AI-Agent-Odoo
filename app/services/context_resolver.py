@@ -75,14 +75,30 @@ def resolve_target_from_context(
             return last_read_records[0], []
         return None, last_read_records
 
-    matches: list[dict[str, Any]] = []
+    # 1. Ưu tiên khớp chính xác toàn bộ cụm từ
+    exact_matches = [
+        rec for rec in last_read_records
+        if ref_clean in str(rec.get("summary") or rec.get("name") or rec.get("title") or rec.get("subject") or "").lower()
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0], []
+    if len(exact_matches) > 1:
+        return None, exact_matches
+
+    # 2. Khớp theo điểm số token (chọn ứng viên có nhiều token trùng khớp nhất)
+    scored: list[tuple[int, dict[str, Any]]] = []
     for rec in last_read_records:
         title = str(rec.get("summary") or rec.get("name") or rec.get("title") or rec.get("subject") or "").lower()
-        if ref_clean in title or any(token in title for token in tokens):
-            matches.append(rec)
+        score = sum(1 for token in tokens if token in title)
+        if score > 0:
+            scored.append((score, rec))
 
-    if len(matches) == 1:
-        return matches[0], []
-    if len(matches) > 1:
-        return None, matches
-    return None, []
+    if not scored:
+        return None, []
+
+    max_score = max(s[0] for s in scored)
+    best_matches = [rec for s, rec in scored if s == max_score]
+
+    if len(best_matches) == 1:
+        return best_matches[0], []
+    return None, best_matches

@@ -618,6 +618,8 @@ async def handle_telegram_turn(
         logger.error("Error in gateway turn dispatcher: %s", e, exc_info=True)
         from app.services.error_handler import classify_exception
         _, err_msg = classify_exception(e)
+        if req.request_id:
+            err_msg = f"{err_msg}\n(Mã yêu cầu: {req.request_id})"
         messages = [err_msg]
 
     # Ghi nhận kết quả turn vào sổ nhật ký (idempotency)

@@ -47,7 +47,7 @@ ERROR_MESSAGES: dict[ErrorCode, str] = {
         "Bạn có thể thử lại bằng cách diễn đạt ngắn gọn hơn hoặc dùng các lệnh /crm, /today, /task list."
     ),
     ErrorCode.TURN_TIMEOUT: (
-        "⏱️ Tổng thời gian xử lý yêu cầu vượt quá giới hạn an toàn (18s). "
+        "⏱️ Tổng thời gian xử lý yêu cầu vượt quá giới hạn an toàn (18 giây). "
         "Yêu cầu đã được dừng để bảo toàn dữ liệu. Vui lòng thử lại với câu lệnh cụ thể hơn."
     ),
 }
@@ -57,10 +57,13 @@ def classify_exception(exc: Exception) -> Tuple[ErrorCode, str]:
     """Phân loại lỗi kỹ thuật thành mã lỗi chuẩn và thông báo thân thiện."""
     err_str = str(exc).lower()
 
+    if ("odoo" in err_str or "google" in err_str or "gateway" in err_str) and ("timeout" in err_str or "connection" in err_str or "503" in err_str or "refused" in err_str):
+        return ErrorCode.DATA_SOURCE_ERROR, ERROR_MESSAGES[ErrorCode.DATA_SOURCE_ERROR]
+
     if isinstance(exc, asyncio.TimeoutError) or "timeout" in err_str:
         return ErrorCode.LLM_TIMEOUT, ERROR_MESSAGES[ErrorCode.LLM_TIMEOUT]
 
-    if "gemini_api_key" in err_str or "api_key" in err_str or "not configured" in err_str:
+    if "gemini_api_key" in err_str or "api_key" in err_str or "api key" in err_str or "not configured" in err_str:
         return ErrorCode.CONFIG_MISSING, ERROR_MESSAGES[ErrorCode.CONFIG_MISSING]
 
     if "model" in err_str and ("not found" in err_str or "invalid" in err_str):
@@ -81,3 +84,6 @@ def classify_exception(exc: Exception) -> Tuple[ErrorCode, str]:
 def format_error_message(code: ErrorCode, custom_message: str | None = None) -> str:
     """Trả về thông báo lỗi chuẩn hóa có chỉ dẫn hành động rõ ràng."""
     return custom_message or ERROR_MESSAGES.get(code, "⚠️ Đã có lỗi xảy ra. Vui lòng thử lại sau.")
+
+
+get_user_friendly_error = format_error_message

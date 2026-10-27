@@ -13,6 +13,7 @@ import pytest
 )
 async def test_who_am_i_reply(monkeypatch, roles, expected_permission):
     monkeypatch.setenv("DEBUG", "true")
+    monkeypatch.setenv("INTEGRATION_MODE", "standalone")
     from scripts import run_telegram_bot_polling as bot
     from app.services.odoo_auth_service import odoo_auth_service
 
