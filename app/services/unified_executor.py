@@ -306,6 +306,165 @@ class UnifiedExecutor:
             )
             return [self._format_crm_leads(leads, query)]
 
+        if tool_name == "odoo.partners.search":
+            query = (params.get("query") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain = ["|", ("name", "ilike", query), ("email", "ilike", query)]
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="res.partner",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "đối tác/khách hàng")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.partners", items, database=context.database
+            )
+            return [self._format_odoo_partners(items, query)]
+
+        if tool_name == "odoo.products.search":
+            query = (params.get("query") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain = ["|", ("name", "ilike", query), ("default_code", "ilike", query)]
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="product.product",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "sản phẩm")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.products", items, database=context.database
+            )
+            return [self._format_odoo_products(items, query)]
+
+        if tool_name == "odoo.sales.search":
+            query = (params.get("query") or "").strip()
+            state = (params.get("state") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain.append(("name", "ilike", query))
+            if state:
+                domain.append(("state", "=", state))
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="sale.order",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "đơn bán hàng")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.sales", items, database=context.database
+            )
+            return [self._format_odoo_sales(items, query)]
+
+        if tool_name == "odoo.purchases.search":
+            query = (params.get("query") or "").strip()
+            state = (params.get("state") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain.append(("name", "ilike", query))
+            if state:
+                domain.append(("state", "=", state))
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="purchase.order",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "đơn mua hàng")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.purchases", items, database=context.database
+            )
+            return [self._format_odoo_purchases(items, query)]
+
+        if tool_name == "odoo.inventory.search":
+            query = (params.get("query") or "").strip()
+            state = (params.get("state") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain = ["|", ("name", "ilike", query), ("origin", "ilike", query)]
+            if state:
+                domain.append(("state", "=", state))
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="stock.picking",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "kho bãi")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.inventory", items, database=context.database
+            )
+            return [self._format_odoo_inventory(items, query)]
+
+        if tool_name == "odoo.invoices.search":
+            query = (params.get("query") or "").strip()
+            pay_state = (params.get("payment_state") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain.append(("name", "ilike", query))
+            if pay_state:
+                domain.append(("payment_state", "=", pay_state))
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="account.move",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "hóa đơn")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.invoices", items, database=context.database
+            )
+            return [self._format_odoo_invoices(items, query)]
+
+        if tool_name == "odoo.employees.search":
+            query = (params.get("query") or "").strip()
+            limit = int(params.get("limit") or 10)
+            domain = []
+            if query:
+                domain = ["|", ("name", "ilike", query), ("work_email", "ilike", query)]
+            res = await gateway_client.query_odoo(
+                user_id=context.user_id,
+                model="hr.employee",
+                domain=domain,
+                limit=limit,
+            )
+            err = self._handle_odoo_query_error(res, "danh bạ nhân sự")
+            if err:
+                return err
+            items = res.get("items", [])
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.employees", items, database=context.database
+            )
+            return [self._format_odoo_employees(items, query)]
+
         return [f"⚠️ Chưa có handler triển khai cho công cụ đọc `{tool_name}`."]
 
     # =========================================================================
@@ -1224,6 +1383,125 @@ class UnifiedExecutor:
             lines.append(f"• `{ld.get('id')}`: **{ld.get('name')}**{rev}")
         return "\n".join(lines)
 
+    def _handle_odoo_query_error(self, res: dict[str, Any], entity_name: str) -> Optional[list[str]]:
+        status = res.get("status")
+        if status == "OK":
+            return None
+        if status == "PERMISSION_DENIED":
+            return [f"❌ Tài khoản Odoo của bạn không có quyền truy cập dữ liệu {entity_name}."]
+        if status == "INVALID_QUERY":
+            return [f"⚠️ Truy vấn {entity_name} không hợp lệ: {res.get('message')}"]
+        if status in ["ODOO_UNAVAILABLE", "TIMEOUT"]:
+            return [f"⏳ Không thể kết nối hoặc quá hạn chờ Odoo khi tra cứu {entity_name}. Vui lòng thử lại sau."]
+        return [f"⚠️ Lỗi từ dịch vụ Odoo: {res.get('message', 'Không xác định')}"]
+
+    def _display_val(self, val: Any) -> str:
+        if val is None or val is False:
+            return ""
+        if isinstance(val, (list, tuple)) and len(val) >= 2:
+            return str(val[1])
+        return str(val)
+
+    def _format_odoo_partners(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"🏢 Không tìm thấy đối tác nào khớp với từ khóa '{query}'." if query else "🏢 Danh sách đối tác Odoo trống."
+        header = f"🏢 **Kết quả tìm kiếm đối tác cho '{query}':**" if query else "🏢 **Danh sách đối tác / khách hàng Odoo:**"
+        lines = [header]
+        for it in items:
+            name = it.get("name") or "Chưa đặt tên"
+            email = f" - ✉️ {it.get('email')}" if it.get("email") else ""
+            phone = f" - 📞 {it.get('phone')}" if it.get("phone") else ""
+            city = f" - 📍 {it.get('city')}" if it.get("city") else ""
+            kind = "🏢 Công ty" if it.get("is_company") else "👤 Cá nhân"
+            lines.append(f"• `{it.get('id')}`: **{name}** ({kind}){email}{phone}{city}")
+        return "\n".join(lines)
+
+    def _format_odoo_products(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"📦 Không tìm thấy sản phẩm nào khớp với '{query}'." if query else "📦 Danh mục sản phẩm Odoo trống."
+        header = f"📦 **Kết quả tìm kiếm sản phẩm cho '{query}':**" if query else "📦 **Danh mục sản phẩm Odoo:**"
+        lines = [header]
+        for it in items:
+            sku = f"[{it.get('default_code')}] " if it.get("default_code") else ""
+            price = it.get("list_price")
+            price_str = f" - Giá bán: {price:,.0f} đ" if price is not None else ""
+            qty = it.get("qty_available")
+            qty_str = f" - Tồn: {qty:,.1f}" if qty is not None else ""
+            uom = f" {self._display_val(it.get('uom_id'))}" if it.get("uom_id") else ""
+            lines.append(f"• `{it.get('id')}`: **{sku}{it.get('name')}**{price_str}{qty_str}{uom}")
+        return "\n".join(lines)
+
+    def _format_odoo_sales(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"🛒 Không tìm thấy đơn bán hàng nào khớp với '{query}'." if query else "🛒 Danh sách đơn bán hàng trống."
+        state_map = {"draft": "Báo giá", "sent": "Đã gửi", "sale": "Đơn bán", "done": "Hoàn tất", "cancel": "Đã hủy"}
+        header = f"🛒 **Kết quả đơn bán hàng cho '{query}':**" if query else "🛒 **Đơn bán hàng & Báo giá Odoo:**"
+        lines = [header]
+        for it in items:
+            partner = self._display_val(it.get("partner_id"))
+            partner_str = f" - Khách: {partner}" if partner else ""
+            total = it.get("amount_total")
+            total_str = f" - Tổng: {total:,.0f} đ" if total is not None else ""
+            st = state_map.get(str(it.get("state")), str(it.get("state") or ""))
+            lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{partner_str}{total_str} [{st}]")
+        return "\n".join(lines)
+
+    def _format_odoo_purchases(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"📥 Không tìm thấy đơn mua hàng nào khớp với '{query}'." if query else "📥 Danh sách đơn mua hàng trống."
+        state_map = {"draft": "Yêu cầu báo giá", "sent": "Đã gửi RFQ", "purchase": "Đơn mua", "done": "Hoàn tất", "cancel": "Đã hủy"}
+        header = f"📥 **Kết quả đơn mua hàng cho '{query}':**" if query else "📥 **Đơn mua hàng Odoo:**"
+        lines = [header]
+        for it in items:
+            partner = self._display_val(it.get("partner_id"))
+            partner_str = f" - NCC: {partner}" if partner else ""
+            total = it.get("amount_total")
+            total_str = f" - Tổng: {total:,.0f} đ" if total is not None else ""
+            st = state_map.get(str(it.get("state")), str(it.get("state") or ""))
+            lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{partner_str}{total_str} [{st}]")
+        return "\n".join(lines)
+
+    def _format_odoo_inventory(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"🚚 Không tìm thấy phiếu kho nào khớp với '{query}'." if query else "🚚 Danh sách điều chuyển kho trống."
+        state_map = {"draft": "Dự thảo", "waiting": "Chờ hoạt động khác", "confirmed": "Chờ hàng", "assigned": "Sẵn sàng", "done": "Hoàn tất", "cancel": "Đã hủy"}
+        header = f"🚚 **Kết quả phiếu điều chuyển kho cho '{query}':**" if query else "🚚 **Phiếu điều chuyển kho Odoo:**"
+        lines = [header]
+        for it in items:
+            origin = f" - Nguồn: {it.get('origin')}" if it.get("origin") else ""
+            st = state_map.get(str(it.get("state")), str(it.get("state") or ""))
+            lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{origin} [{st}]")
+        return "\n".join(lines)
+
+    def _format_odoo_invoices(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"📄 Không tìm thấy hóa đơn nào khớp với '{query}'." if query else "📄 Danh sách hóa đơn trống."
+        pay_map = {"not_paid": "Chưa thanh toán", "in_payment": "Đang thanh toán", "paid": "Đã thanh toán", "partial": "Thanh toán 1 phần"}
+        header = f"📄 **Kết quả hóa đơn cho '{query}':**" if query else "📄 **Hóa đơn & Chứng từ kế toán Odoo:**"
+        lines = [header]
+        for it in items:
+            partner = self._display_val(it.get("partner_id"))
+            partner_str = f" - Đối tác: {partner}" if partner else ""
+            total = it.get("amount_total")
+            total_str = f" - Tổng: {total:,.0f} đ" if total is not None else ""
+            pay = pay_map.get(str(it.get("payment_state")), str(it.get("payment_state") or ""))
+            lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{partner_str}{total_str} [{pay}]")
+        return "\n".join(lines)
+
+    def _format_odoo_employees(self, items: list[dict[str, Any]], query: str = "") -> str:
+        if not items:
+            return f"👥 Không tìm thấy nhân sự nào khớp với '{query}'." if query else "👥 Danh bạ nhân viên Odoo trống."
+        header = f"👥 **Kết quả tìm kiếm nhân viên cho '{query}':**" if query else "👥 **Danh bạ nhân viên Odoo:**"
+        lines = [header]
+        for it in items:
+            job = f" - Chức danh: {it.get('job_title')}" if it.get("job_title") else ""
+            dept = self._display_val(it.get("department_id"))
+            dept_str = f" - PB: {dept}" if dept else ""
+            email = f" - ✉️ {it.get('work_email')}" if it.get("work_email") else ""
+            phone = f" - 📞 {it.get('work_phone')}" if it.get("work_phone") else ""
+            lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{job}{dept_str}{email}{phone}")
+        return "\n".join(lines)
 
 
 unified_executor = UnifiedExecutor()
+

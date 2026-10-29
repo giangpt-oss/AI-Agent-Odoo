@@ -238,5 +238,62 @@ class GatewayClient:
             logger.error("Error calling Gateway get_action_status: %s", e)
             return {"status": "unknown_result", "message": str(e)}
 
+    async def get_odoo_catalog(self) -> dict[str, Any]:
+        """Lấy danh mục catalog models và fields được phép truy vấn từ Gateway."""
+        url = f"{self.base_url}/internal/v1/odoo/catalog"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                return {"status": "SERVICE_ERROR", "catalog": [], "message": resp.text}
+        except Exception as e:
+            logger.error("Error calling Gateway get_odoo_catalog: %s", e)
+            return {"status": "SERVICE_ERROR", "catalog": [], "message": str(e)}
+
+    async def query_odoo(
+        self,
+        user_id: int,
+        model: str,
+        fields: list[str] | None = None,
+        domain: list[Any] | None = None,
+        limit: int = 10,
+        offset: int = 0,
+        order: str | None = None,
+    ) -> dict[str, Any]:
+        """Truy vấn dữ liệu Odoo an toàn qua Gateway Whitelist Catalog."""
+        url = f"{self.base_url}/internal/v1/users/{user_id}/odoo/query"
+        payload = {
+            "model": model,
+            "fields": fields,
+            "domain": domain,
+            "limit": limit,
+            "offset": offset,
+            "order": order,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, json=payload, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                elif resp.status_code == 400:
+                    detail = resp.json().get("detail", {})
+                    msg = detail.get("message", resp.text)
+                    return {"status": "INVALID_QUERY", "message": msg, "items": []}
+                elif resp.status_code == 403:
+                    detail = resp.json().get("detail", {})
+                    msg = detail.get("message", "Tài khoản không có quyền truy cập dữ liệu này trên Odoo.")
+                    return {"status": "PERMISSION_DENIED", "message": msg, "items": []}
+                elif resp.status_code == 503:
+                    return {"status": "ODOO_UNAVAILABLE", "message": "Không thể kết nối đến hệ thống Odoo lúc này.", "items": []}
+                return {"status": "SERVICE_ERROR", "message": resp.text, "items": []}
+        except httpx.TimeoutException:
+            logger.warning("Gateway query_odoo timed out for user %s, model %s", user_id, model)
+            return {"status": "TIMEOUT", "message": "Quá thời gian chờ phản hồi từ Odoo.", "items": []}
+        except Exception as e:
+            logger.error("Error calling Gateway query_odoo: %s", e)
+            return {"status": "SERVICE_ERROR", "message": str(e), "items": []}
+
 
 gateway_client = GatewayClient()
+

@@ -37,6 +37,13 @@ class ToolRegistry:
             "tasks.update": "tasks.personal.update",
             "tasks.done": "tasks.personal.done",
             "tasks.complete": "tasks.personal.done",
+            "odoo.partners": "odoo.partners.search",
+            "odoo.products": "odoo.products.search",
+            "odoo.sales": "odoo.sales.search",
+            "odoo.purchases": "odoo.purchases.search",
+            "odoo.inventory": "odoo.inventory.search",
+            "odoo.invoices": "odoo.invoices.search",
+            "odoo.employees": "odoo.employees.search",
         }
         canonical = aliases.get(name)
         if canonical and canonical in self._tools:
@@ -76,6 +83,8 @@ class ToolRegistry:
 
         if perms is None or any("task" in p for p in perms):
             lines.append("• 📋 Công việc cá nhân: Xem việc bằng /task list, tạo việc mới hoặc đánh dấu hoàn thành.")
+
+        lines.append("• 🏢 Dữ liệu Odoo: Tra cứu khách hàng/đối tác, danh mục sản phẩm, đơn bán/mua, kho bãi, hóa đơn hoặc danh bạ nhân viên.")
 
         lines.extend([
             "",
@@ -319,8 +328,8 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="tasks.personal.done",
-            category="task",
             action_type="write",
+            category="task",
             required_permission=GatewayPermission.TASKS_WRITE,
             description="Đánh dấu hoàn thành một công việc cá nhân",
             parameter_schema={
@@ -328,6 +337,124 @@ def build_default_tool_registry() -> ToolRegistry:
                 "required": ["task_id"],
                 "properties": {
                     "task_id": {"type": "string", "description": "Mã công việc hoàn thành"},
+                },
+            },
+        )
+    )
+
+    # 6. Odoo Enterprise Data Queries (Quyền được Gateway & Odoo ACL trực tiếp kiểm soát)
+    registry.register(
+        ToolDefinition(
+            name="odoo.partners.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tìm kiếm thông tin khách hàng, nhà cung cấp hoặc đối tác kinh doanh trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Tên, email hoặc số điện thoại đối tác cần tìm"},
+                    "limit": {"type": "integer", "description": "Số lượng bản ghi tối đa (mặc định 10)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="odoo.products.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tra cứu danh mục sản phẩm, mã SKU, giá bán niêm yết và số lượng tồn kho trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Tên hoặc mã sản phẩm/barcode cần tìm"},
+                    "limit": {"type": "integer", "description": "Số lượng sản phẩm tối đa (mặc định 10)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="odoo.sales.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tra cứu danh sách đơn bán hàng và báo giá (sale orders) trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Số đơn hàng hoặc tên khách hàng"},
+                    "state": {"type": "string", "description": "Trạng thái đơn (draft, sent, sale, done, cancel)"},
+                    "limit": {"type": "integer", "description": "Số lượng đơn tối đa (mặc định 10)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="odoo.purchases.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tra cứu danh sách đơn mua hàng từ nhà cung cấp (purchase orders) trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Số PO hoặc tên nhà cung cấp"},
+                    "state": {"type": "string", "description": "Trạng thái đơn mua (draft, sent, purchase, done, cancel)"},
+                    "limit": {"type": "integer", "description": "Số lượng đơn tối đa (mặc định 10)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="odoo.inventory.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tra cứu phiếu điều chuyển kho (nhập, xuất, nội bộ) hoặc số lượng tồn kho trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Mã phiếu kho hoặc nguồn gốc đơn hàng"},
+                    "state": {"type": "string", "description": "Trạng thái phiếu kho (assigned, done, confirmed, draft)"},
+                    "limit": {"type": "integer", "description": "Số lượng phiếu tối đa (mặc định 10)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="odoo.invoices.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tra cứu hóa đơn bán hàng hoặc hóa đơn mua hàng và trạng thái thanh toán trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Số hóa đơn hoặc tên đối tác"},
+                    "payment_state": {"type": "string", "description": "Tình trạng thanh toán (not_paid, in_payment, paid, partial)"},
+                    "limit": {"type": "integer", "description": "Số lượng hóa đơn tối đa (mặc định 10)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="odoo.employees.search",
+            category="odoo",
+            action_type="read",
+            required_permission=None,
+            description="Tra cứu danh bạ nhân viên, chức danh công việc, phòng ban và email nội bộ trên Odoo",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Tên nhân viên, phòng ban hoặc chức danh"},
+                    "limit": {"type": "integer", "description": "Số lượng nhân viên tối đa (mặc định 10)"},
                 },
             },
         )
