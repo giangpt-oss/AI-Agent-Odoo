@@ -79,6 +79,22 @@ class GatewayClient:
             logger.error("Error calling Gateway user connections: %s", e)
             return {"status": "ERROR", "message": str(e)}
 
+    async def _workspace_request(self, user_id: int, service: str, arguments: dict[str, Any], endpoint: str, timeout: float = 10.0) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(f"{self.base_url}/internal/v1/users/{user_id}/workspace/{endpoint}", json={"service": service, **arguments}, headers=self._headers())
+            if response.status_code == 200:
+                return response.json()
+            return {"status": "PERMISSION_DENIED" if response.status_code == 403 else "SERVICE_ERROR", "message": response.text[:1000]}
+        except httpx.RequestError:
+            return {"status": "SERVICE_ERROR", "message": "Không thể kết nối Gateway Workspace."}
+
+    async def workspace_query(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+        return await self._workspace_request(user_id, service, arguments, "query", timeout)
+
+    async def workspace_prepare(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+        return await self._workspace_request(user_id, service, arguments, "preview", timeout)
+
     async def get_calendar_events(self, user_id: int, time_min: str, time_max: str) -> dict[str, Any]:
         """Lấy danh sách sự kiện lịch trong khoảng thời gian ISO 8601."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/calendar/events"
@@ -260,6 +276,7 @@ class GatewayClient:
         limit: int = 10,
         offset: int = 0,
         order: str | None = None,
+        count_only: bool = False,
     ) -> dict[str, Any]:
         """Truy vấn dữ liệu Odoo an toàn qua Gateway Whitelist Catalog."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/odoo/query"
@@ -270,6 +287,7 @@ class GatewayClient:
             "limit": limit,
             "offset": offset,
             "order": order,
+            "count_only": count_only,
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:

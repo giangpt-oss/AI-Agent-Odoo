@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.domain.gateway_context import GatewayUserContext
 from app.domain.intent_schema import IntentType
@@ -45,8 +45,8 @@ async def test_fast_path_capabilities(mock_context):
     for text in queries:
         res = await pipeline.analyze_input(text, mock_context)
         assert res.intent_type == IntentType.REPLY
-        assert "Điểm tin hàng ngày" in (res.reply_text or "")
         assert "Google Calendar" in (res.reply_text or "")
+        assert "Thông tin cá nhân" in (res.reply_text or "")
 
 
 @pytest.mark.asyncio
@@ -83,4 +83,46 @@ async def test_llm_dispatch_invalid_json_fallback(mock_context):
         mock_gemini.return_value = "Xin lỗi tôi không hiểu cấu trúc này."
         res = await pipeline.analyze_input("Một câu hỏi bất kỳ", mock_context)
         assert res.intent_type == IntentType.UNSUPPORTED
-        assert "không thể xử lý" in (res.reply_text or "").lower() or "thử lại" in (res.reply_text or "").lower()
+        assert 'lỗi phản hồi từ dịch vụ ai' in res.reply_text.lower()
+        assert 'giữ nguyên' in res.reply_text.lower()
+        assert 'ngoài phạm vi' not in res.reply_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_offline_count_queries(mock_context):
+    pipeline = NaturalPipeline()
+
+    # 1. Count contacts
+    res1 = await pipeline.analyze_input("hiện tại đang có bao nhiêu liên hệ", mock_context)
+    assert res1.intent_type == IntentType.READ
+    assert res1.tool_name == "odoo.partners.search"
+    assert res1.parameters.get("count_only") is True
+
+    # 2. Count products
+    res2 = await pipeline.analyze_input("tổng số sản phẩm là bao nhiêu", mock_context)
+    assert res2.intent_type == IntentType.READ
+    assert res2.tool_name == "odoo.products.search"
+    assert res2.parameters.get("count_only") is True
+
+    # 3. Product inventory query
+    res3 = await pipeline.analyze_input("sản phẩm tồn kho", mock_context)
+    assert res3.intent_type == IntentType.READ
+    assert res3.tool_name == "odoo.products.search"
+
+
+@pytest.mark.asyncio
+async def test_contextual_specific_number_followup(mock_context):
+    pipeline = NaturalPipeline()
+    session_context = {
+        "last_read": {
+            "odoo_last_count": {
+                "category": "odoo.partners",
+                "total_count": 168,
+                "model": "res.partner",
+            }
+        }
+    }
+    res = await pipeline.analyze_input("1 con số cụ thể", mock_context, session_context=session_context)
+    assert res.intent_type == IntentType.REPLY
+    assert "168" in (res.reply_text or "")
+

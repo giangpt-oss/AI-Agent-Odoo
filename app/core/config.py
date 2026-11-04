@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     DEFAULT_LLM_PROVIDER: Literal["gemini", "openai"] = "gemini"
     DEFAULT_LLM_MODEL: str = "gemini-3.5-flash-lite"
+    INTENT_LLM_MODEL: str | None = None
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = ""
@@ -61,6 +62,11 @@ class Settings(BaseSettings):
     GATEWAY_BASE_URL: str = "http://localhost:8080"
     GATEWAY_TO_AGENT_SECRET: str = ""
     AGENT_TO_GATEWAY_SECRET: str = ""
+
+    ENABLE_REPORTING: bool = False
+    ENABLE_QUOTATIONS: bool = False
+    ENABLE_BUSINESS_ACTIONS: bool = False
+    ENABLE_QUOTATION_APPROVAL_FLOW: bool = False
 
     # Emergency Kill Switch
     EMERGENCY_KILL_SWITCH: bool = False

@@ -178,7 +178,9 @@ async def test_odoo_sales_search_many2one_formatting(test_user_context):
         assert "Công ty TNHH An Phát" in output
         # Tuyệt đối không hiển thị dạng raw Many2one "[101, 'Công ty TNHH An Phát']"
         assert "[101," not in output
-        assert "[Đơn bán]" in output
+        assert "Đã xác nhận bán" in output
+        assert "trong phạm vi quyền tài khoản" in output
+        assert "chưa xác định tiền tệ" in output
 
 
 @pytest.mark.asyncio
@@ -254,3 +256,49 @@ async def test_odoo_query_permission_denied(test_user_context):
         assert len(res) == 1
         output = res[0]
         assert "không có quyền truy cập dữ liệu hóa đơn" in output
+
+
+@pytest.mark.asyncio
+async def test_odoo_partners_count_only(test_user_context):
+    with patch("app.services.gateway_client.gateway_client.query_odoo", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = {
+            "status": "OK",
+            "model": "res.partner",
+            "count": 0,
+            "total_count": 168,
+            "items": [],
+        }
+
+        intent = IntentAnalysisResult(
+            intent_type=IntentType.READ,
+            tool_name="odoo.partners.search",
+            parameters={"count_only": True},
+        )
+
+        res = await unified_executor.execute(
+            intent=intent,
+            context=test_user_context,
+            chat_id=123456,
+            telegram_user_id=123456,
+            session_context={},
+            deadline=9999999999.0,
+            user_info={},
+        )
+
+        assert len(res) == 1
+        output = res[0]
+        assert "Có 168 liên hệ đang hoạt động" in output
+        assert "trong phạm vi quyền tài khoản" in output
+
+        mock_query.assert_called_once()
+        _, kwargs = mock_query.call_args
+        assert kwargs["model"] == "res.partner"
+        assert kwargs["count_only"] is True
+        # Odoo's default active_test applies; visible scope adds no owner filter.
+        assert kwargs["domain"] == []
+
+        cached_count = conversation_history_store.get_last_read_data(
+            test_user_context.tenant, test_user_context.user_id, 123456, test_user_context.telegram_binding_id, "odoo_last_count", database=test_user_context.database
+        )
+        assert cached_count.get("total_count") == 168
+

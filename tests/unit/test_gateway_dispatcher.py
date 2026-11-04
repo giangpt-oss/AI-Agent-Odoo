@@ -58,7 +58,7 @@ async def test_dispatcher_greetings_and_help(client, gateway_settings):
             assert isinstance(data["messages"], list)
             msg = data["messages"][0]
             assert "Xin chào" in msg
-            assert "Điểm tin" in msg
+            assert 'công việc' in msg.lower()
             assert "Thông tin" in msg or "Hồ sơ" in msg
             mock_turn.assert_not_called()
 
@@ -194,7 +194,7 @@ async def test_dispatcher_blocks_unsupported_intents_before_execution(client, ga
             assert resp.status_code == 200
             data = resp.json()
             msg = data["messages"][0]
-            assert "chưa được hỗ trợ qua Gateway" in msg
+            assert 'chưa được hỗ trợ' in msg
             mock_turn.assert_not_called()
 
 

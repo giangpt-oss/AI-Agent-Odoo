@@ -13,7 +13,6 @@ Contract:
 import asyncio
 import json
 import logging
-import secrets
 import time
 from datetime import datetime, UTC, timedelta
 from typing import Any, Optional
@@ -29,7 +28,6 @@ from app.providers.tasks.local import LocalTaskProvider, execute_task_confirmati
 from app.services.confirmation_service import confirmation_service
 from app.services.context_resolver import (
     resolve_relative_time_window,
-    resolve_target_from_context,
     validate_and_adjust_event_times,
 )
 from app.services.conversation_history_store import conversation_history_store
@@ -221,6 +219,34 @@ class UnifiedExecutor:
         params = dict(intent.parameters)
         timeout = max(1.0, min(10.0, remaining_time - 1.0))
 
+        if tool_name and tool_name.startswith("business."):
+            from app.business.operations import read as operation_read
+            return await operation_read(tool_name, params, context)
+        if tool_name and (tool_name.startswith("reports.") or tool_name.startswith("sales.quotation.")):
+            from app.business.workflow import read as business_read
+            return await business_read(tool_name, params, context)
+
+        if tool_name == "workspace.catalog":
+            from app.workspace.agent import catalog_messages
+            try:
+                return catalog_messages(params)
+            except (ValueError, KeyError) as exc:
+                return [f"⚠️ {exc}"]
+        if tool_name and tool_name.startswith("workspace."):
+            from app.workspace.agent import format_result, validate_tool
+            try:
+                service_name, kind = validate_tool(tool_name, params)
+                if kind != "read":
+                    return ["⚠️ Thao tác ghi cần bản xem trước và xác nhận."]
+                result = await gateway_client.workspace_query(context.user_id, service_name, params, timeout=timeout)
+                if result.get("status") == "OK":
+                    content = result.get("data", {})
+                    if len(json.dumps(content, ensure_ascii=False)) <= 12000 and not (isinstance(content, dict) and "content_base64" in content):
+                        conversation_history_store.set_last_read_data(context.tenant, context.user_id, chat_id, context.telegram_binding_id, f"workspace.{service_name}", content, database=context.database)
+                return format_result(service_name, result)
+            except ValueError as exc:
+                return [f"⚠️ Yêu cầu Workspace chưa hợp lệ: {exc}"]
+
         if tool_name == "identity.whoami":
             from app.api.v1.internal import format_whoami
             return [format_whoami(context)]
@@ -309,27 +335,42 @@ class UnifiedExecutor:
         if tool_name == "odoo.partners.search":
             query = (params.get("query") or "").strip()
             limit = int(params.get("limit") or 10)
-            domain = []
+            count_only = bool(params.get("count_only"))
+            from app.business.source_filters import contact_filter, count_message
+            try:
+                domain, entity_label = contact_filter(params, context)
+            except ValueError as exc:
+                return [str(exc)]
             if query:
-                domain = ["|", ("name", "ilike", query), ("email", "ilike", query)]
+                domain += ["|", ("name", "ilike", query), ("email", "ilike", query)]
             res = await gateway_client.query_odoo(
                 user_id=context.user_id,
                 model="res.partner",
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "đối tác/khách hàng")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.partners", items, database=context.database
             )
-            return [self._format_odoo_partners(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.partners", "total_count": total_count, "query": query, "model": "res.partner", "entity_label": entity_label},
+                database=context.database
+            )
+            if count_only:
+                return [count_message(res.get("total_count"), entity_label, query)]
+            return ["Phạm vi: " + entity_label + ".\n" + self._format_odoo_partners(items, query, total_count=total_count, count_only=False)]
 
         if tool_name == "odoo.products.search":
             query = (params.get("query") or "").strip()
             limit = int(params.get("limit") or 10)
+            count_only = bool(params.get("count_only"))
             domain = []
             if query:
                 domain = ["|", ("name", "ilike", query), ("default_code", "ilike", query)]
@@ -338,68 +379,100 @@ class UnifiedExecutor:
                 model="product.product",
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "sản phẩm")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.products", items, database=context.database
             )
-            return [self._format_odoo_products(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.products", "total_count": total_count, "query": query, "model": "product.product"},
+                database=context.database
+            )
+            return [self._format_odoo_products(items, query, total_count=total_count, count_only=count_only)]
 
         if tool_name == "odoo.sales.search":
             query = (params.get("query") or "").strip()
-            state = (params.get("state") or "").strip()
             limit = int(params.get("limit") or 10)
-            domain = []
+            count_only = bool(params.get("count_only"))
+            from app.business.source_filters import count_message, document_filter, document_rows
+            try:
+                domain, entity_label = document_filter("sales", params, context)
+            except ValueError as exc:
+                return [str(exc)]
             if query:
-                domain.append(("name", "ilike", query))
-            if state:
-                domain.append(("state", "=", state))
+                domain += ["|", ("name", "ilike", query), ("partner_id", "ilike", query)]
             res = await gateway_client.query_odoo(
                 user_id=context.user_id,
                 model="sale.order",
+                fields=["id", "name", "partner_id", "date_order", "amount_total", "state", "currency_id", "user_id"],
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "đơn bán hàng")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.sales", items, database=context.database
             )
-            return [self._format_odoo_sales(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.sales", "total_count": total_count, "query": query, "model": "sale.order", "entity_label": entity_label},
+                database=context.database
+            )
+            if count_only:
+                return [count_message(res.get("total_count"), entity_label, query)]
+            return [document_rows(items, entity_label, res.get("total_count"))]
 
         if tool_name == "odoo.purchases.search":
             query = (params.get("query") or "").strip()
-            state = (params.get("state") or "").strip()
             limit = int(params.get("limit") or 10)
-            domain = []
+            count_only = bool(params.get("count_only"))
+            from app.business.source_filters import count_message, document_filter, document_rows
+            try:
+                domain, entity_label = document_filter("purchases", params, context)
+            except ValueError as exc:
+                return [str(exc)]
             if query:
-                domain.append(("name", "ilike", query))
-            if state:
-                domain.append(("state", "=", state))
+                domain += ["|", ("name", "ilike", query), ("partner_id", "ilike", query)]
             res = await gateway_client.query_odoo(
                 user_id=context.user_id,
                 model="purchase.order",
+                fields=["id", "name", "partner_id", "date_order", "amount_total", "state", "currency_id", "user_id"],
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "đơn mua hàng")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.purchases", items, database=context.database
             )
-            return [self._format_odoo_purchases(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.purchases", "total_count": total_count, "query": query, "model": "purchase.order", "entity_label": entity_label},
+                database=context.database
+            )
+            if count_only:
+                return [count_message(res.get("total_count"), entity_label, query)]
+            return [document_rows(items, entity_label, res.get("total_count"))]
 
         if tool_name == "odoo.inventory.search":
             query = (params.get("query") or "").strip()
             state = (params.get("state") or "").strip()
             limit = int(params.get("limit") or 10)
+            count_only = bool(params.get("count_only"))
             domain = []
             if query:
                 domain = ["|", ("name", "ilike", query), ("origin", "ilike", query)]
@@ -410,20 +483,28 @@ class UnifiedExecutor:
                 model="stock.picking",
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "kho bãi")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.inventory", items, database=context.database
             )
-            return [self._format_odoo_inventory(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.inventory", "total_count": total_count, "query": query, "model": "stock.picking"},
+                database=context.database
+            )
+            return [self._format_odoo_inventory(items, query, total_count=total_count, count_only=count_only)]
 
         if tool_name == "odoo.invoices.search":
             query = (params.get("query") or "").strip()
             pay_state = (params.get("payment_state") or "").strip()
             limit = int(params.get("limit") or 10)
+            count_only = bool(params.get("count_only"))
             domain = []
             if query:
                 domain.append(("name", "ilike", query))
@@ -434,19 +515,27 @@ class UnifiedExecutor:
                 model="account.move",
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "hóa đơn")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.invoices", items, database=context.database
             )
-            return [self._format_odoo_invoices(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.invoices", "total_count": total_count, "query": query, "model": "account.move"},
+                database=context.database
+            )
+            return [self._format_odoo_invoices(items, query, total_count=total_count, count_only=count_only)]
 
         if tool_name == "odoo.employees.search":
             query = (params.get("query") or "").strip()
             limit = int(params.get("limit") or 10)
+            count_only = bool(params.get("count_only"))
             domain = []
             if query:
                 domain = ["|", ("name", "ilike", query), ("work_email", "ilike", query)]
@@ -455,15 +544,22 @@ class UnifiedExecutor:
                 model="hr.employee",
                 domain=domain,
                 limit=limit,
+                count_only=count_only,
             )
             err = self._handle_odoo_query_error(res, "danh bạ nhân sự")
             if err:
                 return err
             items = res.get("items", [])
+            total_count = res.get("total_count", len(items))
             conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.employees", items, database=context.database
             )
-            return [self._format_odoo_employees(items, query)]
+            conversation_history_store.set_last_read_data(
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
+                {"category": "odoo.employees", "total_count": total_count, "query": query, "model": "hr.employee"},
+                database=context.database
+            )
+            return [self._format_odoo_employees(items, query, total_count=total_count, count_only=count_only)]
 
         return [f"⚠️ Chưa có handler triển khai cho công cụ đọc `{tool_name}`."]
 
@@ -481,9 +577,58 @@ class UnifiedExecutor:
         if tool_def.required_permission and not context.has_permission(tool_def.required_permission):
             return [f"⚠️ Bạn chưa được cấp quyền `{tool_def.required_permission}` để thực hiện thao tác này."]
 
+        if tool_name == "business.preview":
+            from app.business.operations import prepare as prepare_operation
+            return await prepare_operation(context)
+
+        if tool_name in ('crm.leads.create', 'crm.create', 'crm.leads.update', 'crm.update', 'crm.write'):
+            from app.core.config import get_settings
+            if get_settings().ENABLE_BUSINESS_ACTIONS:
+                from app.business.operations import read as operation_read, prepare as prepare_operation
+                values = dict(intent.parameters)
+                target_id = values.pop('lead_id', None)
+                if 'email' in values:
+                    values['email_from'] = values.pop('email')
+                if 'stage_id' in values and len(values) > 1:
+                    return ['Chuyển giai đoạn và sửa thông tin cần hai bản xem trước riêng. Hãy chọn thao tác muốn làm trước.']
+                operation = 'stage' if 'stage_id' in values else 'update' if target_id else 'create'
+                data = {'values': values}
+                if target_id:
+                    data['target_id'] = target_id
+                messages = await operation_read('business.draft', {'action': 'start', 'business_action': f'business.crm.{operation}', 'data': data}, context)
+                if (conversation_history_store.get_session(context.tenant, context.user_id, chat_id, context.telegram_binding_id, database=context.database).get('active_draft') or {}).get('business_action') != f'business.crm.{operation}':
+                    return messages
+                return await prepare_operation(context)
+
+        if tool_name == "sales.quotation.preview":
+            from app.business.workflow import prepare as prepare_quote
+            return await prepare_quote(context)
+
         # Chuẩn hóa tham số tại adapter
         params = self._normalize_write_parameters(intent.parameters)
         binding_id = context.telegram_binding_id or "default"
+
+        if tool_name and tool_name.startswith("workspace."):
+            from app.workspace.agent import format_result, preview_text, validate_tool
+            try:
+                service_name, kind = validate_tool(tool_name, intent.parameters)
+                if kind != "write":
+                    return ["⚠️ Đây là công cụ đọc, không phải thao tác ghi."]
+                display = preview_text(service_name, intent.parameters)
+                if len(display) > 18000:
+                    return ["⚠️ Nội dung quá lớn để xác nhận trong chat. Hãy chia thành thao tác nhỏ hơn."]
+                preview = await gateway_client.workspace_prepare(context.user_id, service_name, intent.parameters)
+                if preview.get("status") != "OK":
+                    return format_result(service_name, preview)
+                _, text = confirmation_service.create_confirmation(
+                    user_id=context.user_id, chat_id=chat_id, telegram_binding_id=binding_id,
+                    telegram_user_id=context.telegram_user_id, owner_key=context.owner_key,
+                    action=tool_name, arguments=preview["arguments"], target_snapshot=preview.get("snapshot"),
+                    preview_text=display,
+                )
+                return [text]
+            except (ValueError, KeyError, TypeError) as exc:
+                return [f"⚠️ Yêu cầu Workspace chưa hợp lệ: {exc}"]
 
         # Tasks create
         if tool_name in ["tasks.personal.create", "tasks.create"]:
@@ -872,7 +1017,7 @@ class UnifiedExecutor:
             if len(pending_list) == 1:
                 conf_id = pending_list[0]["confirmation_id"]
             elif len(pending_list) > 1:
-                options = "\n".join(f"• `/confirm {c['confirmation_id']}` ({c['action']})" for c in pending_list)
+                options = "\n".join(f"• {c['confirmation_id']}: {c['preview_text'][:200]}" for c in pending_list)
                 return [f"⚠️ Bạn đang có nhiều thao tác chờ xác nhận. Vui lòng chọn mã cụ thể:\n{options}"]
             else:
                 return ["⚠️ Không tìm thấy thao tác nào đang chờ xác nhận."]
@@ -925,7 +1070,7 @@ class UnifiedExecutor:
 
             # Thực thi Task mutation và mark completed trong CÙNG TRANSACTION SQLite
             try:
-                res = execute_task_confirmation_atomically(
+                execute_task_confirmation_atomically(
                     db_path=confirmation_service.db_path,
                     confirmation_id=conf_id,
                     execution_token=exec_token,
@@ -947,7 +1092,7 @@ class UnifiedExecutor:
             if expected_ver is None:
                 confirmation_service.mark_failed(
                     conf_id,
-                    "Bản xem trước thư thiếu thông tin phiên bản (draft_version). Vui lòng tạo bản xem trước mới.",
+                    "Bản xem trước thiếu thông tin phiên bản (draft_version). Vui lòng tạo bản xem trước mới.",
                     execution_token=exec_token,
                 )
                 return ["⚠️ Bản xem trước không còn hợp lệ do thiếu phiên bản bản thảo. Vui lòng tạo bản xem trước mới."]
@@ -968,7 +1113,7 @@ class UnifiedExecutor:
                     "Bản nháp liên kết với bản xem trước này đã bị xóa hoặc không còn tồn tại.",
                     execution_token=exec_token,
                 )
-                return ["⚠️ Bản nháp liên kết đã bị xóa hoặc không còn tồn tại. Thao tác gửi thư bị hủy bỏ."]
+                return ["⚠️ Bản nháp liên kết đã bị xóa hoặc không còn tồn tại. Thao tác bị hủy bỏ."]
 
             # 2. Draft khác ID
             if act_dr.get("draft_id") != conf_data["draft_id"]:
@@ -990,6 +1135,16 @@ class UnifiedExecutor:
                 return [f"⚠️ Bản nháp đã được chỉnh sửa (phiên bản hiện tại: v{curr_ver}, bản xem trước: v{expected_ver}). Mã xác nhận cũ không còn hiệu lực, vui lòng tạo bản xem trước mới."]
 
         # Kiểm tra quyền cho các dịch vụ ngoài qua Gateway
+        if norm_action.startswith("business."):
+            from app.core.config import get_settings
+            from app.business.operations import allowed_action
+            if not allowed_action(get_settings(), norm_action) or not context.owner_key or conf_data.get("owner_key") != context.owner_key:
+                confirmation_service.mark_failed(conf_id, "Chức năng chưa bật hoặc chủ sở hữu đã thay đổi.", execution_token=exec_token)
+                return ["Không thể thực hiện thao tác nghiệp vụ cho tài khoản này."]
+        if norm_action.startswith("workspace."):
+            if not context.has_permission(norm_action):
+                confirmation_service.mark_failed(conf_id, "Quyền Workspace đã bị thu hồi.", execution_token=exec_token)
+                return ["❌ Quyền Workspace đã bị thu hồi. Vui lòng kiểm tra kết nối."]
         if norm_action.startswith("calendar."):
             if not context.has_permission(GatewayPermission.CALENDAR_WRITE):
                 confirmation_service.mark_failed(conf_id, "Quyền calendar.write bị từ chối hoặc đã bị thu hồi.", execution_token=exec_token)
@@ -1003,6 +1158,15 @@ class UnifiedExecutor:
                 confirmation_service.mark_failed(conf_id, "Quyền CRM bị từ chối hoặc đã bị thu hồi.", execution_token=exec_token)
                 return ["❌ Bạn không có quyền tạo hoặc sửa đổi CRM trên Odoo."]
 
+        if norm_action == "sales.quotation.create":
+            from app.core.config import get_settings
+            if not get_settings().ENABLE_QUOTATIONS or not context.has_permission("sales.create"):
+                confirmation_service.mark_failed(conf_id, "Chức năng hoặc quyền tạo báo giá đã bị thu hồi.", execution_token=exec_token)
+                return ["Không có quyền tạo báo giá hoặc chức năng chưa bật."]
+            if not context.owner_key or conf_data.get("owner_key") != context.owner_key:
+                confirmation_service.mark_failed(conf_id, "Chủ sở hữu nháp không hợp lệ.", execution_token=exec_token)
+                return ["Chủ sở hữu báo giá không khớp."]
+
         # 3. Xử lý Gateway Action qua Cổng Gateway với dispatch bền vững
         if not op_id:
             confirmation_service.mark_unknown(conf_id, "Bản ghi thiếu operation_id, chuyển sang đối soát thủ công.", execution_token=exec_token)
@@ -1012,7 +1176,8 @@ class UnifiedExecutor:
         if not confirmation_service.mark_dispatched(conf_id, execution_token=exec_token):
             return ["⚠️ Phiên xử lý thao tác đã hết hạn hoặc không còn hiệu lực. Vui lòng thử lại."]
 
-        call_timeout = max(1.0, min(14.0, remaining_time - 1.0))
+        from app.business.operations import QUOTE_FLOW_ACTIONS
+        call_timeout = max(1.0, min(50.0 if norm_action in QUOTE_FLOW_ACTIONS else 14.0, remaining_time - 1.0))
 
         try:
             gw_res = await gateway_client.execute_action(
@@ -1030,6 +1195,17 @@ class UnifiedExecutor:
             if status == "completed":
                 result = gw_res.get("result") or {}
                 confirmation_service.mark_completed(conf_id, result=result, execution_token=exec_token)
+                if norm_action.startswith("business."):
+                    from app.business.operations import format_result
+                    from app.business.workflow import remember
+                    remember(context, "business_action_result", gw_res)
+                    return format_result(gw_res)
+                if norm_action == "sales.quotation.create":
+                    from app.business.quote_status import result_message
+                    return [result_message(result)]
+                if norm_action.startswith("workspace."):
+                    from app.workspace.agent import format_result
+                    return format_result(norm_action.split(".")[1], gw_res)
                 if action == "calendar.create":
                     summary = result.get("summary") or arguments.get("summary") or "Sự kiện lịch"
                     st = self._safe_time(result.get("start") or arguments.get("start_time"))
@@ -1076,12 +1252,14 @@ class UnifiedExecutor:
                     ]
                 return [f"✅ **Thao tác hoàn tất thành công!**\n• Hành động: `{action}`\n• Mã theo dõi: `{op_id}`"]
 
-            elif status == "in_progress":
+            elif status in ("in_progress", "IN_PROGRESS"):
+                if norm_action == 'sales.quotation.create':
+                    return ['Trạng thái: Đang tạo báo giá trên Odoo, chưa nhận được số báo giá. Tôi sẽ thông báo số báo giá và trạng thái khi hoàn tất.']
                 return [
                     f"⏳ **Thao tác đang được xử lý trên Gateway:**\n"
                     f"• Mã xác nhận: `{conf_id}`\n"
                     f"• Mã thao tác: `{op_id}`\n\n"
-                    f"Thao tác đang trong quá trình thực hiện. Bạn có thể kiểm tra kết quả sau bằng lệnh: `/status {conf_id}`"
+                    f"Thao tác đang trong quá trình thực hiện. Bạn có thể hỏi tiến độ của thao tác {conf_id}."
                 ]
 
             elif status == "unknown_result":
@@ -1090,14 +1268,14 @@ class UnifiedExecutor:
                     f"⚠️ **Chưa rõ kết quả thực hiện:** Yêu cầu đã được gửi tới Gateway nhưng phản hồi bị gián đoạn hoặc quá thời gian.\n"
                     f"• Mã xác nhận: `{conf_id}`\n"
                     f"• Mã thao tác: `{op_id}`\n\n"
-                    f"🔍 Để kiểm tra trạng thái thực tế mà không tạo lại thao tác, hãy gửi: `/status {conf_id}`"
+                    f"Bạn có thể hỏi tiến độ của thao tác {conf_id} để đối soát mà không thực hiện lại."
                 ]
 
             elif status == "CONFLICT":
                 confirmation_service.mark_failed(conf_id, error_message=gw_res.get("message", "Xung đột phiên bản"), execution_token=exec_token)
                 return [
-                    f"⚠️ **Tài nguyên đã bị thay đổi kể từ lúc xem trước:**\n"
-                    f"Để tránh ghi đè dữ liệu mới hơn của người khác, thao tác đã bị dừng. Vui lòng tạo yêu cầu xem trước mới."
+                    "⚠️ **Tài nguyên đã bị thay đổi kể từ lúc xem trước:**\n"
+                    "Để tránh ghi đè dữ liệu mới hơn của người khác, thao tác đã bị dừng. Vui lòng tạo yêu cầu xem trước mới."
                 ]
 
             else:
@@ -1112,7 +1290,7 @@ class UnifiedExecutor:
                 f"⚠️ **Yêu cầu đã gửi nhưng hết thời gian chờ phản hồi:**\n"
                 f"• Mã xác nhận: `{conf_id}`\n"
                 f"• Mã thao tác: `{op_id}`\n\n"
-                f"Hệ thống không tự động gửi lại để tránh trùng lặp. Vui lòng kiểm tra trạng thái bằng lệnh: `/status {conf_id}`"
+                f"Hệ thống không tự động gửi lại để tránh trùng lặp. Bạn có thể hỏi tiến độ của thao tác {conf_id}."
             ]
 
         except Exception as e:
@@ -1122,7 +1300,7 @@ class UnifiedExecutor:
                 f"⚠️ **Sự cố kết nối sau khi gửi yêu cầu:**\n"
                 f"• Mã xác nhận: `{conf_id}`\n"
                 f"• Mã thao tác: `{op_id}`\n\n"
-                f"Vui lòng kiểm tra lại trạng thái sau giây lát bằng lệnh: `/status {conf_id}`"
+                f"Bạn có thể hỏi tiến độ của thao tác {conf_id} sau giây lát."
             ]
 
     # =========================================================================
@@ -1141,7 +1319,7 @@ class UnifiedExecutor:
             if len(pending_list) == 1:
                 conf_id = pending_list[0]["confirmation_id"]
             elif len(pending_list) > 1:
-                options = "\n".join(f"• `/cancel {c['confirmation_id']}` ({c['action']})" for c in pending_list)
+                options = "\n".join(f"• {c['confirmation_id']}: {c['preview_text'][:200]}" for c in pending_list)
                 return [f"⚠️ Bạn đang có nhiều thao tác chờ. Vui lòng chọn mã để hủy:\n{options}"]
             else:
                 return ["⚠️ Không tìm thấy thao tác nào đang chờ xác nhận để hủy."]
@@ -1169,7 +1347,7 @@ class UnifiedExecutor:
         binding_id = context.telegram_binding_id or "default"
 
         if not target_id:
-            return ["⚠️ Vui lòng cung cấp mã xác nhận hoặc mã thao tác để kiểm tra. Ví dụ: `/status c_123`"]
+            return ["Bạn muốn kiểm tra thao tác nào? Hãy cho biết mã tham chiếu trong thông báo trước đó."]
 
         target_id = target_id.strip()
 
@@ -1204,6 +1382,12 @@ class UnifiedExecutor:
                 conf = confirmation_service.get_confirmation(cid) or conf
                 c_status = conf.get("status")
 
+            if c_status == "completed" and str(conf.get("action", "")).startswith("business."):
+                from app.business.operations import format_result
+                check = await gateway_client.get_action_status(user_id=context.user_id, operation_id=conf["operation_id"],
+                    telegram_user_id=telegram_user_id, chat_id=chat_id, telegram_binding_id=binding_id,
+                    timeout=max(1.0, min(5.0, remaining_time - 1.0)))
+                return format_result(check)
             if c_status == "completed":
                 return [f"✅ Thao tác `{target_id}` đã được thực thi thành công."]
             if c_status == "cancelled":
@@ -1238,6 +1422,9 @@ class UnifiedExecutor:
                     confirmation_service.reconcile_confirmation_result(
                         cid, status="completed", result=gw_check.get("result"), operation_id=op_id
                     )
+                    if str(conf.get("action", "")).startswith("business."):
+                        from app.business.operations import format_result
+                        return format_result(gw_check)
                     return [f"✅ Thao tác `{target_id}` đã hoàn tất thành công trên Cổng Gateway!"]
                 elif gw_st == "failed":
                     confirmation_service.reconcile_confirmation_result(
@@ -1268,6 +1455,9 @@ class UnifiedExecutor:
             )
             gw_st = gw_check.get("status")
             if gw_st == "completed":
+                if str(gw_check.get("action", "")).startswith("business."):
+                    from app.business.operations import format_result
+                    return format_result(gw_check)
                 return [f"✅ Thao tác `{target_id}` đã hoàn tất thành công trên Cổng Gateway."]
             elif gw_st == "failed":
                 return [f"❌ Thao tác `{target_id}` đã thất bại trên Cổng Gateway: {gw_check.get('message')}"]
@@ -1402,10 +1592,18 @@ class UnifiedExecutor:
             return str(val[1])
         return str(val)
 
-    def _format_odoo_partners(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_partners(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            if query:
+                return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} liên hệ/đối tác khớp với '{query}'.**"
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} liên hệ/đối tác.**"
+
         if not items:
             return f"🏢 Không tìm thấy đối tác nào khớp với từ khóa '{query}'." if query else "🏢 Danh sách đối tác Odoo trống."
-        header = f"🏢 **Kết quả tìm kiếm đối tác cho '{query}':**" if query else "🏢 **Danh sách đối tác / khách hàng Odoo:**"
+
+        count_str = f" (Tổng cộng **{total_count:,}** đối tác trên hệ thống)" if total_count is not None and total_count > len(items) else ""
+        header = f"🏢 **Kết quả tìm kiếm đối tác cho '{query}'{count_str}:**" if query else f"🏢 **Hiện có tổng cộng {total_count or len(items):,} đối tác / khách hàng trên Odoo (hiển thị {len(items)} bản ghi gần nhất):**"
         lines = [header]
         for it in items:
             name = it.get("name") or "Chưa đặt tên"
@@ -1416,10 +1614,18 @@ class UnifiedExecutor:
             lines.append(f"• `{it.get('id')}`: **{name}** ({kind}){email}{phone}{city}")
         return "\n".join(lines)
 
-    def _format_odoo_products(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_products(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            if query:
+                return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} sản phẩm khớp với '{query}'.**"
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} sản phẩm.**"
+
         if not items:
             return f"📦 Không tìm thấy sản phẩm nào khớp với '{query}'." if query else "📦 Danh mục sản phẩm Odoo trống."
-        header = f"📦 **Kết quả tìm kiếm sản phẩm cho '{query}':**" if query else "📦 **Danh mục sản phẩm Odoo:**"
+
+        count_str = f" (Tổng cộng **{total_count:,}** sản phẩm trên hệ thống)" if total_count is not None and total_count > len(items) else ""
+        header = f"📦 **Kết quả tìm kiếm sản phẩm cho '{query}'{count_str}:**" if query else f"📦 **Danh mục sản phẩm Odoo (Tổng cộng {total_count or len(items):,} sản phẩm, hiển thị {len(items)} bản ghi gần nhất):**"
         lines = [header]
         for it in items:
             sku = f"[{it.get('default_code')}] " if it.get("default_code") else ""
@@ -1431,11 +1637,16 @@ class UnifiedExecutor:
             lines.append(f"• `{it.get('id')}`: **{sku}{it.get('name')}**{price_str}{qty_str}{uom}")
         return "\n".join(lines)
 
-    def _format_odoo_sales(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_sales(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} đơn bán hàng/báo giá.**"
+
         if not items:
             return f"🛒 Không tìm thấy đơn bán hàng nào khớp với '{query}'." if query else "🛒 Danh sách đơn bán hàng trống."
         state_map = {"draft": "Báo giá", "sent": "Đã gửi", "sale": "Đơn bán", "done": "Hoàn tất", "cancel": "Đã hủy"}
-        header = f"🛒 **Kết quả đơn bán hàng cho '{query}':**" if query else "🛒 **Đơn bán hàng & Báo giá Odoo:**"
+        count_str = f" (Tổng cộng **{total_count:,}** đơn hàng)" if total_count is not None and total_count > len(items) else ""
+        header = f"🛒 **Kết quả đơn bán hàng cho '{query}'{count_str}:**" if query else f"🛒 **Đơn bán hàng & Báo giá Odoo (Tổng cộng {total_count or len(items):,} đơn):**"
         lines = [header]
         for it in items:
             partner = self._display_val(it.get("partner_id"))
@@ -1446,11 +1657,16 @@ class UnifiedExecutor:
             lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{partner_str}{total_str} [{st}]")
         return "\n".join(lines)
 
-    def _format_odoo_purchases(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_purchases(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} đơn mua hàng.**"
+
         if not items:
             return f"📥 Không tìm thấy đơn mua hàng nào khớp với '{query}'." if query else "📥 Danh sách đơn mua hàng trống."
         state_map = {"draft": "Yêu cầu báo giá", "sent": "Đã gửi RFQ", "purchase": "Đơn mua", "done": "Hoàn tất", "cancel": "Đã hủy"}
-        header = f"📥 **Kết quả đơn mua hàng cho '{query}':**" if query else "📥 **Đơn mua hàng Odoo:**"
+        count_str = f" (Tổng cộng **{total_count:,}** đơn mua)" if total_count is not None and total_count > len(items) else ""
+        header = f"📥 **Kết quả đơn mua hàng cho '{query}'{count_str}:**" if query else f"📥 **Đơn mua hàng Odoo (Tổng cộng {total_count or len(items):,} đơn):**"
         lines = [header]
         for it in items:
             partner = self._display_val(it.get("partner_id"))
@@ -1461,11 +1677,16 @@ class UnifiedExecutor:
             lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{partner_str}{total_str} [{st}]")
         return "\n".join(lines)
 
-    def _format_odoo_inventory(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_inventory(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} phiếu điều chuyển kho.**"
+
         if not items:
             return f"🚚 Không tìm thấy phiếu kho nào khớp với '{query}'." if query else "🚚 Danh sách điều chuyển kho trống."
         state_map = {"draft": "Dự thảo", "waiting": "Chờ hoạt động khác", "confirmed": "Chờ hàng", "assigned": "Sẵn sàng", "done": "Hoàn tất", "cancel": "Đã hủy"}
-        header = f"🚚 **Kết quả phiếu điều chuyển kho cho '{query}':**" if query else "🚚 **Phiếu điều chuyển kho Odoo:**"
+        count_str = f" (Tổng cộng **{total_count:,}** phiếu kho)" if total_count is not None and total_count > len(items) else ""
+        header = f"🚚 **Kết quả phiếu điều chuyển kho cho '{query}'{count_str}:**" if query else f"🚚 **Phiếu điều chuyển kho Odoo (Tổng cộng {total_count or len(items):,} phiếu):**"
         lines = [header]
         for it in items:
             origin = f" - Nguồn: {it.get('origin')}" if it.get("origin") else ""
@@ -1473,11 +1694,16 @@ class UnifiedExecutor:
             lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{origin} [{st}]")
         return "\n".join(lines)
 
-    def _format_odoo_invoices(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_invoices(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} hóa đơn.**"
+
         if not items:
             return f"📄 Không tìm thấy hóa đơn nào khớp với '{query}'." if query else "📄 Danh sách hóa đơn trống."
         pay_map = {"not_paid": "Chưa thanh toán", "in_payment": "Đang thanh toán", "paid": "Đã thanh toán", "partial": "Thanh toán 1 phần"}
-        header = f"📄 **Kết quả hóa đơn cho '{query}':**" if query else "📄 **Hóa đơn & Chứng từ kế toán Odoo:**"
+        count_str = f" (Tổng cộng **{total_count:,}** hóa đơn)" if total_count is not None and total_count > len(items) else ""
+        header = f"📄 **Kết quả hóa đơn cho '{query}'{count_str}:**" if query else f"📄 **Hóa đơn & Chứng từ kế toán Odoo (Tổng cộng {total_count or len(items):,} hóa đơn):**"
         lines = [header]
         for it in items:
             partner = self._display_val(it.get("partner_id"))
@@ -1488,10 +1714,15 @@ class UnifiedExecutor:
             lines.append(f"• `{it.get('id')}`: **{it.get('name')}**{partner_str}{total_str} [{pay}]")
         return "\n".join(lines)
 
-    def _format_odoo_employees(self, items: list[dict[str, Any]], query: str = "") -> str:
+    def _format_odoo_employees(self, items: list[dict[str, Any]], query: str = "", total_count: int | None = None, count_only: bool = False) -> str:
+        if count_only:
+            count_val = total_count if total_count is not None else len(items)
+            return f"📊 **Hiện tại trên hệ thống Odoo đang có chính xác {count_val:,} nhân sự.**"
+
         if not items:
             return f"👥 Không tìm thấy nhân sự nào khớp với '{query}'." if query else "👥 Danh bạ nhân viên Odoo trống."
-        header = f"👥 **Kết quả tìm kiếm nhân viên cho '{query}':**" if query else "👥 **Danh bạ nhân viên Odoo:**"
+        count_str = f" (Tổng cộng **{total_count:,}** nhân sự)" if total_count is not None and total_count > len(items) else ""
+        header = f"👥 **Kết quả tìm kiếm nhân viên cho '{query}'{count_str}:**" if query else f"👥 **Danh bạ nhân viên Odoo (Tổng cộng {total_count or len(items):,} nhân sự):**"
         lines = [header]
         for it in items:
             job = f" - Chức danh: {it.get('job_title')}" if it.get("job_title") else ""

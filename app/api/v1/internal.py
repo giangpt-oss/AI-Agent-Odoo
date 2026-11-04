@@ -5,22 +5,18 @@ import logging
 import secrets
 import time
 from typing import Any, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.core.config import get_settings
-from app.domain.gateway_context import GatewayPermission, GatewayUserContext, build_gateway_user_context
-from app.domain.intent_schema import IntentType
-from app.domain.task_identity import build_owner_key
+from app.domain.gateway_context import GatewayUserContext, build_gateway_user_context
 from app.providers.tasks.local import LocalTaskProvider
 from app.services.conversation_history_store import conversation_history_store
-from app.services.gateway_agent_dispatcher import gateway_agent_dispatcher
 from app.services.gateway_client import (
     GatewayContractIncompatibleError,
     GatewayServiceError,
     gateway_client,
 )
-from app.services.morning_briefing_service import morning_briefing_service
 from app.services.natural_pipeline import natural_pipeline
 from app.services.turn_ledger import turn_ledger
 
@@ -41,9 +37,16 @@ class TelegramTurnRequest(BaseModel):
     received_at: Optional[str] = None
 
 
+class AttachmentDescriptor(BaseModel):
+    artifact_id: str
+    filename: str
+    content_type: str
+
+
 class TelegramTurnResponse(BaseModel):
     request_id: str
     messages: List[str]
+    attachments: List[AttachmentDescriptor] = Field(default_factory=list)
 
 
 def verify_gateway_secret(
@@ -192,14 +195,12 @@ def format_whoami(user_info: Any) -> str:
 
 def format_greeting_help() -> str:
     return (
-        "👋 Xin chào! Tôi có thể hỗ trợ gì cho bạn hôm nay?\n\n"
-        "Bạn có thể nhắn tin tự nhiên hoặc dùng các gợi ý nhanh sau:\n"
-        "• 📅 Điểm tin hàng ngày: Gửi /today hoặc hỏi \"Hôm nay tôi có gì?\"\n"
-        "• 👤 Thông tin tài khoản: Hỏi \"Tôi là ai?\" hoặc \"Hồ sơ của tôi\"\n"
-        "• 📆 Lịch họp & Email: Hỏi \"Xem lịch\" hoặc \"Thư chưa đọc\"\n"
-        "• 💼 Odoo CRM: Gửi /crm search <từ khóa> hoặc \"Tìm khách hàng\"\n"
-        "• 📋 Công việc cá nhân: Gửi /task list hoặc /task create <nội dung>\n\n"
-        "💡 Các thao tác ghi dữ liệu luôn có bản xem trước để bạn xác nhận an toàn."
+        "👋 Xin chào! Tôi có thể hỗ trợ bạn các công việc sau hoàn toàn bằng tiếng Việt tự nhiên:\n\n"
+        "• 👤 Thông tin tài khoản: Xem hồ sơ cá nhân và tài khoản Odoo đã liên kết\n"
+        "• 📆 Lịch họp & Email: Xem lịch Google Calendar, kiểm tra thư mới Gmail\n"
+        "• 🏢 Dữ liệu Odoo: Tra cứu liên hệ/đối tác, danh mục sản phẩm, đơn bán/mua, phiếu kho, hóa đơn, nhân sự\n"
+        "• 📋 Công việc cá nhân: Xem và quản lý các công việc cần làm\n\n"
+        "💡 Bạn chỉ cần nhắn tin trò chuyện tự nhiên, tôi sẽ tự động xử lý và hỗ trợ bạn."
     )
 
 
@@ -328,9 +329,11 @@ async def handle_telegram_turn(
     request: Request,
 ):
     turn_start_time = time.time()
+    turn_budget = 18.0
     turn_deadline = turn_start_time + 18.0
 
     async def _run_entire_turn() -> list[str]:
+        nonlocal turn_budget, turn_deadline
         payload_hash = hashlib.sha256(req.text.encode("utf-8")).hexdigest()
 
         # 1. Luôn xác thực danh tính từ Gateway TRƯỚC KHI đọc cache hoặc nhận claim turn (giới hạn 5s)
@@ -340,7 +343,7 @@ async def handle_telegram_turn(
                     telegram_user_id=req.telegram_user_id,
                     chat_id=req.chat_id,
                 ),
-                timeout=5.0,
+                timeout=15.0,
             )
         except GatewayServiceError as e:
             logger.warning("Gateway service error resolving identity for request_id=%s: %s", req.request_id, e)
@@ -357,7 +360,7 @@ async def handle_telegram_turn(
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"code": "IDENTITY_TIMEOUT", "message": "Quá thời gian xác thực danh tính từ Gateway (5s)."},
+                detail={"code": "IDENTITY_TIMEOUT", "message": "Quá thời gian xác thực danh tính từ Gateway (15s)."},
             )
 
         if not user_info:
@@ -370,6 +373,13 @@ async def handle_telegram_turn(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"code": "NOT_CONNECTED", "message": "Tài khoản Telegram chưa được liên kết hoặc đã bị ngắt kết nối"},
             )
+
+        if "telegram_user_id" not in user_info or not user_info.get("telegram_user_id"):
+            user_info["telegram_user_id"] = req.telegram_user_id
+        if "chat_id" not in user_info or not user_info.get("chat_id"):
+            user_info["chat_id"] = req.chat_id
+        if "telegram_binding_id" not in user_info or not user_info.get("telegram_binding_id"):
+            user_info["telegram_binding_id"] = req.telegram_binding_id
 
         context = build_gateway_user_context(user_info)
         verified_binding_id = context.telegram_binding_id
@@ -438,6 +448,18 @@ async def handle_telegram_turn(
                 cached_msgs = json.loads(turn_record["messages_json"]) if turn_record.get("messages_json") else []
                 return cached_msgs
 
+        # Only authenticated quotation workflows receive the longer RPC budget.
+        session_ctx = conversation_history_store.get_session(
+            tenant=context.tenant, user_id=context.user_id, chat_id=req.chat_id,
+            binding_id=context.telegram_binding_id, database=context.database)
+        if getattr(get_settings(), 'ENABLE_QUOTATION_APPROVAL_FLOW', False):
+            from app.business.operations import QUOTE_FLOW_ACTIONS, interpret_quotation_flow
+            active = session_ctx.get('active_draft') or {}
+            if interpret_quotation_flow(req.text) or (active.get('draft_type') == 'business' and active.get('business_action') in QUOTE_FLOW_ACTIONS):
+                turn_budget = 60.0
+                turn_deadline = turn_start_time + turn_budget
+                turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
+
         # 3. Claim turn lease trong SQLite để tuần tự hóa các turn cùng session
         lease_token = conversation_history_store.claim_turn_lease(
             tenant=context.tenant,
@@ -445,7 +467,7 @@ async def handle_telegram_turn(
             chat_id=req.chat_id,
             binding_id=context.telegram_binding_id,
             database=context.database,
-            lease_seconds=18.0,
+            lease_seconds=turn_budget + 5.0,
         )
         if not lease_token:
             raise HTTPException(
@@ -485,6 +507,7 @@ async def handle_telegram_turn(
 
         try:
             # 4. Phân tích ý định duy nhất (NaturalPipeline: fast-path hoặc tối đa 1 LLM call)
+            session_ctx['_turn_deadline'] = turn_deadline
             intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
 
             # 5. Thực thi trực tiếp qua UnifiedExecutor (không gọi parser phụ lần hai)
@@ -534,13 +557,16 @@ async def handle_telegram_turn(
                 )
 
     try:
-        messages = await asyncio.wait_for(_run_entire_turn(), timeout=18.0)
+        async with asyncio.timeout(18.0) as turn_timeout:
+            messages = await _run_entire_turn()
     except HTTPException:
         raise
     except (asyncio.TimeoutError, asyncio.CancelledError):
-        logger.warning("Turn processing timed out after 18s for request_id: %s", req.request_id)
+        logger.warning("Turn processing timed out after %ss for request_id: %s", turn_budget, req.request_id)
         from app.services.error_handler import ErrorCode, format_error_message
         messages = [format_error_message(ErrorCode.TURN_TIMEOUT)]
+        if turn_budget > 18:
+            messages = ['Chưa nhận được kết quả đầy đủ của bước xử lý báo giá. Hãy hỏi trạng thái theo số báo giá; không gửi lại thao tác để tránh thực hiện trùng.']
     except Exception as e:
         logger.error("Error in turn execution: %s", e, exc_info=True)
         from app.services.error_handler import classify_exception

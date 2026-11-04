@@ -65,26 +65,30 @@ class ToolRegistry:
         """Sinh tài liệu giới thiệu khả năng trực tiếp từ danh mục tool đã đăng ký và lọc theo quyền."""
         perms = set(user_permissions or []) if user_permissions is not None else None
         lines = [
-            "👋 Xin chào! Tôi có thể hỗ trợ bạn các công việc sau:",
+            "👋 Xin chào! Tôi có thể hỗ trợ bạn các công việc sau hoàn toàn bằng ngôn ngữ tự nhiên:",
             "",
-            "• 📅 Điểm tin hàng ngày: Gửi /today hoặc hỏi \"Hôm nay tôi có gì?\" để xem lịch họp, email và việc cần làm.",
-            "• 👤 Thông tin cá nhân: Hỏi \"Tôi là ai?\" hoặc \"Hồ sơ của tôi\" để xem tài khoản Odoo đã liên kết.",
-            "• 🔗 Kết nối dịch vụ: Hỏi \"Trạng thái kết nối\" để kiểm tra liên kết Google Workspace và Odoo.",
+            "• 👤 Thông tin cá nhân: Xem tài khoản Odoo và hồ sơ cá nhân đã liên kết.",
+            "• 🔗 Kết nối dịch vụ: Kiểm tra trạng thái liên kết Google Workspace và Odoo.",
         ]
 
         if perms is None or any("calendar" in p for p in perms):
-            lines.append("• 📆 Google Calendar: Hỏi \"Xem lịch\" hoặc tạo sự kiện lịch mới.")
+            lines.append("• 📆 Google Calendar: Tra cứu lịch họp hoặc tạo sự kiện lịch mới.")
 
         if perms is None or any("gmail" in p for p in perms):
-            lines.append("• ✉️ Hòm thư Gmail: Hỏi \"Thư chưa đọc\" hoặc soạn thảo gửi email công việc.")
+            lines.append("• ✉️ Hòm thư Gmail: Tra cứu thư chưa đọc hoặc soạn thảo gửi email công việc.")
 
         if perms is None or any("crm" in p for p in perms):
-            lines.append("• 💼 Odoo CRM: Tra cứu khách hàng/cơ hội qua lệnh /crm search <từ khóa> hoặc tạo cơ hội mới.")
+            lines.append("• 💼 Odoo CRM: Tra cứu khách hàng, cơ hội kinh doanh hoặc tạo cơ hội mới.")
 
         if perms is None or any("task" in p for p in perms):
-            lines.append("• 📋 Công việc cá nhân: Xem việc bằng /task list, tạo việc mới hoặc đánh dấu hoàn thành.")
+            lines.append("• 📋 Công việc cá nhân: Tra cứu công việc, tạo việc mới hoặc cập nhật trạng thái.")
 
-        lines.append("• 🏢 Dữ liệu Odoo: Tra cứu khách hàng/đối tác, danh mục sản phẩm, đơn bán/mua, kho bãi, hóa đơn hoặc danh bạ nhân viên.")
+        lines.append("• 🏢 Dữ liệu Odoo: Tra cứu liên hệ/đối tác, danh mục sản phẩm, đơn bán/mua, phiếu kho, hóa đơn hoặc danh bạ nhân viên.")
+
+        if self.get_tool("reports.create"):
+            lines.append("• 📊 Báo cáo Odoo: doanh thu, doanh số, tồn kho hiện tại, công việc Project; tự chọn Word hoặc Excel theo mục đích.")
+        if self.get_tool("sales.quotation.draft"):
+            lines.append("• 🧾 Báo giá: thu thập thông tin, chốt giá/thuế và xác nhận tạo báo giá nháp.")
 
         lines.extend([
             "",
@@ -353,6 +357,10 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "contact_kind": {"enum": ["all", "companies", "individuals", "customers", "suppliers"], "description": "Phân loại liên hệ; khách hàng dùng customers, nhà cung cấp dùng suppliers, không đếm tất cả liên hệ thay thế"},
+                    "record_scope": {"enum": ["visible", "mine"]},
+
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Tên, email hoặc số điện thoại đối tác cần tìm"},
                     "limit": {"type": "integer", "description": "Số lượng bản ghi tối đa (mặc định 10)"},
                 },
@@ -369,6 +377,7 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Tên hoặc mã sản phẩm/barcode cần tìm"},
                     "limit": {"type": "integer", "description": "Số lượng sản phẩm tối đa (mặc định 10)"},
                 },
@@ -385,6 +394,10 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "document_type": {"enum": ["all", "quotations", "orders"], "description": "Báo giá chưa xác nhận dùng quotations (draft/sent), đơn bán dùng orders (sale/done), all chỉ khi yêu cầu mọi loại"},
+                    "record_scope": {"enum": ["visible", "mine"], "description": "Của tôi dùng mine; mặc định các bản ghi được quyền truy cập"},
+
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Số đơn hàng hoặc tên khách hàng"},
                     "state": {"type": "string", "description": "Trạng thái đơn (draft, sent, sale, done, cancel)"},
                     "limit": {"type": "integer", "description": "Số lượng đơn tối đa (mặc định 10)"},
@@ -402,6 +415,10 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "document_type": {"enum": ["all", "rfqs", "orders"], "description": "RFQ/chờ duyệt dùng rfqs; đơn mua đã xác nhận dùng orders; all là mọi loại gồm hủy"},
+                    "record_scope": {"enum": ["visible", "mine"]},
+
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Số PO hoặc tên nhà cung cấp"},
                     "state": {"type": "string", "description": "Trạng thái đơn mua (draft, sent, purchase, done, cancel)"},
                     "limit": {"type": "integer", "description": "Số lượng đơn tối đa (mặc định 10)"},
@@ -419,6 +436,7 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Mã phiếu kho hoặc nguồn gốc đơn hàng"},
                     "state": {"type": "string", "description": "Trạng thái phiếu kho (assigned, done, confirmed, draft)"},
                     "limit": {"type": "integer", "description": "Số lượng phiếu tối đa (mặc định 10)"},
@@ -436,6 +454,7 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Số hóa đơn hoặc tên đối tác"},
                     "payment_state": {"type": "string", "description": "Tình trạng thanh toán (not_paid, in_payment, paid, partial)"},
                     "limit": {"type": "integer", "description": "Số lượng hóa đơn tối đa (mặc định 10)"},
@@ -453,6 +472,7 @@ def build_default_tool_registry() -> ToolRegistry:
             parameter_schema={
                 "type": "object",
                 "properties": {
+                    "count_only": {"type": "boolean", "description": "Đặt true nếu người dùng hỏi có bao nhiêu, tổng số lượng, đếm số bản ghi"},
                     "query": {"type": "string", "description": "Tên nhân viên, phòng ban hoặc chức danh"},
                     "limit": {"type": "integer", "description": "Số lượng nhân viên tối đa (mặc định 10)"},
                 },
@@ -460,6 +480,15 @@ def build_default_tool_registry() -> ToolRegistry:
         )
     )
 
+    from app.workspace.agent import register_tools
+    register_tools(registry, ToolDefinition)
+    from app.business.tools import register as register_business
+    from app.core.config import get_settings
+    settings = get_settings()
+    register_business(registry, settings.ENABLE_REPORTING, settings.ENABLE_QUOTATIONS)
+    if settings.ENABLE_BUSINESS_ACTIONS or settings.ENABLE_QUOTATION_APPROVAL_FLOW:
+        from app.business.operations import register as register_operations
+        register_operations(registry, ToolDefinition)
     return registry
 
 

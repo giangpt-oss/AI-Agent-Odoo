@@ -171,12 +171,19 @@ class ConversationHistoryStore:
 
             # Kiểm tra TTL (30 phút)
             if now - row["updated_at"] > self.ttl_seconds:
-                conn.execute("DELETE FROM conversation_sessions WHERE session_key = ?", (key,))
+                draft = json.loads(row['active_draft_json'] or '{}')
+                durable = draft.get('draft_type') in ('quotation', 'business') and (binding_id or 'default') == row['binding_id']
+                # Business work survives conversational context expiry. Never retain
+                # lookup candidates or confirmations as implicit fresh approval.
+                if durable:
+                    conn.execute("UPDATE conversation_sessions SET history_json='[]', last_read_json='{}', pending_confirmation_json='{}', pending_clarification_json='{}', updated_at=? WHERE session_key=?", (now, key))
+                else:
+                    conn.execute("DELETE FROM conversation_sessions WHERE session_key = ?", (key,))
                 conn.commit()
                 return {
                     "history": [],
                     "last_read": {},
-                    "active_draft": None,
+                    "active_draft": draft if durable else None,
                     "pending": None,
                     "pending_clarification": None,
                 }

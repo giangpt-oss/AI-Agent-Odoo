@@ -11,6 +11,7 @@ class GatewayPermission:
     CALENDAR_WRITE = "calendar.write"
     GMAIL_READ = "gmail.read"
     GMAIL_SEND = "gmail.send"
+    SALES_CREATE = "sales.create"
     CRM_READ = "crm.read"
     CRM_CREATE = "crm.create"
     CRM_WRITE = "crm.write"

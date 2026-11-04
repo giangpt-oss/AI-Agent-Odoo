@@ -59,11 +59,11 @@ async def test_task_create_preview_and_confirm(temp_db_dir, mock_context):
         )
         assert len(msgs) == 1
         assert "Bản xem trước tạo công việc cá nhân" in msgs[0]
-        assert "/confirm c_" in msgs[0]
+        assert '/confirm' not in msgs[0] and 'đồng ý' in msgs[0]
 
         # Trích xuất mã confirmation id
         import re
-        m = re.search(r"/confirm\s+(c_[a-f0-9]+)", msgs[0])
+        m = re.search(r"\b(c_[a-f0-9]+)\b", msgs[0])
         assert m is not None
         conf_id = m.group(1)
 
@@ -98,7 +98,7 @@ async def test_bare_agreement_rejected(mock_context):
             telegram_user_id=888,
             raw_text=phrase,
         )
-        assert "Vui lòng cung cấp mã xác nhận cụ thể" in msgs[0]
+        assert 'mã tham chiếu' in msgs[0] and '/confirm' not in msgs[0]
 
 
 @pytest.mark.asyncio

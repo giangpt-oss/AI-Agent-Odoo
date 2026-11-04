@@ -1,4 +1,5 @@
 import json
+import logging
 import sqlite3
 import secrets
 from datetime import datetime, timedelta, UTC
@@ -6,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from app.services.file_service import file_service
+
+logger = logging.getLogger(__name__)
 
 
 class ConfirmationService:
@@ -279,10 +282,15 @@ class ConfirmationService:
 
         instruction = (
             f"\n\n⚠️ **Hành động cần bạn xác nhận:**\n"
-            f"👉 Gửi `/confirm {conf_id}` để xác nhận thực hiện.\n"
-            f"👉 Gửi `/cancel {conf_id}` để hủy bỏ.\n"
+            f"Bạn có thể đồng ý thực hiện hoặc từ chối. Mã tham chiếu: {conf_id}.\n"
+            f"Nếu có nhiều thao tác đang chờ, hãy cho biết mã của thao tác bạn chọn.\n"
             f"_(Mã có hiệu lực trong vòng 5 phút)_"
         )
+        if action == 'sales.quotation.create':
+            instruction = '\n\nBạn xác nhận tạo báo giá theo nội dung trên chứ? Có thể trả lời “xác nhận” hoặc “không xác nhận”. Bản xác nhận có hiệu lực 5 phút.'
+        from app.business.operations import QUOTE_FLOW_ACTIONS
+        if action in QUOTE_FLOW_ACTIONS:
+            instruction = '\n\nBạn xác nhận thực hiện đúng bước và nội dung trên chứ? Có thể đồng ý hoặc từ chối. Bản xác nhận có hiệu lực 5 phút.'
         return conf_id, preview_text + instruction
 
     def claim_and_validate(
@@ -415,7 +423,8 @@ class ConfirmationService:
 
             # Sinh execution token và lease 30s
             execution_token = f"tok_{secrets.token_hex(8)}"
-            lease_expires_at = now_ts + 30.0
+            from app.business.operations import QUOTE_FLOW_ACTIONS
+            lease_expires_at = now_ts + (75.0 if c_act in QUOTE_FLOW_ACTIONS else 30.0)
 
             # Atomic conditional update claim
             update_cursor = conn.execute(
@@ -667,6 +676,13 @@ class ConfirmationService:
             )
             conn.commit()
             return True, f"Đã hủy bỏ thành công yêu cầu `{clean_id}`."
+
+    def latest_draft_confirmation(self, *, user_id, chat_id, telegram_binding_id, draft_id):
+        with sqlite3.connect(self.db_path, timeout=20.0) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute('SELECT * FROM pending_confirmations WHERE user_id=? AND chat_id=? AND telegram_binding_id=? AND draft_id=? AND action=? ORDER BY created_at DESC LIMIT 1',
+                (user_id, chat_id, telegram_binding_id, draft_id, 'sales.quotation.create')).fetchone()
+            return dict(row) if row else None
 
     def get_confirmation(self, identifier: str) -> Optional[Dict[str, Any]]:
         clean_id = identifier.strip()

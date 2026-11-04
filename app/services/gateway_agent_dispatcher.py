@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import secrets
@@ -64,8 +65,7 @@ class GatewayAgentDispatcher:
         ]
         if lower_text in bare_agrees:
             return [
-                "⚠️ Vui lòng cung cấp mã xác nhận cụ thể theo cú pháp: `/confirm <mã>` hoặc `/cancel <mã>`. "
-                "Hệ thống không thể thực thi nếu chỉ nhận câu đồng ý mà thiếu mã xác nhận."
+                "Bạn muốn xác nhận hay hủy thao tác nào? Hãy cho biết mã tham chiếu trong bản xem trước."
             ]
 
         # ---------------------------------------------------------
@@ -158,7 +158,7 @@ class GatewayAgentDispatcher:
             if not draft:
                 return [
                     "⚠️ Không tìm thấy bản thảo email nào vừa được soạn trong phiên làm việc hiện tại. "
-                    "Vui lòng soạn email theo cú pháp: `/email send <người_nhận> | <tiêu_đề> | <nội_dung>`."
+                    "Bạn cho biết người nhận, tiêu đề và nội dung email muốn gửi nhé."
                 ]
             return await self._prepare_email_send(context, chat_id, draft)
 
@@ -170,7 +170,7 @@ class GatewayAgentDispatcher:
             if not recent_evs:
                 return [
                     "⚠️ Không tìm thấy sự kiện lịch nào trong ngữ cảnh gần đây. "
-                    "Vui lòng tra cứu lịch trước bằng lệnh `/calendar` hoặc chỉ định mã sự kiện: `/calendar update <mã_sự_kiện> | ...`."
+                    "Bạn cho biết tên và thời gian cuộc họp cần sửa, hoặc yêu cầu xem lịch để chọn đúng cuộc họp nhé."
                 ]
             if len(recent_evs) > 1:
                 # Có nhiều cuộc họp: yêu cầu người dùng chọn
@@ -226,7 +226,7 @@ class GatewayAgentDispatcher:
         return [
             "⚠️ Yêu cầu này chưa được hỗ trợ qua Gateway hoặc dịch vụ AI phân tích tự nhiên hiện chưa được kích hoạt "
             "(chỉ hỗ trợ: điểm tin, xem hồ sơ cá nhân, kiểm tra kết nối, công việc cá nhân, Google Calendar, Gmail và Odoo CRM). "
-            "Vui lòng sử dụng các lệnh trực tiếp (ví dụ: `/task`, `/calendar`, `/email`, `/crm`, `/help`) để thực hiện yêu cầu."
+            "Bạn có thể mô tả rõ tác vụ cần làm; nếu dịch vụ AI chưa hoạt động, hãy thử lại sau."
         ]
 
     # =========================================================================
@@ -856,8 +856,7 @@ class GatewayAgentDispatcher:
                 {"pending_intent": "create_calendar", "data": match_data},
             )
             return [
-                "❓ Vui lòng cung cấp tiêu đề và thời gian sự kiện theo cú pháp: "
-                "`/calendar create Tiêu đề | YYYY-MM-DDTHH:MM:SS | YYYY-MM-DDTHH:MM:SS`"
+                "Bạn cho biết tiêu đề cuộc họp, ngày, giờ bắt đầu và giờ kết thúc nhé."
             ]
 
         # Lấy thông tin tài khoản Google đang kết nối để hiển thị preview
@@ -1052,8 +1051,7 @@ class GatewayAgentDispatcher:
                 {"pending_intent": "send_email", "data": match_data},
             )
             return [
-                "❓ Vui lòng cung cấp đầy đủ thông tin gửi thư theo cú pháp: "
-                "`/email send Người_nhận@example.com | Tiêu đề | Nội dung thư`"
+                "Bạn cho biết người nhận, tiêu đề và nội dung email muốn gửi nhé."
             ]
 
         conns = await gateway_client.get_user_connections(context.user_id)
@@ -1328,7 +1326,7 @@ class GatewayAgentDispatcher:
             if not selected_id:
                 return True, [
                     "⚠️ Không nhận diện được sự kiện bạn đã chọn. "
-                    "Vui lòng thử lại với cú pháp: `/calendar update <mã_sự_kiện> | <tiêu_đề_mới> | <thời_gian_mới>`."
+                    "Bạn cho biết tên hoặc mã cuộc họp, cùng nội dung và thời gian muốn thay đổi nhé."
                 ]
 
             match_update = {"event_id": selected_id, "summary": selected_summary}

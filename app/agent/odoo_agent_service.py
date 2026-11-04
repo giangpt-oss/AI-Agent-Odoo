@@ -1,10 +1,6 @@
-import os
-import asyncio
 import logging
-from pathlib import Path
 from typing import Any
 from google import genai
-from google.genai import types
 
 from app.core.config import get_settings
 from app.connectors.odoo.client import OdooAsyncClient
@@ -126,7 +122,7 @@ class OdooAgentService:
             f"- CÂU HỎI NGOÀI LỀ KHÔNG LIÊN QUAN ĐẾN CÔNG VIỆC:\n"
             f"  * Cho phép chào hỏi lịch sự và giới thiệu tính năng nghiệp vụ.\n"
             f"  * Lịch sự từ chối các câu hỏi tán gẫu đời sống, giải trí, thể thao, ẩm thực, triết học viển vông: 'Dạ, em là Trợ lý Doanh nghiệp Odoo, em chỉ hỗ trợ các câu hỏi liên quan đến công việc, dữ liệu và nghiệp vụ công ty thôi ạ. Em có thể hỗ trợ gì cho công việc của bạn/Sếp không ạ?'\n"
-            f"6. Trả lời bằng tiếng Việt gãy gọn, chuyên nghiệp, sử dụng markdown danh sách và emoji phù hợp.\n"
+            f"6. Trả lời bằng tiếng Việt gãy gọn, chuyên nghiệp, dùng văn bản thường, có thể xuống dòng và dùng dấu đầu dòng; không dùng Markdown hoặc thẻ HTML để định dạng.\n"
         )
 
         # Khởi tạo Router và Orchestrator

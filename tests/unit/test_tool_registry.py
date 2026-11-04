@@ -74,8 +74,8 @@ def test_generate_capability_overview_dynamic():
     overview_all = registry.generate_capability_overview(
         user_permissions=["calendar.events", "gmail.readonly", "crm.read", "tasks.read", "tasks.write"]
     )
-    assert "Xin chào! Tôi có thể hỗ trợ bạn các công việc sau:" in overview_all
-    assert "Điểm tin hàng ngày" in overview_all
+    assert "Xin chào! Tôi có thể hỗ trợ bạn các công việc sau" in overview_all
+    assert "Thông tin cá nhân" in overview_all
     assert "Google Calendar" in overview_all
     assert "Odoo CRM" in overview_all
     assert "Công việc cá nhân" in overview_all

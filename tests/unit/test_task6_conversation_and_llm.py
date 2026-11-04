@@ -44,7 +44,7 @@ async def test_multi_turn_calendar_continuation(agent_context):
         raw_text="/calendar create Họp chiến lược quý 4",
     )
     assert len(res1) == 1
-    assert "Vui lòng cung cấp tiêu đề và thời gian" in res1[0]
+    assert 'tiêu đề' in res1[0] and 'giờ bắt đầu' in res1[0] and '/calendar' not in res1[0]
     
     # Kiểm tra trạng thái đã được lưu
     state = conversation_state_manager.get_state(agent_context.user_id, agent_context.telegram_binding_id)
@@ -62,7 +62,7 @@ async def test_multi_turn_calendar_continuation(agent_context):
         assert len(res2) == 1
         assert "Bản xem trước tạo sự kiện Lịch Google" in res2[0]
         assert "Họp chiến lược quý 4" in res2[0]
-        assert "/confirm" in res2[0]
+        assert 'Mã tham chiếu: c_' in res2[0] and '/confirm' not in res2[0]
 
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_context_reference_send_last_draft_email(agent_context):
         assert "Bản xem trước gửi thư Gmail" in res_send[0]
         assert "giamdoc@company.com" in res_send[0]
         assert "Báo cáo doanh thu tháng 10" in res_send[0]
-        assert "/confirm" in res_send[0]
+        assert 'Mã tham chiếu: c_' in res_send[0] and '/confirm' not in res_send[0]
 
 
 @pytest.mark.asyncio
@@ -164,7 +164,7 @@ async def test_llm_parser_natural_language_to_schema_action(agent_context):
         assert "Bản xem trước tạo công việc cá nhân" in res[0]
         assert "Gặp gỡ đối tác Viettel" in res[0]
         assert "high" in res[0]
-        assert "/confirm" in res[0]
+        assert 'Mã tham chiếu: c_' in res[0] and '/confirm' not in res[0]
 
 
 @pytest.mark.asyncio
@@ -183,7 +183,7 @@ async def test_llm_unconfigured_fallback_keeps_slash_commands(agent_context):
             raw_text="/task create Đi nộp báo cáo",
         )
         assert "Bản xem trước tạo công việc cá nhân" in res_slash[0]
-        assert "/confirm" in res_slash[0]
+        assert 'Mã tham chiếu: c_' in res_slash[0] and '/confirm' not in res_slash[0]
         
         # 2. Câu ngôn ngữ tự nhiên không đoán dữ liệu, thông báo rõ ràng
         res_nl = await dispatcher.dispatch(

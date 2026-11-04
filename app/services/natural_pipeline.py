@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Optional
 
 from app.core.config import get_settings
@@ -21,7 +22,7 @@ class NaturalPipeline:
     
     Quy trình:
     1. Fast-path: Khớp trực tiếp slash commands, chào hỏi thuần, status audit và các mẫu quen thuộc (0 LLM call).
-    2. LLM Dispatcher: Sử dụng Gemini ép chuẩn JSON Schema (IntentAnalysisResult) với timeout 6s,
+    2. LLM Dispatcher: Sử dụng Gemini ép chuẩn JSON Schema (IntentAnalysisResult),
        đưa đầy đủ 20 messages lịch sử (tối đa 12.000 ký tự), active draft và snapshot dữ liệu vừa đọc vào prompt.
     """
 
@@ -36,11 +37,70 @@ class NaturalPipeline:
     ) -> IntentAnalysisResult:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
+        if getattr(get_settings(), 'ENABLE_QUOTATION_APPROVAL_FLOW', False):
+            from app.business.operations import interpret_quotation_flow
+            flow = interpret_quotation_flow(clean_text)
+            if flow:
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.quotation_flow', parameters=flow)
+
+        if get_settings().ENABLE_REPORTING:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            from app.business.report_local import interpret as interpret_report
+            try:
+                today = datetime.now(ZoneInfo(context.timezone)).date()
+            except (ValueError, KeyError):
+                today = datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date()
+            report = interpret_report(clean_text, session_context or {}, today)
+            if report:
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name=report[0], parameters=report[1])
+
+        if get_settings().ENABLE_QUOTATIONS:
+            from app.business.quote_local import interpret
+            active = (session_context or {}).get('active_draft') or {}
+            if active.get('draft_type') == 'quotation' and lower.rstrip('.!') in {'có', 'có nhé', 'đồng ý', 'ok'}:
+                if active.get('quotation_hints', {}).get('selection'):
+                    return IntentAnalysisResult(intent_type=IntentType.CLARIFY, clarification_prompt='Bạn muốn chọn kết quả nào? Hãy cho biết tên hoặc ID từ danh sách vừa tìm được để tránh chọn nhầm.')
+                from app.business.workflow import confirmation_service
+                conf = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
+                    telegram_binding_id=context.telegram_binding_id or 'default', draft_id=active.get('draft_id'))
+                if conf and conf.get('status') == 'pending' and conf.get('draft_version') == active.get('version') and confirmation_service.validate_access(conf, context.user_id, context.chat_id, context.telegram_binding_id, context.owner_key):
+                    return IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=conf['confirmation_id'])
+                job = ((session_context or {}).get('last_read') or {}).get('quotation_preparation_job') or {}
+                if job.get('draft_id') == active.get('draft_id') and job.get('draft_version') == active.get('version'):
+                    return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters={'action': 'status'})
+            local = interpret(clean_text, active, session_context)
+            if local:
+                if local['action'] == 'confirm':
+                    from app.business.workflow import confirmation_service
+                    conf = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
+                        telegram_binding_id=context.telegram_binding_id or 'default', draft_id=active.get('draft_id'))
+                    if conf and confirmation_service.validate_access(conf, context.user_id, context.chat_id, context.telegram_binding_id, context.owner_key):
+                        return IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=conf['confirmation_id'])
+                    return IntentAnalysisResult(intent_type=IntentType.CLARIFY, clarification_prompt='Báo giá chưa có bản xem trước để xác nhận. Bạn muốn tôi kiểm tra và hiển thị bản xem trước không?')
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=local)
 
         # 1. Fast-path: Slash Commands (xác định, 0 LLM calls)
         if clean_text.startswith("/"):
             tokens = clean_text.split(maxsplit=2)
             base_cmd = tokens[0].lower().split("@")[0]
+            if base_cmd == "/business":
+                from app.business.operations import parse_command
+                try:
+                    return parse_command(clean_text)
+                except (ValueError, TypeError, KeyError):
+                    return IntentAnalysisResult(intent_type=IntentType.REPLY, reply_text='Bạn muốn thực hiện nghiệp vụ gì? Hãy cho biết loại chứng từ và thông tin cần thay đổi.')
+            if base_cmd in ("/report", "/quote"):
+                from app.business.tools import parse_command
+                try:
+                    return parse_command(clean_text)
+                except (ValueError, TypeError, KeyError):
+                    return IntentAnalysisResult(intent_type=IntentType.REPLY,
+                        reply_text='Tôi chưa hiểu yêu cầu. Bạn muốn lấy báo cáo hay lập báo giá? Hãy mô tả thông tin bạn cần.')
+
+            if base_cmd == "/workspace":
+                from app.workspace.agent import parse_command
+                return parse_command(clean_text)
 
             if base_cmd == "/today":
                 return IntentAnalysisResult(
@@ -193,14 +253,12 @@ class NaturalPipeline:
             return IntentAnalysisResult(
                 intent_type=IntentType.REPLY,
                 reply_text=(
-                    "👋 Xin chào! Tôi có thể hỗ trợ gì cho bạn hôm nay?\n\n"
-                    "Bạn có thể nhắn tin tự nhiên hoặc dùng các gợi ý nhanh:\n"
-                    "• 📅 Điểm tin hàng ngày: Gửi /today hoặc hỏi \"Hôm nay tôi có gì?\"\n"
-                    "• 👤 Thông tin tài khoản: Hỏi \"Tôi là ai?\" hoặc \"Hồ sơ của tôi\"\n"
-                    "• 📆 Lịch họp & Email: Hỏi \"Xem lịch\" hoặc \"Thư chưa đọc\"\n"
-                    "• 🏢 Dữ liệu Odoo: Tra cứu khách hàng, sản phẩm, đơn bán/mua, tồn kho, hóa đơn, nhân sự\n"
-                    "• 📋 Công việc cá nhân: Gửi /task list hoặc /task create <nội dung>\n\n"
-                    "💡 Các thao tác ghi dữ liệu luôn có bản xem trước để bạn xác nhận an toàn."
+                    "👋 Xin chào! Tôi có thể hỗ trợ bạn các công việc sau hoàn toàn bằng tiếng Việt tự nhiên:\n\n"
+                    "• 👤 Thông tin tài khoản: Xem hồ sơ cá nhân và tài khoản Odoo đã liên kết\n"
+                    "• 📆 Lịch họp & Email: Xem lịch Google Calendar, kiểm tra thư mới Gmail\n"
+                    "• 🏢 Dữ liệu Odoo: Tra cứu liên hệ/đối tác, danh mục sản phẩm, đơn bán/mua, phiếu kho, hóa đơn, nhân sự\n"
+                    "• 📋 Công việc cá nhân: Xem và quản lý các công việc cần làm\n\n"
+                    "💡 Bạn chỉ cần nhắn tin trò chuyện tự nhiên, tôi sẽ tự động xử lý và hỗ trợ bạn."
                 ),
             )
 
@@ -262,7 +320,13 @@ class NaturalPipeline:
             )
 
         # 4. Fast-path: Các câu lệnh xác nhận / hủy / kiểm tra mã xác nhận
-        if lower in {"xác nhận", "đồng ý", "ok xác nhận"} or lower.startswith("xác nhận ") or lower.startswith("đồng ý "):
+        active_quote = ((session_context or {}).get('active_draft') or {}).get('draft_type') == 'quotation'
+        explicit_confirmation = bool(re.fullmatch(r'(?:xác nhận|đồng ý)\s+(?:c_|conf_)[a-zA-Z0-9_-]+', clean_text, re.I))
+        quote_bare_confirmation = False
+        if active_quote and lower in {'xác nhận', 'đồng ý', 'ok xác nhận'}:
+            from app.services.confirmation_service import confirmation_service
+            quote_bare_confirmation = bool(confirmation_service.list_pending_confirmations(user_id=context.user_id, chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or 'default'))
+        if (not active_quote or explicit_confirmation or quote_bare_confirmation) and (lower in {"xác nhận", "đồng ý", "ok xác nhận"} or lower.startswith("xác nhận ") or lower.startswith("đồng ý ")):
             words = lower.split()
             cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
             return IntentAnalysisResult(
@@ -271,7 +335,8 @@ class NaturalPipeline:
                 parameters={"confirmation_id": cid} if cid else {},
             )
 
-        if lower in {"hủy", "hủy bỏ", "không xác nhận", "từ chối"} or lower.startswith("hủy "):
+        explicit_cancel = bool(re.fullmatch(r'hủy\s+(?:c_|conf_)[a-zA-Z0-9_-]+', clean_text, re.I))
+        if (not active_quote or explicit_cancel or lower == 'không xác nhận') and (lower in {"hủy", "hủy bỏ", "không xác nhận", "từ chối"} or lower.startswith("hủy ")):
             words = lower.split()
             cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
             return IntentAnalysisResult(
@@ -321,11 +386,56 @@ class NaturalPipeline:
 
         if any(p in lower for p in ["viết ngắn hơn", "ngắn lại", "viết dài hơn", "sửa bản nháp", "sửa giọng"]):
             active_draft = session_context.get("active_draft") if session_context else None
-            if active_draft:
+            if active_draft and active_draft.get("draft_type") == "email":
                 return await self._edit_draft_with_llm(active_draft, clean_text, context)
 
         # 6. TOÀN BỘ CÂU TỰ NHIÊN CÒN LẠI ĐỀU CHUYỂN SANG LLM DISPATCHER
+        active = (session_context or {}).get('active_draft') or {}
+        if active.get('draft_type') == 'quotation' and get_settings().ENABLE_QUOTATIONS:
+            return await self._dispatch_quote_turn(clean_text, context, session_context)
         return await self._dispatch_with_llm(clean_text, context, session_context)
+
+    async def _dispatch_quote_turn(self, text, context, session_context):
+        """An active quote consumes semantic facts, never unpersisted acknowledgement prose."""
+        from app.business.quote_schema import QuoteTurn
+        from app.services.intent_prompt import QUOTE_PROMPT
+        history = (session_context or {}).get('history', [])[-4:]
+        active = (session_context or {}).get('active_draft') or {}
+        from app.business.workflow import confirmation_service
+        conf = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
+            telegram_binding_id=context.telegram_binding_id or 'default', draft_id=active.get('draft_id'))
+        if conf and not confirmation_service.validate_access(conf, context.user_id, context.chat_id, context.telegram_binding_id, context.owner_key):
+            conf = None
+        prompt = QUOTE_PROMPT + '\nTrả DUY NHẤT JSON theo schema đã cấp.\n'
+        prompt += '\nKhông trả intent_type/reply_text/tool_name ở đây. action=other chỉ khi người dùng đổi chủ đề rõ ràng, không phải thông tin bổ sung cho báo giá. Không lấy lời bot tự nói làm dữ liệu đã lưu.\n'
+        prompt += json.dumps({'draft': active, 'confirmation_status': conf.get('status') if conf else None,
+            'history': history, 'user_text': text}, ensure_ascii=False)
+        try:
+            remaining = max(0.1, min(12.0, (session_context or {}).get('_turn_deadline', time.time() + 14) - time.time() - 2))
+            raw = await asyncio.wait_for(self._call_gemini_raw(prompt, response_schema=QuoteTurn.model_json_schema()), timeout=remaining)
+            cleaned = raw.strip().removeprefix('```json').removeprefix('```').removesuffix('```').strip()
+            turn = QuoteTurn.model_validate_json(cleaned)
+            if turn.action == 'confirm':
+                if conf:
+                    return IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=conf['confirmation_id'])
+                return IntentAnalysisResult(intent_type=IntentType.CLARIFY, clarification_prompt='Báo giá chưa có bản xem trước để xác nhận. Bạn muốn tôi kiểm tra và hiển thị bản xem trước không?')
+            if turn.action == 'other':
+                return await self._dispatch_with_llm(text, context, session_context)
+            return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=turn.model_dump(exclude_none=True))
+        except Exception as exc:
+            logger.warning('Quotation semantic extraction failed: %s code=%s', type(exc).__name__, getattr(exc, 'code', None))
+            if getattr(exc, 'code', None) == 429:
+                message = 'Dịch vụ AI đang bị giới hạn lượt gọi (429), không phải lỗi ghi dữ liệu Odoo. Nháp cũ vẫn được giữ; thông tin ở tin nhắn này chưa được điền vào trường. Chưa tạo báo giá trên Odoo.'
+                pending = active.get('quotation_hints', {}).get('selection') or {}
+                if time.time() - pending.get('at', 0) <= 1800 and pending.get('ids'):
+                    message += '\nCác ID đang chờ bạn chọn: ' + ', '.join(map(str, pending['ids'])) + '. Bạn có thể trả lời bằng tên hoặc ID khi dịch vụ AI hoạt động trở lại.'
+                else:
+                    message += '\nThông tin cũ vẫn được giữ. Khi dịch vụ AI hoạt động trở lại, bạn có thể hỏi tiến độ hoặc yêu cầu xem báo giá để tiếp tục.'
+            elif isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or getattr(exc, 'code', None) in (500, 502, 503, 504):
+                message = 'Dịch vụ AI phân tích đang quá hạn hoặc tạm thời không đáp ứng. Nháp cũ vẫn được giữ; thông tin ở tin nhắn này chưa được điền vào trường. Chưa tạo báo giá trên Odoo. Bạn có thể gửi lại thông tin khi dịch vụ AI hoạt động.'
+            else:
+                message = 'Chưa phân tích được thông tin bổ sung; nháp đã lưu vẫn được giữ. Bạn vui lòng nói rõ trường cần sửa và giá trị; customer_lead là số ngày, ví dụ 10 ngày.'
+            return IntentAnalysisResult(intent_type=IntentType.CLARIFY, clarification_prompt=message)
 
     async def _edit_draft_with_llm(
         self,
@@ -432,7 +542,7 @@ class NaturalPipeline:
                 )
 
             # Chế độ offline test (không có API key):
-            lines = [l.strip() for l in content.splitlines() if l.strip()]
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
             if "ngắn" in user_text.lower():
                 concise_content = " ".join(lines[:max(1, len(lines) // 2)]) if len(lines) > 1 else lines[0] if lines else "Nội dung tóm tắt"
             elif "dài" in user_text.lower():
@@ -458,8 +568,8 @@ class NaturalPipeline:
                 ),
             )
 
-    async def _call_gemini_raw(self, prompt: str) -> str:
-        """Thực hiện gọi Google Gemini với timeout tối đa 6 giây."""
+    async def _call_gemini_raw(self, prompt: str, response_schema=None) -> str:
+        """Gọi mô hình với deadline hữu hạn, không tự thử lại HTTP."""
         settings = get_settings()
         api_key = settings.GEMINI_API_KEY
         if not api_key:
@@ -469,19 +579,23 @@ class NaturalPipeline:
             from google import genai
             from google.genai import types
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=11000, retry_options=types.HttpRetryOptions(attempts=1)))
+            model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite"
             resp = client.models.generate_content(
-                model=settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite",
+                model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1,
                     response_mime_type="application/json",
+                    response_json_schema=response_schema,
+                    max_output_tokens=900 if response_schema else None,
+                    thinking_config=types.ThinkingConfig(thinking_level='MINIMAL') if model.startswith('gemini-3') else None,
                 ),
             )
             return resp.text or ""
 
-        # Tránh chặn event loop bằng cách chạy trong threadpool với timeout 9s
-        return await asyncio.wait_for(asyncio.to_thread(_sync_call), timeout=9.0)
+        # HTTP giới hạn 11 giây; lớp async chặn thời gian chờ toàn lời gọi.
+        return await asyncio.wait_for(asyncio.to_thread(_sync_call), timeout=12.0 if response_schema else 9.0)
 
     async def _dispatch_with_llm(
         self,
@@ -490,10 +604,8 @@ class NaturalPipeline:
         session_context: Optional[dict[str, Any]] = None,
     ) -> IntentAnalysisResult:
         available_tools = self.registry.list_tools(list(context.permissions))
-        tools_summary = [
-            f"- {t.name} ({t.action_type}): {t.description}. Schema: {json.dumps(t.parameter_schema)}"
-            for t in available_tools
-        ]
+        from app.services.intent_prompt import INTENT_PROMPT, tool_catalog
+        tools_summary = tool_catalog(available_tools)
 
         # Nạp ngữ cảnh hội thoại có cấu trúc: tối đa 20 messages, giới hạn 12.000 ký tự
         context_blocks = []
@@ -526,54 +638,7 @@ class NaturalPipeline:
 
         context_str = "\n\n".join(context_blocks)
 
-        system_instruction = (
-            "Bạn là bộ não phân tích ý định cho Trợ lý AI Doanh nghiệp kết nối Odoo ERP và Google Workspace.\n"
-            "Hãy phân tích thật kỹ câu nói của người dùng cùng lịch sử hội thoại và dữ liệu phiên để trả về DUY NHẤT một chuỗi JSON hợp lệ theo schema:\n"
-            "{\n"
-            '  "intent_type": "reply" | "read" | "draft" | "prepare_write" | "clarify" | "unsupported" | "action_confirm" | "action_cancel" | "action_status",\n'
-            '  "tool_name": "<tên tool chuẩn nếu intent là read hoặc prepare_write, ngược lại để null>",\n'
-            '  "parameters": { ...các tham số trích xuất được... },\n'
-            '  "reply_text": "<câu trả lời nếu intent là reply hoặc unsupported>",\n'
-            '  "clarification_prompt": "<câu hỏi lại nếu intent là clarify>",\n'
-            '  "candidate_options": [ ...danh sách lựa chọn nếu clarify... ],\n'
-            '  "draft": { "draft_type": "email"|"task", "draft_action": "create"|"update"|"cancel", "recipient": "...", "subject": "...", "content": "..." }\n'
-            "}\n\n"
-            "QUY TẮC BẮT BUỘC:\n"
-            "1. GIẢI THÍCH / HƯỚNG DẪN vs YÊU CẦU HÀNH ĐỘNG:\n"
-            "   - Khi người dùng hỏi cách làm, hỏi định nghĩa, hỏi lý thuyết ('Cách tạo công việc?', 'Làm sao để gửi thư?', 'Hướng dẫn tạo khách hàng'):\n"
-            "     -> intent_type='reply', reply_text='hướng dẫn người dùng'. TUYỆT ĐỐI KHÔNG TẠO BẢN XEM TRƯỚC (prepare_write).\n"
-            "   - Khi câu nói mang tính phủ định ('Đừng tạo công việc', 'Tôi không muốn tạo task nữa', 'Thôi không làm'):\n"
-            "     -> intent_type='reply', reply_text='Dạ vâng, tôi sẽ không thực hiện yêu cầu này.'. TUYỆT ĐỐI KHÔNG TẠO BẢN XEM TRƯỚC.\n"
-            "   - Khi người dùng muốn hành động nhưng thiếu thông tin tối thiểu ('Tạo công việc' mà không có tên):\n"
-            "     -> intent_type='clarify', clarification_prompt='hỏi thông tin còn thiếu'.\n"
-            "   - Khi người dùng yêu cầu hành động cụ thể ('Tạo công việc báo cáo tuần', 'Đổi tên công việc thành X'):\n"
-            "     -> intent_type='prepare_write', tool_name tương ứng.\n\n"
-            "2. ĐỌC DỮ LIỆU CÔNG TY (Odoo / Calendar / Gmail / Tasks):\n"
-            "   - Khi hỏi số liệu, danh sách đối tác, khách hàng, sản phẩm, tồn kho, đơn hàng, hóa đơn, nhân viên:\n"
-            "     -> intent_type='read', chọn đúng tool_name:\n"
-            "     * 'odoo.partners.search': Đối tác, khách hàng, nhà cung cấp.\n"
-            "     * 'odoo.products.search': Sản phẩm, mã SKU, tồn kho, giá bán.\n"
-            "     * 'odoo.sales.search': Đơn bán hàng, báo giá.\n"
-            "     * 'odoo.purchases.search': Đơn mua hàng.\n"
-            "     * 'odoo.inventory.search': Phiếu kho, điều chuyển kho.\n"
-            "     * 'odoo.invoices.search': Hóa đơn, thanh toán.\n"
-            "     * 'odoo.employees.search': Danh bạ nhân viên, phòng ban.\n"
-            "     * 'calendar.events.list': Lịch họp Google Calendar.\n"
-            "     * 'gmail.messages.unread': Thư Gmail chưa đọc.\n"
-            "     * 'tasks.personal.list': Danh sách công việc cá nhân.\n"
-            "     * 'identity.whoami': Xem hồ sơ của tôi.\n"
-            "     * 'connections.status': Trạng thái kết nối dịch vụ.\n"
-            "     * 'briefing.today': Điểm tin hôm nay có gì.\n\n"
-            "3. SOẠN THẢO BẢN NHÁP (Draft):\n"
-            "   - Khi người dùng muốn soạn nháp thư ('Soạn email gửi đối tác...'):\n"
-            "     -> intent_type='draft', trích xuất recipient, subject, content.\n\n"
-            "4. NGỮ CẢNH NỐI TIẾP:\n"
-            "   - Dùng <conversation_history> và <recent_read_records> để trả lời các câu hỏi nối tiếp ('Công việc vừa tạo có hạn khi nào?', 'Khách hàng đó ở đâu?').\n\n"
-            "5. CÂU HỎI VỀ THỜI GIAN / NGÀY THÁNG HIỆN TẠI:\n"
-            "   - Khi người dùng hỏi ngày hôm nay, thứ mấy, bây giờ là mấy giờ, thời gian hiện tại:\n"
-            "     -> intent_type='reply', reply_text='trả lời chính xác ngày giờ dựa theo thông tin Thời điểm hiện tại của hệ thống được cấp bên dưới (năm, tháng, ngày, giờ, múi giờ). TUYỆT ĐỐI KHÔNG tự bịa năm cũ.'\n\n"
-            f"Danh sách công cụ khả dụng:\n" + "\n".join(tools_summary)
-        )
+        system_instruction = INTENT_PROMPT + '\nCông cụ công khai được cấp:\n' + tools_summary
 
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -603,7 +668,7 @@ class NaturalPipeline:
             return self._offline_semantic_dispatch(text, context, session_context)
 
         try:
-            raw_json = await self._call_gemini_raw(user_prompt)
+            raw_json = await self._call_gemini_raw(user_prompt, response_schema=IntentAnalysisResult.model_json_schema())
             cleaned = raw_json.strip()
             if cleaned.startswith("```json"):
                 cleaned = cleaned[7:]
@@ -680,8 +745,8 @@ class NaturalPipeline:
             return IntentAnalysisResult(
                 intent_type=IntentType.UNSUPPORTED,
                 reply_text=(
-                    "⚠️ Thao tác này chưa được hỗ trợ qua Gateway hoặc yêu cầu phân tích hội thoại chuyên biệt. "
-                    "Vui lòng sử dụng các cú pháp lệnh trực tiếp như /calendar, /gmail, /crm hoặc kiểm tra /today."
+                    "⚠️ Thao tác này chưa được hỗ trợ hoặc yêu cầu thêm thông tin cụ thể. "
+                    "Bạn vui lòng diễn đạt rõ hơn nội dung cần hỗ trợ (ví dụ: 'Xem lịch', 'Kiểm tra thư' hoặc 'Tìm đối tác')."
                 ),
             )
 
@@ -698,8 +763,7 @@ class NaturalPipeline:
             return IntentAnalysisResult(
                 intent_type=IntentType.REPLY,
                 reply_text=(
-                    "Để tạo công việc cá nhân, bạn có thể nhắn trực tiếp: 'Tạo công việc [tên việc] | [hạn chót]' "
-                    "hoặc dùng lệnh /task create <tên việc> | <hạn chót> | <ưu tiên>. "
+                    "Để tạo công việc cá nhân, bạn chỉ cần nhắn trực tiếp nội dung công việc (ví dụ: 'Tạo công việc chuẩn bị báo cáo quý'). "
                     "Hệ thống sẽ luôn gửi bản xem trước để bạn xác nhận an toàn trước khi lưu."
                 ),
             )
@@ -753,59 +817,117 @@ class NaturalPipeline:
                 ),
             )
 
+        # Tra cứu số lượng cụ thể nối tiếp từ dữ liệu vừa đọc
+        if session_context and any(w in lower for w in [
+            "con số cụ thể", "số cụ thể", "cụ thể là bao nhiêu", "cụ thể bao nhiêu",
+            "chính xác là bao nhiêu", "chính xác bao nhiêu", "tổng cộng bao nhiêu",
+            "con số chính xác", "bao nhiêu vậy", "bao nhiêu thế"
+        ]):
+            last_read = session_context.get("last_read") or session_context.get("last_read_data")
+            if isinstance(last_read, dict):
+                last_count = last_read.get("odoo_last_count")
+                if isinstance(last_count, dict) and "total_count" in last_count:
+                    cnt = last_count["total_count"]
+                    cat = last_count.get("category", "")
+                    cat_vn = {
+                        "odoo.partners": "liên hệ/đối tác",
+                        "odoo.products": "sản phẩm",
+                        "odoo.sales": "đơn bán hàng",
+                        "odoo.purchases": "đơn mua hàng",
+                        "odoo.inventory": "phiếu kho",
+                        "odoo.invoices": "hóa đơn",
+                        "odoo.employees": "nhân viên",
+                    }.get(cat, "bản ghi")
+                    cat_vn = last_count.get("entity_label") or cat_vn
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.REPLY,
+                        reply_text=f"📊 Số đã tra cứu là {cnt:,} {cat_vn}.",
+                    )
+
         # 5. Tra cứu dữ liệu doanh nghiệp
-        if any(w in lower for w in ["đối tác", "khách hàng", "nhà cung cấp"]) and not any(w in lower for w in ["crm", "cơ hội"]):
-            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh sách)\s*(?:đối tác|khách hàng|nhà cung cấp)?", "", lower).strip()
+        is_count_query = any(w in lower for w in [
+            "bao nhiêu", "tổng số", "mấy", "đếm", "số lượng", "tổng cộng", "con số"
+        ])
+
+        if any(w in lower for w in ["đối tác", "khách hàng", "nhà cung cấp", "liên hệ", "contact"]) and not any(w in lower for w in ["crm", "cơ hội"]):
+            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh sách|hiện tại|đang có|có|tổng số|bao nhiêu|số lượng)?\s*(?:đối tác|khách hàng|nhà cung cấp|liên hệ|contacts?)?", "", lower).strip()
+            params = {}
+            if is_count_query:
+                params["count_only"] = True
+            if len(m_q) > 1 and m_q not in ["không", "nào", "gì"]:
+                params["query"] = m_q
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.partners.search",
-                parameters={"query": m_q if len(m_q) > 1 else ""},
+                parameters=params,
             )
 
-        if any(w in lower for w in ["sản phẩm", "tồn kho", "mặt hàng", "giá bán", "sku"]):
-            m_q = re.sub(r"(?:tìm|tra cứu|xem|kiểm tra|danh mục)?\s*(?:sản phẩm|tồn kho|mặt hàng)?", "", lower).strip()
+        if any(w in lower for w in ["sản phẩm", "tồn kho", "mặt hàng", "hàng hóa", "giá bán", "sku"]) and not any(w in lower for w in ["phiếu kho", "điều chuyển"]):
+            m_q = re.sub(r"(?:tìm|tra cứu|xem|kiểm tra|danh mục|hiện tại|đang có|có|tổng số|bao nhiêu|số lượng)?\s*(?:sản phẩm|tồn kho|mặt hàng|hàng hóa)?", "", lower).strip()
+            params = {}
+            if is_count_query:
+                params["count_only"] = True
+            if len(m_q) > 1 and m_q not in ["không", "nào", "gì"]:
+                params["query"] = m_q
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.products.search",
-                parameters={"query": m_q if len(m_q) > 1 else ""},
+                parameters=params,
             )
 
         if any(w in lower for w in ["đơn bán", "đơn hàng", "báo giá"]) and "mua" not in lower:
-            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh sách)?\s*(?:đơn bán|đơn hàng|báo giá)?", "", lower).strip()
+            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh sách|hiện tại|đang có|có|tổng số|bao nhiêu|số lượng)?\s*(?:đơn bán|đơn hàng|báo giá)?", "", lower).strip()
+            params = {}
+            if is_count_query:
+                params["count_only"] = True
+            if len(m_q) > 1 and m_q not in ["không", "nào", "gì"]:
+                params["query"] = m_q
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.sales.search",
-                parameters={"query": m_q if len(m_q) > 1 else ""},
+                parameters=params,
             )
 
         if any(w in lower for w in ["đơn mua", "đơn mua hàng", "nhập hàng"]):
-            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh sách)?\s*(?:đơn mua|đơn mua hàng)?", "", lower).strip()
+            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh sách|hiện tại|đang có|có|tổng số|bao nhiêu|số lượng)?\s*(?:đơn mua|đơn mua hàng)?", "", lower).strip()
+            params = {}
+            if is_count_query:
+                params["count_only"] = True
+            if len(m_q) > 1 and m_q not in ["không", "nào", "gì"]:
+                params["query"] = m_q
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.purchases.search",
-                parameters={"query": m_q if len(m_q) > 1 else ""},
+                parameters=params,
             )
 
         if any(w in lower for w in ["phiếu kho", "điều chuyển kho", "phiếu nhập", "phiếu xuất"]):
+            params = {"count_only": True} if is_count_query else {"query": ""}
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.inventory.search",
-                parameters={"query": ""},
+                parameters=params,
             )
 
         if any(w in lower for w in ["hóa đơn", "công nợ", "chứng từ"]):
+            params = {"count_only": True} if is_count_query else {"query": ""}
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.invoices.search",
-                parameters={"query": ""},
+                parameters=params,
             )
 
         if any(w in lower for w in ["nhân viên", "danh bạ", "nhân sự", "đồng nghiệp"]):
-            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh bạ)?\s*(?:nhân viên|nhân sự)?", "", lower).strip()
+            m_q = re.sub(r"(?:tìm|tra cứu|xem|danh bạ|hiện tại|đang có|có|tổng số|bao nhiêu|số lượng)?\s*(?:nhân viên|nhân sự)?", "", lower).strip()
+            params = {}
+            if is_count_query:
+                params["count_only"] = True
+            if len(m_q) > 1 and m_q not in ["không", "nào", "gì"]:
+                params["query"] = m_q
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="odoo.employees.search",
-                parameters={"query": m_q if len(m_q) > 1 else ""},
+                parameters=params,
             )
 
         if any(w in lower for w in ["cơ hội", "crm", "lead"]):
