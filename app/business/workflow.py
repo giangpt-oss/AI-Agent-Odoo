@@ -1,13 +1,12 @@
 """Durable conversation drafts; all Odoo business validation remains at Gateway."""
 import copy
-import hashlib
 import json
 import secrets
 import time
 from typing import Any
 
 from app.business.client import request
-from app.services.confirmation_service import confirmation_service
+from app.services.confirmation_service import ConfirmationPreview, confirmation_service
 from app.services.conversation_history_store import conversation_history_store as store
 
 
@@ -69,17 +68,19 @@ def missing_prompt(data: dict) -> str:
               "quantity": "số lượng", "product_id": "sản phẩm", "price_unit_confirmed": "đơn giá bạn chốt",
               "tax_ids": "thuế áp dụng (hoặc xác nhận không thuế)", "uom_id": "đơn vị tính",
               "pricelist_id": "bảng giá/tiền tệ", "currency_id": "tiền tệ", "payment_term_id": "điều khoản thanh toán",
-              "partner_invoice_id": "địa chỉ xuất hóa đơn", "partner_shipping_id": "địa chỉ giao hàng", "customer_lead": "thời gian giao hàng tính bằng số ngày (không phải ngày lịch)"}
+              "partner_invoice_id": "Địa chỉ xuất hóa đơn", "partner_shipping_id": "Địa chỉ giao hàng", "customer_lead": "thời gian giao hàng tính bằng số ngày (không phải ngày lịch)"}
     prompts = []
     metadata = data.get("metadata", {}).get("models", {})
     for name in missing:
         parts = name.split(".")
         field = parts[-1]
         model = "sale.order.line" if parts[0] == "lines" and len(parts) > 1 else "sale.order"
-        label = labels.get(field) or metadata.get(model, {}).get("fields", {}).get(field, {}).get("string") or field
+        label = (data.get("field_labels") or {}).get(name) or metadata.get(model, {}).get("fields", {}).get(field, {}).get("string")
+        if not label or label.casefold() == field.casefold():
+            label = labels.get(field, "Trường bắt buộc trên báo giá")
         prefix = f"Dòng {int(parts[1]) + 1}: " if model == "sale.order.line" and parts[1].isdigit() else ""
         prompts.append(prefix + label)
-    return "Vui lòng bổ sung: " + "; ".join(prompts) + "." if prompts else "Đã đủ thông tin. Bạn muốn xem trước báo giá không?"
+    return "Vui lòng bổ sung: " + ", ".join(dict.fromkeys(prompts)) + "." if prompts else "Đã đủ thông tin. Bạn muốn xem trước báo giá không?"
 
 
 async def read(tool: str, params: dict, context) -> list[str]:
@@ -145,7 +146,7 @@ async def read(tool: str, params: dict, context) -> list[str]:
                 values.pop("date_to", None)
             if not values.get("report_type"):
                 return ["Bạn muốn báo cáo bán hàng/báo giá, mua hàng/RFQ, CRM, liên hệ hay tồn kho/nhập xuất?"]
-            if values["report_type"] not in {"inventory", "crm", "contacts"} and not (values.get("date_from") and values.get("date_to")):
+            if values["report_type"] not in {"inventory", "crm", "contacts", "employee_weekly"} and not (values.get("date_from") and values.get("date_to")):
                 remember(context, "business_report", {"request": values})
                 return ["Bạn muốn báo cáo từ ngày nào đến ngày nào? Ví dụ: 01/10/2026–31/10/2026."]
             values["timezone"] = context.timezone
@@ -261,50 +262,124 @@ async def edit_quote(params: dict, context) -> list[str]:
     return [state_prompt(saved)]
 
 
-async def prepare(context, status_only=False) -> list[str]:
-    from app.core.config import get_settings
-    if not get_settings().ENABLE_QUOTATIONS:
-        return ["Chức năng báo giá chưa được bật trong cấu hình Agent."]
-    draft = session(context).get("active_draft") or {}
-    if draft.get("draft_type") != "quotation":
-        return ["Chưa có nháp báo giá. Bạn muốn lập báo giá cho khách hàng nào?"]
-    from app.business.quote_status import status_for
-    lifecycle = await status_for(context, draft, confirmation_service)
-    latest = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
+def latest_quote_confirmation(context, draft):
+    confirmation = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
         telegram_binding_id=context.telegram_binding_id or 'default', draft_id=draft['draft_id'])
-    if lifecycle and (status_only or (latest and latest['status'] in ('completed', 'executing', 'unknown_result'))):
-        return [lifecycle]
-    payload = draft["quotation_data"]
-    fingerprint = hashlib.sha256(('explicit_fields_v2:' + json.dumps(payload, ensure_ascii=False, sort_keys=True)).encode()).hexdigest()
-    last = (session(context).get("last_read") or {}).get("quotation_preparation_job") or {}
-    same = last.get("draft_id") == draft["draft_id"] and last.get("draft_version") == draft["version"] and last.get("fingerprint") == fingerprint
-    if not same:
-        if status_only:
-            from app.business.quote_collector import state_prompt
-            return [state_prompt(draft) + '\nBạn muốn xem trước báo giá không?']
-        job = await request(context, "POST", "quotations/prepare-jobs", {"payload": payload})
-        if not job.get("job_id"):
-            return display(job)
-        remember(context, "quotation_preparation_job", {"job_id": job["job_id"], "draft_id": draft["draft_id"], "draft_version": draft["version"], "fingerprint": fingerprint})
-        return ["Trạng thái: Đang kiểm tra báo giá trên Odoo. Chưa tạo chứng từ. Tôi sẽ thông báo khi xong; bạn có thể hỏi tiến độ bất cứ lúc nào. Không cần nhập lại thông tin."]
-    job = await request(context, "GET", "quotations/prepare-jobs/" + last["job_id"])
-    if job.get("status") in ("queued", "running"):
-        return ["Nháp vẫn đang được kiểm tra trên Odoo. Thông tin đã lưu; tôi sẽ thông báo khi xong. Bạn có thể hỏi tiến độ để xem lại trạng thái."]
-    data = job.get("result") or job
+    if confirmation and confirmation_service.validate_access(
+        confirmation, context.user_id, context.chat_id, context.telegram_binding_id, context.owner_key
+    ):
+        return confirmation
+    return None
 
-    remember(context, "quotation_validation", data)
-    if data.get("status") != "ready":
-        if data.get("status") == "needs_information":
-            return ['Trạng thái: Chờ bổ sung thông tin.\n' + quote_preview(data.get('preview') or {}, data.get('payload')) + '\n' + missing_prompt(data)]
-        return ["Trạng thái: Lỗi kiểm tra báo giá.\n" + display(data)[0] + '\nNháp được giữ. Bạn có thể hỏi tiến độ hoặc sửa thông tin rồi yêu cầu kiểm tra lại.']
-    preview_text = quote_preview(data.get("preview") or {}, data["payload"])
-    if len(preview_text) > 18000:
-        return ["Bản xem trước quá dài để kiểm tra đầy đủ trong chat. Hãy giảm số dòng hoặc rút ngắn ghi chú/trường tùy chỉnh; chưa tạo mã xác nhận."]
-    confirmation_service.cancel_pending_draft_confirmations(user_id=context.user_id, chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or "default", draft_id=draft["draft_id"])
-    _, preview = confirmation_service.create_confirmation(user_id=context.user_id,
-        chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or "default",
-        action="sales.quotation.create", arguments=data["payload"],
-        preview_text="Trạng thái: Chờ xác nhận tạo báo giá.\nBản xem trước báo giá nháp — tổng tạm tính; Odoo tính tổng chính thức.\n" + preview_text,
-        owner_key=context.owner_key, draft_id=draft["draft_id"], draft_version=draft["version"],
+
+def quote_confirmation(context, draft):
+    from app.business.quote_collector import quote_details
+
+    text = 'Trạng thái: Chờ xác nhận tạo báo giá.\n' + quote_details(draft)
+    return confirmation_service.create_confirmation(user_id=context.user_id,
+        chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or 'default',
+        action='sales.quotation.create', arguments=draft['quotation_data'], preview_text=text,
+        owner_key=context.owner_key, draft_id=draft['draft_id'], draft_version=draft['version'],
         telegram_user_id=context.telegram_user_id)
+
+
+def changed_fields(before, after, prefix=''):
+    if isinstance(before, dict) and after is None:
+        after = {}
+    if isinstance(after, dict) and before is None:
+        before = {}
+    if isinstance(before, dict) and isinstance(after, dict):
+        return set().union(*(changed_fields(before.get(key), after.get(key), f'{prefix}{key}.')
+                             for key in before.keys() | after.keys()))
+    if isinstance(before, list) and isinstance(after, list) and prefix == 'lines.' and len(before) == len(after):
+        return set().union(*(changed_fields(old, new, f'lines.{index}.')
+                             for index, (old, new) in enumerate(zip(before, after, strict=True))))
+    return {prefix.rstrip('.')} if before != after else set()
+
+
+def has_quote_value(payload, path):
+    value = payload
+    for part in path.split('.'):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return False
+    return value is not None and value != ''
+
+
+def quote_corrections(draft, confirmation):
+    if not confirmation or confirmation['status'] != 'failed':
+        return None
+    details = json.loads(confirmation.get('result_json') or '{}')
+    missing = set(details.get('missing_fields') or [])
+    if not missing:
+        return None
+    before = json.loads(confirmation['arguments_json'])
+    after = draft['quotation_data']
+    changes = changed_fields(before, after)
+    price_fields = {path.rsplit('.', 1)[0] + suffix for path in missing if path.endswith('.price_unit')
+                    for suffix in ('.price_confirmed', '.use_catalog_price')}
+    if changes - missing - price_fields:
+        return None
+    outstanding = sorted(path for path in missing if path not in changes or not has_quote_value(after, path))
+    return {**details, 'missing_fields': outstanding}
+
+
+async def resume_quote(context, draft, confirmation):
+    corrections = quote_corrections(draft, confirmation)
+    if corrections is None:
+        return None
+    if corrections['missing_fields']:
+        return [missing_prompt(corrections)]
+    from app.domain.intent_schema import IntentAnalysisResult, IntentType
+    from app.services.unified_executor import unified_executor
+
+    cid, _ = quote_confirmation(context, draft)
+    return await unified_executor.execute(
+        IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=cid),
+        context, context.chat_id, context.telegram_user_id, session(context), time.time() + 14, {},
+    )
+
+
+async def prepare(context, status_only=False) -> list[str]:
+    from datetime import UTC, datetime
+
+    from app.business.quote_collector import state_prompt
+    from app.business.quote_status import legacy_address_error, status_for
+    from app.core.config import get_settings
+
+    if not get_settings().ENABLE_QUOTATIONS:
+        return ['Chức năng báo giá chưa được bật trong cấu hình Agent.']
+    draft = session(context).get('active_draft') or {}
+    if draft.get('draft_type') != 'quotation':
+        return ['Chưa có nháp báo giá. Bạn muốn lập báo giá cho khách hàng nào?']
+    latest = latest_quote_confirmation(context, draft)
+    if latest:
+        if (latest['status'] == 'pending' and latest['draft_version'] == draft['version']
+                and datetime.fromisoformat(latest['expires_at']) > datetime.now(UTC)):
+            text = latest['preview_text']
+            if 'Chờ xác nhận' not in text:
+                text = 'Trạng thái: Chờ xác nhận tạo báo giá.\n' + text
+            return [ConfirmationPreview(text + '\nChọn Xác nhận để tạo báo giá hoặc Từ chối để hủy yêu cầu.', latest['confirmation_id'])]
+        corrections = quote_corrections(draft, latest)
+        if corrections and corrections['missing_fields']:
+            return [missing_prompt(corrections)]
+        if (status_only or latest['status'] in ('completed', 'executing', 'unknown_result')
+                or (latest['status'] == 'failed' and latest['draft_version'] == draft['version']
+                    and not legacy_address_error(latest.get('error_message')))):
+            lifecycle = await status_for(context, draft, confirmation_service)
+            if lifecycle:
+                return [lifecycle]
+    if status_only:
+        return [state_prompt(draft)]
+    if not context.has_permission('sales.create'):
+        return ['Tài khoản chưa có quyền tạo báo giá trên Odoo.']
+    payload = draft['quotation_data']
+    if not payload.get('partner_id') or not payload.get('lines') or any(not line.get('product_id') for line in payload['lines']):
+        return [state_prompt(draft)]
+    if len(json.dumps(payload, ensure_ascii=False)) > 150000:
+        return ['Nháp báo giá quá dài. Hãy giảm số dòng hoặc rút ngắn ghi chú.']
+    _, preview = quote_confirmation(context, draft)
     return [preview]

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from app.core.config import get_settings
 from app.domain.gateway_context import GatewayUserContext, build_gateway_user_context
 from app.providers.tasks.local import LocalTaskProvider
+from app.services.confirmation_service import ConfirmationPreview
 from app.services.conversation_history_store import conversation_history_store
 from app.services.gateway_client import (
     GatewayContractIncompatibleError,
@@ -18,7 +19,7 @@ from app.services.gateway_client import (
     gateway_client,
 )
 from app.services.natural_pipeline import natural_pipeline
-from app.services.turn_ledger import turn_ledger
+from app.services.turn_ledger import decode_messages, turn_ledger
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class TelegramTurnResponse(BaseModel):
     request_id: str
     messages: List[str]
     attachments: List[AttachmentDescriptor] = Field(default_factory=list)
+    confirmation_buttons: dict[int, str] = Field(default_factory=dict)
 
 
 def verify_gateway_secret(
@@ -451,7 +453,7 @@ async def handle_telegram_turn(
             if turn_record["status"] == "completed":
                 if turn_record.get("cache_scope") != cache_scope:
                     return ["Kết quả cũ không còn xác minh được phạm vi truy cập. Vui lòng gửi yêu cầu mới."]
-                cached_msgs = json.loads(turn_record["messages_json"]) if turn_record.get("messages_json") else []
+                cached_msgs = decode_messages(turn_record["messages_json"]) if turn_record.get("messages_json") else []
                 return cached_msgs
 
         # Only authenticated quotation workflows receive the longer RPC budget.
@@ -591,4 +593,6 @@ async def handle_telegram_turn(
     return TelegramTurnResponse(
         request_id=req.request_id,
         messages=messages,
+        confirmation_buttons={index: message.confirmation_id for index, message in enumerate(messages)
+                              if isinstance(message, ConfirmationPreview)},
     )

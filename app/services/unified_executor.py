@@ -106,7 +106,7 @@ class UnifiedExecutor:
 
         # 6. ACTION_CANCEL Intent
         if intent.intent_type == IntentType.ACTION_CANCEL:
-            return self._handle_cancel(intent, context, chat_id)
+            return self._handle_cancel(intent, context, chat_id, telegram_user_id)
 
         # 7. ACTION_STATUS Intent (Đối soát trạng thái với Gateway)
         if intent.intent_type == IntentType.ACTION_STATUS:
@@ -1211,6 +1211,7 @@ class UnifiedExecutor:
             user_id=context.user_id,
             chat_id=chat_id,
             telegram_binding_id=binding_id,
+            telegram_user_id=telegram_user_id,
         )
         if not ok or not conf_data:
             return [f"⚠️ {claim_msg}"]
@@ -1464,6 +1465,9 @@ class UnifiedExecutor:
             else:
                 err_msg = gw_res.get("message") or "Lỗi dịch vụ ngoài"
                 confirmation_service.mark_failed(conf_id, error_message=err_msg, execution_token=exec_token)
+                if norm_action == 'sales.quotation.create':
+                    from app.business.quote_status import quotation_failure_message
+                    return [quotation_failure_message(err_msg, gw_res.get('result'))]
                 return [f"❌ **Thao tác thất bại:** {err_msg}"]
 
         except (asyncio.CancelledError, asyncio.TimeoutError) as ce:
@@ -1490,7 +1494,7 @@ class UnifiedExecutor:
     # CANCEL HANDLER
     # =========================================================================
     def _handle_cancel(
-        self, intent: IntentAnalysisResult, context: GatewayUserContext, chat_id: int
+        self, intent: IntentAnalysisResult, context: GatewayUserContext, chat_id: int, telegram_user_id: int
     ) -> list[str]:
         conf_id = intent.confirmation_id or intent.parameters.get("confirmation_id")
         binding_id = context.telegram_binding_id or "default"
@@ -1512,6 +1516,7 @@ class UnifiedExecutor:
             user_id=context.user_id,
             chat_id=chat_id,
             telegram_binding_id=binding_id,
+            telegram_user_id=telegram_user_id,
         )
         return [msg if success else f"⚠️ {msg}"]
 
@@ -1576,6 +1581,9 @@ class UnifiedExecutor:
             if c_status == "cancelled":
                 return [f"ℹ️ Thao tác `{target_id}` đã được hủy bỏ an toàn."]
             if c_status == "failed":
+                if conf.get('action') == 'sales.quotation.create':
+                    from app.business.quote_status import quotation_failure_message
+                    return [quotation_failure_message(conf.get('error_message'), json.loads(conf.get('result_json') or '{}'))]
                 return [f"❌ Thao tác `{target_id}` đã thất bại: {conf.get('error_message')}"]
 
             if c_status == "unknown_result":
@@ -1611,8 +1619,12 @@ class UnifiedExecutor:
                     return [f"✅ Thao tác `{target_id}` đã hoàn tất thành công trên Cổng Gateway!"]
                 elif gw_st == "failed":
                     confirmation_service.reconcile_confirmation_result(
-                        cid, status="failed", error_message=gw_check.get("message", "Thất bại trên Gateway"), operation_id=op_id
+                        cid, status="failed", result=gw_check.get('result'),
+                        error_message=gw_check.get("message", "Thất bại trên Gateway"), operation_id=op_id
                     )
+                    if conf.get('action') == 'sales.quotation.create':
+                        from app.business.quote_status import quotation_failure_message
+                        return [quotation_failure_message(gw_check.get('message'), gw_check.get('result'))]
                     return [f"❌ Thao tác `{target_id}` đã thất bại trên Cổng Gateway: {gw_check.get('message')}"]
                 elif gw_st == "not_found":
                     return [

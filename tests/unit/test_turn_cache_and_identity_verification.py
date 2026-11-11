@@ -195,3 +195,25 @@ def test_valid_retry_returns_cached_turn_without_reexecuting(turn_cache_env):
         assert resp.json()["messages"] == ["Chào bạn, mình có thể giúp gì?"]
         # Không được chạy lại dispatcher
         mock_dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_preview_buttons_are_returned_on_a_verified_retry(tmp_path):
+    from fastapi import Request
+
+    from app.api.v1.internal import TelegramTurnRequest, handle_telegram_turn
+    from app.services.confirmation_service import ConfirmationPreview
+
+    ledger = TurnLedger(tmp_path / 'preview-turns.db')
+    payload = {'request_id': 'req_preview_retry', 'gateway_user_id': 1, 'telegram_user_id': 123,
+               'chat_id': 123, 'text': 'Tạo báo giá', 'telegram_binding_id': 'bind_1'}
+    ledger.record_turn_start(payload['request_id'], 1, 123, 123, 'bind_1',
+                             hashlib.sha256(payload['text'].encode()).hexdigest())
+    ledger.record_turn_completed(payload['request_id'], [ConfirmationPreview('Bản xem trước', 'c_0123abcd')], '[null, null]')
+    identity = {'user_id': 1, 'name': 'User A', 'login': 'user@example.com',
+                'telegram_binding_id': 'bind_1', 'permissions': []}
+    with patch('app.api.v1.internal.turn_ledger', ledger), \
+         patch('app.services.gateway_client.gateway_client.resolve_identity', AsyncMock(return_value=identity)):
+        response = await handle_telegram_turn(TelegramTurnRequest(**payload), Request({'type': 'http'}))
+    assert response.messages == ['Bản xem trước']
+    assert response.confirmation_buttons == {0: 'c_0123abcd'}

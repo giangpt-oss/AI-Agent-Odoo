@@ -11,6 +11,13 @@ from app.services.file_service import file_service
 logger = logging.getLogger(__name__)
 
 
+class ConfirmationPreview(str):
+    def __new__(cls, text: str, confirmation_id: str):
+        preview = super().__new__(cls, text)
+        preview.confirmation_id = confirmation_id
+        return preview
+
+
 class ConfirmationService:
     """Quản lý bản xem trước (preview) và xác nhận hành động ghi (/confirm <id>).
     
@@ -287,11 +294,11 @@ class ConfirmationService:
             f"_(Mã có hiệu lực trong vòng 5 phút)_"
         )
         if action == 'sales.quotation.create':
-            instruction = '\n\nBạn xác nhận tạo báo giá theo nội dung trên chứ? Có thể trả lời “xác nhận” hoặc “không xác nhận”. Bản xác nhận có hiệu lực 5 phút.'
+            instruction = '\n\nChọn Xác nhận để tạo báo giá theo nội dung trên hoặc Từ chối để hủy yêu cầu. Bản xác nhận có hiệu lực 5 phút.'
         from app.business.operations import QUOTE_FLOW_ACTIONS
         if action in QUOTE_FLOW_ACTIONS:
-            instruction = '\n\nBạn xác nhận thực hiện đúng bước và nội dung trên chứ? Có thể đồng ý hoặc từ chối. Bản xác nhận có hiệu lực 5 phút.'
-        return conf_id, preview_text + instruction
+            instruction = '\n\nChọn Xác nhận để thực hiện bước trên hoặc Từ chối để hủy yêu cầu. Bản xác nhận có hiệu lực 5 phút.'
+        return conf_id, ConfirmationPreview(preview_text + instruction, conf_id)
 
     def claim_and_validate(
         self,
@@ -399,6 +406,9 @@ class ConfirmationService:
                 return False, "Bạn không có quyền thực thi mã xác nhận này (không khớp chủ sở hữu).", None
 
             # Bổ sung telegram_user_id cho confirmation cũ nếu chưa có
+            if telegram_user_id is not None and c_tele_uid not in (None, telegram_user_id):
+                conn.commit()
+                return False, "Tài khoản Telegram không khớp với yêu cầu xác nhận.", None
             if telegram_user_id and c_tele_uid is None:
                 conn.execute(
                     "UPDATE pending_confirmations SET telegram_user_id = ? WHERE confirmation_id = ?",
@@ -652,21 +662,25 @@ class ConfirmationService:
         user_id: int,
         chat_id: int,
         telegram_binding_id: str,
+        telegram_user_id: Optional[int] = None,
     ) -> Tuple[bool, str]:
         """Hủy bỏ hành động chờ xác nhận."""
         clean_id = confirmation_id.strip()
         now_str = datetime.now(UTC).isoformat()
         with sqlite3.connect(self.db_path, timeout=20.0) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
-                "SELECT user_id, chat_id, telegram_binding_id, status FROM pending_confirmations WHERE confirmation_id = ?",
+                "SELECT user_id, chat_id, telegram_binding_id, status, telegram_user_id FROM pending_confirmations WHERE confirmation_id = ?",
                 (clean_id,),
             )
             row = cursor.fetchone()
             if not row:
                 return False, f"Mã xác nhận `{clean_id}` không tồn tại."
-            c_uid, c_chat, c_bind, c_status = row
+            c_uid, c_chat, c_bind, c_status, c_tele_uid = row
             if c_uid != user_id or c_chat != chat_id or c_bind != telegram_binding_id:
                 return False, "Bạn không có quyền hủy mã xác nhận này."
+            if telegram_user_id is not None and c_tele_uid not in (None, telegram_user_id):
+                return False, "Tài khoản Telegram không khớp với yêu cầu xác nhận."
             if c_status != "pending":
                 return False, f"Mã xác nhận `{clean_id}` hiện ở trạng thái: {c_status} (không thể hủy)."
 

@@ -8,10 +8,20 @@ import time
 from datetime import date
 
 
+def asks_delivery_or_approval_status(text):
+    return bool(re.search(r'đã gửi.*chưa|đang chờ.*duyệt|đã (?:được )?duyệt.*chưa|'
+                          r'(?:cấp trên|quản lý).*xác nhận.*chưa', text.casefold()))
+
+
 def interpret(text, draft, session=None):
     text = text.strip().rstrip('.!?').strip()
     lower = text.casefold()
     names = re.findall(r'\bS\d{3,}\b', text, re.I)
+    if asks_delivery_or_approval_status(text):
+        if len(names) == 1:
+            return {'action': 'status', 'quotation_name': names[0].upper()}
+        if not names and draft.get('draft_type') == 'quotation':
+            return {'action': 'status'}
     if len(names) == 1 and not re.search(r'\b(?:hủy|sửa|xóa|đổi|tạo|gửi|xác nhận)\b', lower):
         if re.search(r'trạng thái|tiến độ|đến đâu|xem|kiểm tra|thế nào|xong chưa|báo giá', lower) or text.upper() == names[0].upper():
             return {'action': 'status', 'quotation_name': names[0].upper()}

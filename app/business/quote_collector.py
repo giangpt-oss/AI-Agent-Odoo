@@ -1,11 +1,14 @@
 """Quote conversations store user facts before resolving Odoo references."""
 import copy
+import json
 import secrets
 import time
 
 from app.business.client import request
 from app.business.quote_schema import QuoteTurn
-from app.business.workflow import session, remember, store, confirmation_service
+from app.business.workflow import (
+    confirmation_service, latest_quote_confirmation, remember, resume_quote, session, store,
+)
 
 
 def state_prompt(draft):
@@ -18,29 +21,78 @@ def state_prompt(draft):
     if not lines:
         missing.append('tên sản phẩm và số lượng')
     for index, line in enumerate(lines, 1):
-        for field, label in [('product_id', 'chọn sản phẩm từ Odoo'), ('quantity', 'số lượng'), ('price_unit', 'đơn giá'), ('tax_ids', 'thuế áp dụng')]:
-            if field == 'price_unit' and line.get('use_catalog_price') is True:
-                continue
-            if field not in line or line[field] is None:
-                missing.append(f'dòng {index}: {label}')
-        if line.get('price_unit') is not None and line.get('price_confirmed') is not True and not line.get('use_catalog_price'):
-            missing.append(f'dòng {index}: xác nhận đơn giá')
-    details = []
-    if data.get('partner_id') or hints.get('customer_query'):
-        details.append('Khách hàng: ' + str(data.get('partner_id') or hints['customer_query']) + ('' if data.get('partner_id') else ' (chưa chọn bản ghi Odoo)'))
-    for index, line in enumerate(lines, 1):
-        product = line.get('product_id') or hints.get(f'product_query_{index}') or 'chưa chọn'
-        price = 'giá niêm yết Odoo (sẽ đọc và chốt trong bản xem trước)' if line.get('use_catalog_price') else line.get('price_unit', 'chưa chốt')
-        details.append(f"Dòng {index}: {product}; số lượng: {line.get('quantity', 'chưa nhập')}; đơn giá: {price}.")
-        if 'customer_lead' in line:
-            details.append(f"Thời gian giao hàng tùy chọn: {line['customer_lead']} ngày.")
-    if data.get('validity_date'):
-        details.append(f"Ngày hết hạn báo giá: {data['validity_date']}.")
-    status = 'Chờ bổ sung thông tin' if missing else 'Sẵn sàng kiểm tra'
-    prefix = f'Trạng thái: {status}.\nNháp báo giá đã lưu, chưa tạo và chưa có số báo giá trên Odoo.\n' + ('\n'.join(details) + '\n' if details else '')
+        if not line.get('product_id'):
+            missing.append(f'dòng {index}: tên hoặc mã sản phẩm')
     if missing:
-        return prefix + 'Cần bổ sung: ' + '; '.join(missing) + '.'
-    return prefix + 'Đã có thông tin cơ bản. Bạn có thể yêu cầu xem trước; hệ thống sẽ kiểm tra các trường và quy tắc Odoo trước khi cấp mã xác nhận.'
+        return 'Cần bổ sung: ' + ', '.join(missing) + '.\n' + quote_details(draft)
+    return quote_details(draft)
+
+
+def quote_details(draft):
+    data = draft['quotation_data']
+    hints = draft.get('quotation_hints', {})
+    details = ['Khách hàng: ' + str(hints.get('partner_label') or hints.get('customer_query') or data.get('partner_id') or 'chưa nhập')]
+    for index, line in enumerate(data.get('lines', []), 1):
+        product = hints.get(f'product_label_{index}') or hints.get(f'product_query_{index}') or line.get('product_id') or 'chưa nhập'
+        quantity = line.get('quantity', 'theo mặc định Odoo')
+        price = 'giá niêm yết Odoo' if line.get('use_catalog_price') else line.get('price_unit', 'theo bảng giá Odoo')
+        taxes = line.get('tax_ids')
+        tax_label = 'theo Odoo' if taxes is None else ', '.join(map(str, taxes)) if taxes else 'không thuế'
+        details.append(f"Dòng {index}: {product} | Số lượng: {quantity} | Đơn giá: {price} | Thuế: {tax_label}")
+        if line.get('name'):
+            details.append('Mô tả: ' + line['name'])
+        if line.get('uom_id'):
+            details.append(f"Đơn vị tính (ID): {line['uom_id']}")
+        if 'customer_lead' in line:
+            details.append(f"Thời gian giao hàng: {line['customer_lead']} ngày.")
+        for name, value in line.get('custom_fields', {}).items():
+            details.append(f"{name}: {value}")
+    labels = {'validity_date': 'Ngày hết hạn báo giá', 'note': 'Ghi chú',
+              'client_order_ref': 'Tham chiếu khách hàng', 'partner_invoice_id': 'Địa chỉ hóa đơn (ID)',
+              'partner_shipping_id': 'Địa chỉ giao hàng (ID)', 'pricelist_id': 'Bảng giá (ID)',
+              'payment_term_id': 'Điều khoản thanh toán (ID)', 'fiscal_position_id': 'Vị thế thuế (ID)',
+              'currency_id': 'Tiền tệ (ID)', 'origin': 'Chứng từ gốc'}
+    details.extend(f"{label}: {data[name]}" for name, label in labels.items() if name in data)
+    details.extend(f"{name}: {value}" for name, value in data.get('custom_fields', {}).items())
+    return "\n".join(details)
+
+
+def save_reference(draft, kind, index, row):
+    payload, hints = draft['quotation_data'], draft['quotation_hints']
+    label = row.get('display_name') or row.get('name') or str(row['id'])
+    if kind == 'partners':
+        payload['partner_id'] = row['id']
+        hints['partner_label'] = label
+    else:
+        payload['lines'][index - 1]['product_id'] = row['id']
+        hints[f'product_label_{index}'] = label
+    hints.pop('selection', None)
+
+
+def apply_line_facts(turn, payload, hints):
+    facts = turn.model_dump(exclude_none=True, include={
+        'quantity', 'price_unit', 'price_confirmed', 'use_catalog_price', 'customer_lead', 'tax_ids', 'uom_id', 'name',
+    })
+    if turn.product_query is None and not facts and not turn.line_custom_fields:
+        return
+    while len(payload['lines']) < turn.line_index:
+        payload['lines'].append({})
+    line = payload['lines'][turn.line_index - 1]
+    query_key = f'product_query_{turn.line_index}'
+    if turn.product_query is not None:
+        if hints.get(query_key) and hints[query_key].casefold() != turn.product_query.casefold():
+            for key in ('product_id', 'price_unit', 'price_confirmed', 'use_catalog_price', 'tax_ids', 'uom_id', 'name'):
+                line.pop(key, None)
+            hints.pop(f'product_label_{turn.line_index}', None)
+            selection = hints.get('selection') or {}
+            if selection.get('kind') == 'products' and selection.get('line_index') == turn.line_index:
+                hints.pop('selection', None)
+        hints[query_key] = turn.product_query
+    if 'price_unit' in facts and line.get('use_catalog_price') and 'use_catalog_price' not in facts:
+        facts['use_catalog_price'] = False
+    line.update(facts)
+    if turn.line_custom_fields:
+        line.setdefault('custom_fields', {}).update(turn.line_custom_fields)
 
 
 def save(context, draft, previous):
@@ -54,129 +106,125 @@ def save(context, draft, previous):
 
 
 async def collect(params, context):
+    from app.business.workflow import prepare
+
     turn = QuoteTurn.model_validate(params)
     if turn.action == 'status' and turn.quotation_name:
         from app.business.quote_status import status_by_name
         return [await status_by_name(context, turn.quotation_name)]
     previous = session(context).get('active_draft')
-    wants_preview = turn.action == 'preview'
-    has_facts = any(getattr(turn, key) is not None for key in ('customer_query', 'product_query', 'selected_id', 'quantity', 'price_unit', 'price_confirmed', 'use_catalog_price', 'use_customer_addresses', 'validity_date', 'customer_lead', 'delivery_date', 'tax_ids'))
+    previous = previous if previous and previous.get('draft_type') == 'quotation' else None
+    prior = latest_quote_confirmation(context, previous) if previous else None
     if turn.action == 'show':
-        return [state_prompt(previous)] if previous and previous.get('draft_type') == 'quotation' else ['Chưa có nháp báo giá.']
+        return [state_prompt(previous)] if previous else ['Chưa có nháp báo giá.']
     if turn.action == 'confirm':
-        return ['Xác nhận tạo báo giá phải được xử lý qua bản xem trước đang chờ xác nhận.']
-    if turn.action == 'status' or (wants_preview and not has_facts):
-        from app.business.workflow import prepare
-        return await prepare(context, status_only=turn.action == 'status')
+        return ['Chọn Xác nhận trên bản xem trước để tạo báo giá.']
+    if turn.action == 'status':
+        return await prepare(context, status_only=True)
     if turn.action == 'explain':
-        return ['Ngày hết hạn báo giá là validity_date, khác với thời gian giao hàng customer_lead. Không cần nhập thời gian giao hàng khi lập báo giá thông thường; Odoo tự tính mặc định. Ngày hết hạn nếu bạn muốn chỉ định cần một ngày cụ thể. Đơn giá và thuế cần được chốt trước bản xem trước và xác nhận.\n' + (state_prompt(previous) if previous and previous.get('draft_type') == 'quotation' else 'Chưa có nháp báo giá.')]
+        return ['Ngày hết hạn là ngày lịch. Thời gian giao hàng là số ngày và Odoo tự tính khi bạn để trống.']
     if turn.action == 'cancel':
         from app.business.workflow import edit_quote
         return await edit_quote({'action': 'cancel'}, context)
-    if turn.action == 'start' or not previous or previous.get('draft_type') != 'quotation':
+    if prior and prior['status'] in ('executing', 'unknown_result'):
+        from app.business.quote_status import refresh_confirmation
+        prior, remote = await refresh_confirmation(context, confirmation_service, prior)
+        if prior['status'] in ('executing', 'unknown_result'):
+            if remote == 'in_progress':
+                return ['Đang tạo báo giá trên Odoo. Tôi sẽ gửi kết quả khi hoàn tất.']
+            return ['Đang đối soát kết quả tạo báo giá trên Odoo.']
+    if prior and prior['status'] == 'completed' and turn.action != 'start':
+        return await prepare(context, status_only=True)
+    if turn.action == 'start' or not previous:
         draft = {'draft_type': 'quotation', 'draft_id': 'quote_' + secrets.token_hex(8), 'version': 1,
                  'content': 'Báo giá nháp', 'quotation_data': {'lines': []}, 'quotation_hints': {}}
+        prior = None
     else:
         draft = copy.deepcopy(previous)
     payload = draft['quotation_data']
     hints = draft.setdefault('quotation_hints', {})
-    if turn.validity_date is not None:
-        from datetime import date
-        payload['validity_date'] = date.fromisoformat(turn.validity_date).isoformat()
+    if turn.action == 'finish_lines' and prior and prior['status'] == 'pending':
+        return await prepare(context)
     if turn.action == 'finish_lines':
         hints['lines_complete'] = True
-        saved = save(context, draft, previous)
-        return [state_prompt(saved)] if saved else ['Nháp đã thay đổi; vui lòng xem lại trước khi sửa.']
     if turn.delivery_date:
         hints['requested_delivery_date'] = turn.delivery_date
     if turn.customer_query is not None:
-        if hints.get('customer_query') != turn.customer_query:
-            payload.pop('partner_id', None)
-            payload.pop('partner_invoice_id', None)
-            payload.pop('partner_shipping_id', None)
-            for line in payload['lines']:
-                line.pop('tax_ids', None)
-                line.pop('use_catalog_price', None)
-                line['price_confirmed'] = False
+        if hints.get('customer_query', '').casefold() != turn.customer_query.casefold():
+            for field in ('partner_id', 'partner_invoice_id', 'partner_shipping_id'):
+                payload.pop(field, None)
+            hints.pop('partner_label', None)
+            if (hints.get('selection') or {}).get('kind') == 'partners':
+                hints.pop('selection', None)
         hints['customer_query'] = turn.customer_query
-    if turn.product_query is not None:
-        while len(payload['lines']) < turn.line_index:
-            payload['lines'].append({})
-        line = payload['lines'][turn.line_index - 1]
-        product_key = f'product_query_{turn.line_index}'
-        if hints.get(product_key) != turn.product_query:
-            for key in ('product_id', 'price_unit', 'price_confirmed', 'use_catalog_price', 'tax_ids', 'uom_id', 'name'):
-                line.pop(key, None)
-        hints[product_key] = turn.product_query
-    facts = turn.model_dump(exclude_none=True, include={'quantity', 'price_unit', 'price_confirmed', 'use_catalog_price', 'customer_lead', 'tax_ids'})
-    if facts:
-        while len(payload['lines']) < turn.line_index:
-            payload['lines'].append({})
-        line = payload['lines'][turn.line_index - 1]
-        if 'price_unit' in facts and facts.get('price_confirmed') is not True:
-            facts['price_confirmed'] = False
-        if 'price_unit' in facts and 'use_catalog_price' not in facts:
-            facts['use_catalog_price'] = False
-        line.update(facts)
+    order_facts = turn.model_dump(exclude_none=True, include={
+        'validity_date', 'partner_invoice_id', 'partner_shipping_id', 'pricelist_id',
+        'payment_term_id', 'fiscal_position_id', 'currency_id', 'note', 'client_order_ref', 'origin',
+    })
+    if turn.validity_date is not None:
+        from datetime import date
+        order_facts['validity_date'] = date.fromisoformat(turn.validity_date).isoformat()
+    payload.update(order_facts)
+    if turn.custom_fields:
+        payload.setdefault('custom_fields', {}).update(turn.custom_fields)
+    for line in [turn, *(turn.line_updates or [])]:
+        apply_line_facts(line, payload, hints)
     pending = hints.get('selection')
     if turn.selected_id:
         if not pending or time.time() - pending.get('at', 0) > 1800 or turn.selected_id not in pending['ids']:
-            return ['Hãy tra cứu/chọn lại từ danh sách hiện tại; không sử dụng ID chưa xác minh.']
-        if pending['kind'] == 'partners':
-            payload['partner_id'] = turn.selected_id
-        else:
-            payload['lines'][pending['line_index'] - 1]['product_id'] = turn.selected_id
-        hints.pop('selection', None)
+            return ['Hãy tra cứu hoặc chọn lại từ danh sách hiện tại. ID này chưa xác minh.']
+        candidates = ((session(context).get('last_read') or {}).get('business_candidates_' + pending['kind']) or {})
+        row = next((row for row in candidates.get('data', {}).get('items', []) if row['id'] == turn.selected_id), None)
+        save_reference(draft, pending['kind'], pending['line_index'], row or {'id': turn.selected_id})
     if turn.use_customer_addresses is True:
         if not payload.get('partner_id'):
-            return ['Hãy chọn khách hàng trước; tôi chưa tự gán địa chỉ xuất hóa đơn hoặc giao hàng.']
-        payload['partner_invoice_id'] = payload['partner_id']
-        payload['partner_shipping_id'] = payload['partner_id']
-    saved = save(context, draft, previous)
+            return ['Hãy chọn khách hàng trước để dùng địa chỉ của khách hàng đó.']
+        address_fields = {'partner_invoice_id', 'partner_shipping_id'}
+        correction = json.loads(prior.get('result_json') or '{}') if prior and prior['status'] == 'failed' else {}
+        requested = address_fields.intersection(correction.get('missing_fields') or [])
+        for field in requested or address_fields:
+            payload[field] = payload['partner_id']
+    saved = previous if draft == previous else save(context, draft, previous)
     if not saved:
-        return ['Nháp đã thay đổi; vui lòng xem lại trước khi sửa.']
+        return ['Nháp đã thay đổi. Vui lòng xem lại trước khi sửa.']
     if turn.delivery_date:
-        return [state_prompt(saved) + '\nBạn vừa cung cấp một ngày lịch. Trường customer_lead cần số ngày, ví dụ 10; tôi chưa tự chuyển đổi hoặc ghi ngày lịch vào trường này.']
-    # Resolve one reference per turn; facts are already durable if lookup fails or times out.
-    kind, query, index = None, None, turn.line_index
+        return ['Bạn vừa cung cấp một ngày lịch. Thời gian giao hàng cần số ngày, ví dụ 10 ngày.']
+
+    references = []
     if not payload.get('partner_id') and hints.get('customer_query'):
-        kind, query = 'partners', hints['customer_query']
-    else:
-        for index, line in enumerate(payload['lines'], 1):
-            if not line.get('product_id') and hints.get(f'product_query_{index}'):
-                kind, query = 'products', hints[f'product_query_{index}']
-                break
-    if kind:
-        data = await request(context, 'GET', 'quotations/lookup', {'kind': kind, 'query': query})
+        references.append(('partners', hints['customer_query'], 1))
+    references.extend(('products', hints[f'product_query_{index}'], index)
+                      for index, line in enumerate(payload['lines'], 1)
+                      if not line.get('product_id') and hints.get(f'product_query_{index}'))
+    for kind, query, index in references:
+        data = await request(context, 'GET', 'quotations/lookup', {'kind': kind, 'query': query, **(
+            {'company_id': payload['company_id']} if payload.get('company_id') else {})})
         if not isinstance(data.get('items'), list):
-            return [state_prompt(saved) + '\nTra cứu Odoo chưa hoàn tất: ' + str(data.get('message', 'hãy thử lại.'))]
+            return ['Đã lưu nháp. Tra cứu Odoo chưa hoàn tất: ' + str(data.get('message', 'hãy thử lại.'))]
         rows = data['items']
-        candidate = {'kind': kind, 'data': data, 'observed_at': time.time()}
-        remember(context, f'business_candidates_{kind}', candidate)
+        remember(context, f'business_candidates_{kind}', {'kind': kind, 'data': data, 'observed_at': time.time()})
         if not rows:
-            return [state_prompt(saved) + f'\nKhông tìm thấy {query!r} trong Odoo. Hãy cung cấp tên/mã chính xác; tôi chưa tự tạo khách hàng hoặc sản phẩm.']
+            return [f'Không tìm thấy {query!r} trong Odoo. Hãy cung cấp tên hoặc mã chính xác.']
+        exact = [row for row in rows if query.strip().casefold() in {
+            str(row.get(key) or '').strip().casefold() for key in ('name', 'display_name', 'default_code')
+        }]
         draft = copy.deepcopy(saved)
-        draft['quotation_hints']['selection'] = {'kind': kind, 'line_index': index, 'ids': [row['id'] for row in rows], 'at': time.time()}
-        if not save(context, draft, saved):
-            return ['Nháp đã thay đổi trong lúc tra cứu; vui lòng xem lại.']
-        label = 'khách hàng' if kind == 'partners' else 'sản phẩm'
-        options = '\n'.join(f"ID {row['id']}: {row.get('display_name') or row.get('name')}" + (f"; giá niêm yết tham khảo: {row['list_price']}" if row.get('list_price') is not None else '') for row in rows)
-        return [f'Đã lưu thông tin bạn cung cấp. Kết quả {label} trên Odoo:\n{options}\nBạn chọn kết quả nào? Có thể trả lời bằng tên hoặc ID. Giá tham khảo chưa được coi là đơn giá đã chốt.']
-    if wants_preview:
-        from app.business.workflow import prepare
-        return await prepare(context)
-    return [state_prompt(saved)]
-
-
-PROMPT = '''
-LUỒNG BÁO GIÁ CÓ TRẠNG THÁI:
-Yêu cầu tạo báo giá và mọi câu trả lời bổ sung cho nháp báo giá phải dùng read sales.quotation.collect, không dùng reply/clarify để giả vờ ghi nhận.
-parameters có action=start/update/preview/status/show/cancel/finish_lines/explain, customer_query, product_query, selected_id, line_index, quantity, price_unit, price_confirmed, customer_lead, delivery_date, tax_ids. Hỏi thông tin đang có trong nháp -> action=show.
-Ngay câu 'tạo báo giá' chưa có thông tin cũng gọi collect action=start để tạo nháp thật. Tên khách hàng lưu customer_query, tên sản phẩm lưu product_query, số lượng lưu quantity. Nếu lịch sử cũ có thông tin nhưng nháp thật trống, trích lại thông tin người dùng đã cung cấp và lưu qua collect; không nói đã lưu nếu chưa gọi công cụ.
-Sau tra cứu, phải hỏi người dùng chọn selected_id; không tự chọn kể cả chỉ một kết quả. Nhận giá người dùng cho thì price_unit và price_confirmed=true. Không đoán thuế hoặc dùng [] nếu người dùng chưa xác nhận không thuế.
-customer_lead là số ngày không âm, không phải ngày tháng. '10 ngày' -> customer_lead=10; 'ngày 3/11/2026' -> delivery_date='2026-11-03', tuyệt đối không chuyển thành customer_lead hoặc nói đã điền số ngày.
-Phủ định phải xét đối tượng: trả lời 'không' cho câu hỏi thêm dòng/tra giá nghĩa là finish_lines hoặc giữ nháp, không hủy báo giá. Chỉ action=cancel khi người dùng nói rõ hủy toàn bộ nháp.
-Yêu cầu 'tạo luôn', 'không cần xem trước' vẫn là collect action=preview; không bỏ bước xác nhận. Muốn xem trước hoặc nói 'có' sau câu hỏi xem trước -> action=preview; muốn hỏi định nghĩa trường -> action=explain.
-Đọc quotation_data và quotation_hints trong active_draft như nguồn dữ liệu chuẩn. Không nói 'đã đủ thông tin' khi chưa chọn khách/sản phẩm thật, giá và thuế. Thời gian giao hàng là tùy chọn, để Odoo tự tính. Ngày hết hạn thuộc validity_date. Người dùng chốt giá niêm yết thì use_catalog_price=true. Không hỏi thêm dòng tùy chọn khi còn thiếu phần bắt buộc.
-Không chèn nghiệp vụ báo giá vào draft email. Không gọi sales.quotation.preview nếu chưa có nháp; dùng collect start/update trước.
-'''
+        if data.get('company_id'):
+            draft['quotation_data'].setdefault('company_id', data['company_id'])
+        if len(exact) == 1 and data.get('exact_match_unique') is True:
+            save_reference(draft, kind, index, exact[0])
+        else:
+            draft['quotation_hints']['selection'] = {'kind': kind, 'line_index': index,
+                'ids': [row['id'] for row in rows], 'at': time.time()}
+        saved = save(context, draft, saved)
+        if not saved:
+            return ['Nháp đã thay đổi trong lúc tra cứu. Vui lòng xem lại.']
+        if draft['quotation_hints'].get('selection'):
+            label = 'khách hàng' if kind == 'partners' else f'sản phẩm dòng {index}'
+            options = '\n'.join(f"ID {row['id']}: {row.get('display_name') or row.get('name')}" for row in rows)
+            return [f'Bạn muốn chọn {label} nào trong Odoo?\n{options}']
+    if saved != previous:
+        resumed = await resume_quote(context, saved, prior)
+        if resumed:
+            return resumed
+    return await prepare(context)

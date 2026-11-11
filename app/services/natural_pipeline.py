@@ -43,6 +43,24 @@ class NaturalPipeline:
                 return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
                     clarification_prompt='Khách hàng đã thực sự chấp thuận báo giá chưa? Tôi cần xác định rõ trước khi chuẩn bị chuyển thành đơn bán; chưa thực hiện thay đổi trên Odoo.')
             flow = interpret_quotation_flow(clean_text)
+            implicit = interpret_quotation_flow(clean_text, default_name='S00000')
+            if not flow and implicit and implicit['action'] == 'request_approval':
+                from app.business.workflow import confirmation_service as quote_confirmations, latest_quote_confirmation
+                from app.business.quote_status import refresh_confirmation
+                draft = (session_context or {}).get('active_draft') or {}
+                conf = latest_quote_confirmation(context, draft) if draft.get('draft_type') == 'quotation' else None
+                if conf:
+                    conf, _ = await refresh_confirmation(context, quote_confirmations, conf)
+                result = json.loads(conf.get('result_json') or '{}') if conf and conf['status'] == 'completed' else {}
+                name = result.get('name')
+                if name:
+                    flow = interpret_quotation_flow(clean_text, default_name=name)
+                    company = result.get('company_id')
+                    if flow and isinstance(company, (list, tuple)) and company:
+                        flow['company_id'] = company[0]
+                else:
+                    return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                        clarification_prompt='Bạn cho tôi số báo giá cần gửi sếp xác nhận nhé.')
             if flow:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.quotation_flow', parameters=flow)
 
@@ -267,7 +285,13 @@ class NaturalPipeline:
                     parameters={"confirmation_id": cid},
                 )
 
-            if base_cmd in {"/help", "/start"}:
+            if base_cmd == "/start":
+                return IntentAnalysisResult(
+                    intent_type=IntentType.REPLY,
+                    reply_text="Xin chào! Tôi có thể giúp gì cho bạn hôm nay?",
+                )
+
+            if base_cmd == "/help":
                 return IntentAnalysisResult(
                     intent_type=IntentType.REPLY,
                     reply_text=self.registry.generate_capability_overview(list(context.permissions)),
@@ -297,19 +321,13 @@ class NaturalPipeline:
         pure_greetings = {
             "hello", "hi", "xin chào", "chào bạn", "chào bot", "chào em",
             "chào anh", "chào chị", "chào", "alo", "hey", "hello bot", "hi bot",
-            "xin chào bot", "chào bạn bot", "hello bạn"
+            "xin chào bot", "chào bạn bot", "hello bạn", "hi bạn", "chào nhé",
+            "chào buổi sáng", "good morning", "chào buổi chiều", "chào buổi tối"
         }
         if text_nopunct in pure_greetings or lower in pure_greetings:
             return IntentAnalysisResult(
                 intent_type=IntentType.REPLY,
-                reply_text=(
-                    "👋 Xin chào! Tôi có thể hỗ trợ bạn các công việc sau hoàn toàn bằng tiếng Việt tự nhiên:\n\n"
-                    "• 👤 Thông tin tài khoản: Xem hồ sơ cá nhân và tài khoản Odoo đã liên kết\n"
-                    "• 📆 Lịch họp & Email: Xem lịch Google Calendar, kiểm tra thư mới Gmail\n"
-                    "• 🏢 Dữ liệu Odoo: Tra cứu liên hệ/đối tác, danh mục sản phẩm, đơn bán/mua, phiếu kho, hóa đơn, nhân sự\n"
-                    "• 📋 Công việc cá nhân: Xem và quản lý các công việc cần làm\n\n"
-                    "💡 Bạn chỉ cần nhắn tin trò chuyện tự nhiên, tôi sẽ tự động xử lý và hỗ trợ bạn."
-                ),
+                reply_text="Xin chào! Tôi có thể giúp gì cho bạn hôm nay?",
             )
 
         # 3. Fast-path: Hỏi ngày / giờ hiện tại
@@ -441,7 +459,8 @@ class NaturalPipeline:
 
         # 6. TOÀN BỘ CÂU TỰ NHIÊN CÒN LẠI ĐỀU CHUYỂN SANG LLM DISPATCHER
         active = (session_context or {}).get('active_draft') or {}
-        if active.get('draft_type') == 'quotation' and get_settings().ENABLE_QUOTATIONS:
+        quote_request = re.match(r'^(?:(?:hãy|giúp tôi|tôi muốn)\s+)?(?:tạo|lập)(?:\s+cho tôi)?\s+(?:(?:một|1)\s+)?báo giá\b', lower)
+        if get_settings().ENABLE_QUOTATIONS and (active.get('draft_type') == 'quotation' or quote_request):
             return await self._dispatch_quote_turn(clean_text, context, session_context)
         return await self._dispatch_with_llm(clean_text, context, session_context)
 
@@ -456,9 +475,16 @@ class NaturalPipeline:
             telegram_binding_id=context.telegram_binding_id or 'default', draft_id=active.get('draft_id'))
         if conf and not confirmation_service.validate_access(conf, context.user_id, context.chat_id, context.telegram_binding_id, context.owner_key):
             conf = None
+        if conf and conf['status'] in ('executing', 'unknown_result'):
+            from app.business.quote_status import refresh_confirmation
+            try:
+                conf, _ = await asyncio.wait_for(refresh_confirmation(context, confirmation_service, conf), timeout=6)
+            except TimeoutError:
+                pass
+        correction = json.loads(conf.get('result_json') or '{}') if conf and conf['status'] == 'failed' else {}
         prompt = QUOTE_PROMPT + '\nTrả DUY NHẤT JSON theo schema đã cấp.\n'
         prompt += '\nKhông trả intent_type/reply_text/tool_name ở đây. action=other chỉ khi người dùng đổi chủ đề rõ ràng, không phải thông tin bổ sung cho báo giá. Không lấy lời bot tự nói làm dữ liệu đã lưu.\n'
-        prompt += json.dumps({'draft': active, 'confirmation_status': conf.get('status') if conf else None,
+        prompt += json.dumps({'draft': active, 'confirmation_status': conf.get('status') if conf else None, 'odoo_correction': correction,
             'history': history, 'user_text': text}, ensure_ascii=False)
         try:
             remaining = max(0.1, min(12.0, (session_context or {}).get('_turn_deadline', time.time() + 14) - time.time() - 2))

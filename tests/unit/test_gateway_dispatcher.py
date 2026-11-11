@@ -58,8 +58,7 @@ async def test_dispatcher_greetings_and_help(client, gateway_settings):
             assert isinstance(data["messages"], list)
             msg = data["messages"][0]
             assert "Xin chào" in msg
-            assert 'công việc' in msg.lower()
-            assert "Thông tin" in msg or "Hồ sơ" in msg
+            assert "giúp gì" in msg or "hôm nay" in msg
             mock_turn.assert_not_called()
 
 

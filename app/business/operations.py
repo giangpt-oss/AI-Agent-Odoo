@@ -43,13 +43,22 @@ def needs_customer_acceptance_clarification(text):
                 and not explicit_customer_acceptance(text))
 
 
-def interpret_quotation_flow(text):
+def interpret_quotation_flow(text, default_name=None):
+    from app.business.quote_local import asks_delivery_or_approval_status
+
+    if asks_delivery_or_approval_status(text):
+        return None
     lower = text.lower().strip()
     names = re.findall(r'\bS\d{3,}\b', text, re.I)
+    request_confirmation = bool(re.search(
+        r'(?:gửi|xin|yêu cầu|nhờ|trình).*(?:yêu cầu\s+)?(?:xác nhận|phê duyệt|duyệt)', lower
+    ) and re.search(r'yêu cầu|nội bộ|sếp|cấp trên|quản lý|trưởng', lower))
+    if not names and request_confirmation and default_name:
+        names = [default_name]
     if len(names) != 1:
         return None
     action = None
-    if re.search(r'(?:xin|yêu cầu|trình|gửi.*cấp trên).*duyệt|request approval', lower):
+    if request_confirmation or re.search(r'(?:xin|yêu cầu|trình|gửi.*cấp trên).*duyệt|request approval', lower):
         action = 'request_approval'
     elif re.search(r'từ chối.*duyệt|không duyệt', lower):
         action = 'reject_approval'

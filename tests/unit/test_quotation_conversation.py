@@ -14,6 +14,83 @@ from app.services.confirmation_service import ConfirmationService
 from app.services.conversation_history_store import ConversationHistoryStore
 
 
+@pytest.mark.asyncio
+async def test_request_for_boss_uses_last_created_quotation(quote_runtime, monkeypatch):
+    from app.business import quote_status
+
+    context, _, confirmations = quote_runtime
+    await collector.collect({'action': 'start', 'quantity': 1}, context)
+    draft = workflow.session(context)['active_draft']
+    cid, _ = confirmations.create_confirmation(user_id=1, chat_id=7, telegram_binding_id='fixture-binding',
+        action='sales.quotation.create', arguments={}, preview_text='preview', owner_key=context.owner_key,
+        draft_id=draft['draft_id'], draft_version=draft['version'], telegram_user_id=7)
+    assert confirmations.claim_and_validate(cid, 1, 7, 'fixture-binding')[0]
+    monkeypatch.setattr(quote_status, 'request', AsyncMock(return_value={
+        'status': 'completed', 'result': {'id': 88, 'name': 'S00089', 'company_id': [1, 'Company']},
+    }))
+    from app.core import config
+    settings = config.get_settings()
+    settings.ENABLE_QUOTATION_APPROVAL_FLOW = True
+    pipeline = natural_module.NaturalPipeline()
+    result = await pipeline.analyze_input('gửi yêu cầu xác nhận cho sếp', context, workflow.session(context))
+    assert result.tool_name == 'business.quotation_flow'
+    assert result.parameters['quotation_name'] == 'S00089'
+    assert result.parameters['company_id'] == 1
+    assert result.parameters['action'] == 'request_approval'
+
+
+@pytest.mark.asyncio
+async def test_exact_references_and_quantity_return_one_confirmation(quote_runtime, monkeypatch):
+    context, _, confirmations = quote_runtime
+    original = collector.request
+
+    async def exact(*args):
+        return {**await original(*args), 'exact_match_unique': True}
+
+    monkeypatch.setattr(collector, 'request', exact)
+    messages = await collector.collect({'action': 'start', 'customer_query': 'Customer',
+                                        'product_query': 'Product', 'quantity': 2}, context)
+    preview = messages[0]
+    assert 'Customer' in preview and 'Product' in preview
+    saved = confirmations.get_confirmation(preview.confirmation_id)
+    assert json.loads(saved['arguments_json']) == {'partner_id': 11, 'lines': [{'product_id': 22, 'quantity': 2}]}
+    assert (await workflow.prepare(context))[0].confirmation_id == preview.confirmation_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change_quantity', [False, True])
+async def test_confirmed_quote_resumes_only_for_missing_fields(quote_runtime, monkeypatch, change_quantity):
+    from app.business import quote_status
+    from app.services import unified_executor as executor_module
+
+    context, store, confirmations = quote_runtime
+    await collector.collect({'action': 'start', 'customer_query': 'Customer', 'product_query': 'Product', 'quantity': 2}, context)
+    await collector.collect({'selected_id': 11}, context)
+    preview = (await collector.collect({'selected_id': 22}, context))[0]
+    cid = preview.confirmation_id
+    assert confirmations.claim_and_validate(cid, 1, 7, 'fixture-binding')[0]
+    remote = {'status': 'failed', 'result': {'missing_fields': ['custom_fields.x_reference'],
+                                           'field_labels': {'custom_fields.x_reference': 'Mã tham chiếu nội bộ'}}}
+    monkeypatch.setattr(quote_status, 'request', AsyncMock(return_value=remote))
+    monkeypatch.setattr(executor_module, 'confirmation_service', confirmations)
+    monkeypatch.setattr(executor_module, 'conversation_history_store', store)
+    execute = AsyncMock(return_value={'status': 'in_progress'})
+    monkeypatch.setattr(executor_module.gateway_client, 'execute_action', execute)
+    correction = {'custom_fields': {'x_reference': 'ABC'}}
+    if change_quantity:
+        correction['quantity'] = 3
+    message = (await collector.collect(correction, context))[0]
+    if change_quantity:
+        assert message.confirmation_id != cid
+        execute.assert_not_called()
+    else:
+        assert 'Đang tạo báo giá' in message
+        execute.assert_awaited_once()
+        attempt = confirmations.get_confirmation(execute.call_args.kwargs['operation_id'])
+        assert attempt['operation_id'] != confirmations.get_confirmation(cid)['operation_id']
+        assert json.loads(attempt['arguments_json'])['custom_fields'] == {'x_reference': 'ABC'}
+
+
 @pytest.fixture
 def quote_runtime(tmp_path, monkeypatch):
     store = ConversationHistoryStore(str(tmp_path / 'conversation.db'))

@@ -11,8 +11,10 @@ def register(registry, reporting: bool, quotation: bool) -> None:
     if reporting:
         definitions += [
             ("reports.capabilities", "read", "Kiểm tra báo cáo Odoo và công ty có quyền truy cập", {}),
-            ("reports.create", "read", "Lập file báo cáo: doanh số/sales, báo giá bán/quotations, đơn mua/purchases, yêu cầu báo giá mua/purchase_rfqs, pipelineCRM/crm, liên hệ/contacts, tồn kho hiện tại/inventory, nhập xuất đã hoàn tất/transfers. Chỉ hỏi kỳ cho các loại yêu cầu kỳ; CRM/liên hệ có thể lấy hiện trạng. Hỏi số đếm đơn thuần dùng công cụ search count_only thay vì lập file.", {
-                "report_type": {"enum": ["sales", "quotations", "purchases", "purchase_rfqs", "crm", "contacts", "inventory", "transfers", "revenue", "commercial_summary", "tasks"]},
+            ("reports.create", "read", "Lập file báo cáo: doanh số/sales, báo giá bán/quotations, đơn mua/purchases, yêu cầu báo giá mua/purchase_rfqs, pipelineCRM/crm, liên hệ/contacts, tồn kho hiện tại/inventory, nhập xuất đã hoàn tất/transfers, báo cáo công việc tuần của nhân viên/employee_weekly. Chỉ hỏi kỳ cho các loại yêu cầu kỳ; CRM/liên hệ có thể lấy hiện trạng; báo cáo tuần nhân viên tự động lấy tuần gần nhất. Hỏi số đếm đơn thuần dùng công cụ search count_only thay vì lập file.", {
+                "report_type": {"enum": ["sales", "quotations", "purchases", "purchase_rfqs", "crm", "contacts", "inventory", "transfers", "revenue", "commercial_summary", "tasks", "employee_weekly"]},
+                "employee_name": {"type": "string", "description": "Tên nhân viên cần lập báo cáo tuần"},
+                "employee_id": {"type": "integer", "description": "ID nhân viên hr.employee trong Odoo"},
                 "date_from": {"type": "string"}, "date_to": {"type": "string"},
                 "output_format": {"enum": ["auto", "docx", "xlsx", "both"], "description": "Định dạng người dùng yêu cầu; không chỉ định thì auto"},
                 "report_purpose": {"enum": ["auto", "narrative", "data_analysis", "presentation", "combined"], "description": "Mục đích từ yêu cầu: đọc phân tích, xử lý bảng dữ liệu, trình bày, hoặc cả hai"},
@@ -37,12 +39,14 @@ def register(registry, reporting: bool, quotation: bool) -> None:
             ("reports.lookup", "read", "Tìm/chọn kho, dự án, người phụ trách, khách hàng cho báo cáo", {"kind": {"enum": ["warehouses", "projects", "assignees", "partners", "products", "stages"]}, "query": {"type": "string"}, "company_id": {"type": "integer"}}),
         ]
     if quotation:
-        from app.business.quote_schema import QuoteTurn
-        definitions += [("sales.quotation.collect", "read", "Lưu thông tin từng lượt vào nháp báo giá thật, tra cứu khách/sản phẩm và hỏi chọn ID; dùng ngay từ câu tạo báo giá chưa đủ thông tin.", QuoteTurn.model_json_schema()["properties"]),
+        from app.business.quote_schema import QuoteLineFacts, QuoteTurn
+        properties = QuoteTurn.model_json_schema()['properties']
+        properties['line_updates'] = {'type': 'array', 'items': QuoteLineFacts.model_json_schema()}
+        definitions += [("sales.quotation.collect", "read", "Lưu thông tin báo giá, tra cứu khách và sản phẩm, đưa bản xem trước để xác nhận một lần.", properties),
                         ("sales.quotation.status", "read", "Xem trạng thái báo giá bằng số Odoo như S00086 hoặc tiến độ nháp hiện tại; không tạo lại.", {'quotation_name': {'type': 'string'}, 'company_id': {'type': 'integer'}})]
         definitions += [
             ("sales.quotation.lookup", "read", "Tìm khách hàng, sản phẩm, thuế, điều khoản để chọn lập báo giá. Không đoán ID.", {"kind": {"enum": ["partners", "products", "taxes", "companies", "currencies", "pricelists", "payment_terms", "uoms", "fiscal_positions"]}, "query": {"type": "string"}, "company_id": {"type": "integer"}}),
-            ("sales.quotation.draft", "read", "Thu thập/sửa nháp báo giá trong hội thoại; chưa tạo trên Odoo. action=start/update/add_line/remove_line/cancel. data là các trường nháp. lines cập nhật theo index, line_index đánh số từ 1. Hỏi phần thiếu; người dùng phải chốt đơn giá và price_confirmed=true.", {
+            ("sales.quotation.draft", "read", "Thu thập/sửa nháp báo giá trong hội thoại. action=start/update/add_line/remove_line/cancel. data là các trường nháp. lines cập nhật theo index, line_index đánh số từ 1.", {
                 "action": {"enum": ["start", "update", "add_line", "remove_line", "cancel"]},
                 "line_index": {"type": "integer"}, "data": {"type": "object"},
             }),
@@ -134,12 +138,12 @@ sales.quotation.draft chỉ là nháp cục bộ. data chứa partner_id, compan
 payment_term_id,fiscal_position_id,client_order_ref,note,custom_fields. Dòng hàng gồm product_id,quantity,price_unit,price_confirmed,tax_ids,uom_id,custom_fields.
 Trước chọn khách/sản phẩm mới phải dùng sales.quotation.lookup và chỉ lấy ID từ kết quả thật.
 lines trong update cập nhật theo vị trí, add_line để thêm, remove_line với line_index từ 1.
-Chỉ đặt price_confirmed=true khi người dùng đã cung cấp hoặc đồng ý đơn giá; không tự áp giá niêm yết.
-tax_ids phải là các ID thuế người dùng đã chọn; chỉ dùng [] nếu người dùng xác nhận không thuế. Tra cứu taxes khi chưa rõ.
+Ghi price_unit nếu người dùng cho đơn giá. Bỏ trống đơn giá và thuế chưa được cung cấp để Odoo tính theo cấu hình.
+Chỉ dùng tax_ids=[] khi người dùng yêu cầu không tính thuế. Dùng ID thuế được cung cấp hoặc tra cứu xác minh.
 Đọc quotation_data trong active_draft và quotation_validation.missing_fields trong recent_read_records để hỏi/nhận đúng thông tin đang thiếu, không gửi vào draft email.
 Một lượt chỉ gọi một công cụ. Sau lookup, trình bày kết quả để người dùng chọn; không tuyên bố đã cập nhật nháp.
-Nếu người dùng muốn tạo sau khi đủ thông tin, dùng prepare_write sales.quotation.preview.
-Không tự tạo hoặc sửa report_id, draft_id, version. Khi đổi khách hàng phải chọn lại giá và thuế cho các dòng.
+Khi đã tìm được khách hàng và sản phẩm, collector trả bản xác nhận. Nếu Odoo yêu cầu bổ sung trường, ghi đúng giá trị vào nháp để tiếp tục.
+Không tự tạo hoặc sửa report_id, draft_id, version.
 """
 
 PROMPT += """
@@ -153,6 +157,7 @@ Theo entity_label trong recent_read_records để trả lời số đếm nối 
 File báo cáo quotations lọc draft/sent theo ngày tạo; purchases lọc đơn đã xác nhận theo ngày xác nhận; purchase_rfqs lọc draft/sent/chờduyệt theo ngày tạo.
 CRM hiện trạng: reports.create report_type=crm; mặc định cơ hội hoạt động. crm_status=won dùng định nghĩa giai đoạn is_won thật, archived không đồng nghĩa cơ hội thua. Giá trị kỳ vọng không phải doanh số thực tế.
 Báo cáo liên hệ: report_type=contacts, contact_kind đúng yêu cầu. CRM/liên hệ không có kỳ -> snapshot hiện tại; có kỳ -> ngày tạo.
+Báo cáo công việc tuần của nhân viên / hoạt động nhân viên: reports.create report_type=employee_weekly, truyền employee_name nếu có tên nhân viên. Không bắt buộc hỏi ngày vì mặc định tự lấy tuần gần nhất.
 Báo cáo tồn: inventory; báo cáo phiếu nhập/xuất/điều chuyển hoàn tất: transfers, transfer_type tương ứng, kỳ theo ngày hoàn tất.
 Thiếu tên kho/sản phẩm/đối tác có nhiều kết quả -> reports.lookup để chọn đúng ID; không bịa ID.
 Ngoài khả năng hoặc chỉ tiêu chưa định nghĩa -> hỏi làm rõ và nói rõ giới hạn, không dùng một danh sách mẫu làm báo cáo toàn bộ.
