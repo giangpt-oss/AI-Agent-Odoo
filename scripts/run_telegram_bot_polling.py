@@ -51,6 +51,8 @@ ODOO_KEY = os.getenv("ODOO_API_KEY", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash-lite")
 
+from app.connectors.telegram.text import plain_text
+
 API_BASE = f"https://api.telegram.org/bot{TOKEN}"
 
 # 1. Khởi tạo sẵn Gemini Client (Singleton)
@@ -423,7 +425,7 @@ async def main():
                                     from app.assistant.company_assistant import company_assistant
                                     action_res = await company_assistant.execute_approved_action(conf_id, chat_id, cbq["from"]["id"])
                                     reply = action_res.to_markdown() if hasattr(action_res, "to_markdown") else str(action_res)
-                                    await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": reply})
+                                    await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": plain_text(reply)})
                                 elif cb_data.startswith("confirm_reject_"):
                                     conf_id = cb_data.replace("confirm_reject_", "")
                                     from app.agent.confirmation_manager import confirmation_manager
@@ -434,7 +436,7 @@ async def main():
                                         reply = "❌ **Đã hủy yêu cầu.** Không có thay đổi nào được ghi vào hệ thống Odoo."
                                     else:
                                         reply = "⚠️ Yêu cầu xác nhận này đã hết hạn, không tồn tại hoặc đã được xử lý."
-                                    await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": reply})
+                                    await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": plain_text(reply)})
                             continue
                             
                         if not msg:
@@ -454,7 +456,7 @@ async def main():
                             st = f"🩺 **System Health:** {health['status']}\n"
                             for k, v in health["checks"].items():
                                 st += f"- {k.title()}: {v}\n"
-                            await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": st, "parse_mode": "Markdown"})
+                            await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": plain_text(st)})
                             continue
                         
                         if text.startswith("/accounts"):
@@ -466,7 +468,7 @@ async def main():
                                 accounts = provider_account_manager.list_accounts(str(employee.get("id")))
                                 for acc in accounts:
                                     st += f"\n- {acc['provider']}: {acc['status']} ({acc['display_name']})"
-                            await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": st, "parse_mode": "Markdown"})
+                            await http_client.post(f"{API_BASE}/sendMessage", json={"chat_id": chat_id, "text": plain_text(st)})
                             continue
 
                         # Xử lý tệp đính kèm nếu có (Document hoặc Photo)
@@ -554,8 +556,7 @@ async def main():
 
                                 send_payload = {
                                     "chat_id": p_chat_id,
-                                    "text": reply,
-                                    "parse_mode": "Markdown"
+                                    "text": plain_text(reply)
                                 }
                                 
                                 if pending_conf:
@@ -578,11 +579,10 @@ async def main():
                                         send_payload["reply_markup"] = {"inline_keyboard": []}
                                     send_payload["reply_markup"]["inline_keyboard"].append([{"text": "🌐 Bấm Vào Đây Để Đăng Nhập Odoo", "url": auth_url}])
 
-                                send_payload["text"] = reply[:4000]
+                                send_payload["text"] = plain_text(reply)[:4000]
                                 send_resp = await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
                                 if not send_resp.json().get("ok"):
-                                    send_payload.pop("parse_mode", None)
-                                    await http_client.post(f"{API_BASE}/sendMessage", json=send_payload)
+                                    print("❌ Telegram từ chối tin nhắn; không tự gửi lại bằng định dạng khác.")
 
                                 if excel_files:
                                     for ef in excel_files:
@@ -594,8 +594,7 @@ async def main():
                                                     f"{API_BASE}/sendDocument",
                                                     data={
                                                         "chat_id": p_chat_id,
-                                                        "caption": f"📊 Báo cáo Excel: *{ef_path.name}*",
-                                                        "parse_mode": "Markdown",
+                                                        "caption": plain_text(f"📊 Báo cáo Excel: {ef_path.name}"),
                                                     },
                                                     files={
                                                         "document": (

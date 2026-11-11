@@ -1,0 +1,129 @@
+{
+  "dataset_version": "a14d6be0d53ddba9f85593ca629d583102314b95a41ad4c09a0c74dd7f6d8a3f",
+  "corpus_version": "5eec3b32885dd13b2185e859393a16c2f49d12a0608590ada233f7c6bc9c91d1",
+  "case_selection": "missing",
+  "planned_cases": 1,
+  "dataset_status": "UNVERIFIED synthetic fixture",
+  "cases": [
+    {
+      "question": "Hành tinh sao Thổ có mấy vành đai?",
+      "expected_ids": [],
+      "expected_facts": [],
+      "expected_refusal": true,
+      "trace": {
+        "correlation_id": "84cfb752ab46400a9eeb80d720966a3c",
+        "branches": {
+          "dense": {
+            "results": [
+              {
+                "chunk_id": "stock",
+                "distance": 0.34652209281921387
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 0.35767266154289246
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 0.37295177578926086
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 0.37701618671417236
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 0.3840849697589874
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 0.39245957136154175
+              },
+              {
+                "chunk_id": "conflict-b",
+                "distance": 0.39601489901542664
+              },
+              {
+                "chunk_id": "conflict-a",
+                "distance": 0.3982137441635132
+              }
+            ],
+            "ms": 366.695
+          },
+          "sparse": {
+            "results": [
+              {
+                "chunk_id": "stock",
+                "bm25": -0.47939946250818827
+              },
+              {
+                "chunk_id": "contract",
+                "bm25": -0.4621497067357797
+              },
+              {
+                "chunk_id": "contract-other",
+                "bm25": -0.4621497067357797
+              }
+            ],
+            "ms": 3.455
+          }
+        },
+        "final_ids": [
+          "stock",
+          "contract",
+          "contract-other",
+          "returns",
+          "hours"
+        ],
+        "fusion_scores": {
+          "stock": 0.03278688524590164,
+          "returns": 0.016129032258064516,
+          "hours": 0.015873015873015872,
+          "leave": 0.015625,
+          "contract": 0.0315136476426799,
+          "contract-other": 0.031024531024531024,
+          "conflict-b": 0.014925373134328358,
+          "conflict-a": 0.014705882352941176
+        },
+        "retrieval_ms": 372.527
+      },
+      "error_category": "rate_limit",
+      "http_status": 429,
+      "end_to_end_ms": 3593.1435999991663
+    }
+  ],
+  "embedding": "gemini-embedding-001",
+  "generation_model": "gemini-3-flash-preview",
+  "status": "BLOCKED",
+  "attempted": 1,
+  "successful": 0,
+  "error_rate": 1.0,
+  "metrics": {
+    "abstention_correct": {
+      "mean": null,
+      "n": 0
+    },
+    "expected_fact_coverage": {
+      "mean": null,
+      "n": 0
+    },
+    "citation_expected_evidence_precision": {
+      "mean": null,
+      "n": 0
+    },
+    "retrieval_ms": {
+      "p50": null,
+      "p95": null
+    },
+    "generation_ms": {
+      "p50": null,
+      "p95": null
+    },
+    "end_to_end_ms": {
+      "p50": null,
+      "p95": null
+    }
+  },
+  "semantic_correctness": "NOT_EVALUATED",
+  "faithfulness": "NOT_EVALUATED"
+}

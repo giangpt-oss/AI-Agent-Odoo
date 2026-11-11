@@ -1,0 +1,717 @@
+[
+  {
+    "id": "TC01",
+    "question": "Giờ làm việc tiêu chuẩn của công ty Hopita là từ mấy giờ đến mấy giờ?",
+    "type": "factual",
+    "answerable": true,
+    "expected_answer": "Giờ làm việc tiêu chuẩn của công ty Hopita là từ 08:30 đến 17:30 (Thứ Hai đến Thứ Sáu), nghỉ trưa từ 12:00 đến 13:30.",
+    "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 50.592140748s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.5-flash-lite'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '50s'}]}}",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 2.158
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_count": 0,
+        "valid_citations": 0,
+        "citation_accuracy": 0.0,
+        "citations_found": []
+      },
+      "correctness_score": 0.0,
+      "latency_sec": 0.345
+    },
+    "e2e_latency_sec": 4.515
+  },
+  {
+    "id": "TC02",
+    "question": "Trợ cấp ăn trưa hàng tháng cho nhân viên là bao nhiêu?",
+    "type": "factual",
+    "answerable": true,
+    "expected_answer": "Trợ cấp ăn trưa là 730.000 VNĐ/tháng, được chi trả cùng kỳ lương hàng tháng.",
+    "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 47.985118249s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-3.5-flash-lite', 'location': 'global'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '47s'}]}}",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.36
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_count": 0,
+        "valid_citations": 0,
+        "citation_accuracy": 0.0,
+        "citations_found": []
+      },
+      "correctness_score": 0.0,
+      "latency_sec": 0.228
+    },
+    "e2e_latency_sec": 2.601
+  },
+  {
+    "id": "TC03",
+    "question": "Hạn chót nộp hóa đơn, chứng từ hoàn ứng công tác phí là ngày nào trong tháng?",
+    "type": "factual",
+    "answerable": true,
+    "expected_answer": "Hạn nộp hóa đơn, chứng từ hoàn ứng là ngày 25 hàng tháng.",
+    "generated_answer": "Hạn chót nộp hóa đơn, chứng từ hoàn ứng công tác phí là ngày 25 hàng tháng [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.327
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.693
+    },
+    "e2e_latency_sec": 3.028
+  },
+  {
+    "id": "TC04",
+    "question": "Tôi muốn ở nhà làm online thì cần gửi đăng ký cho ai và trước mấy giờ?",
+    "type": "semantic_paraphrasing",
+    "answerable": true,
+    "expected_answer": "Cần gửi đăng ký làm việc từ xa (WFH) cho Trưởng bộ phận trước 17:00 ngày làm việc liền kề trước đó qua cổng hệ thống nội bộ.",
+    "generated_answer": "Để đăng ký làm việc từ xa (online), bạn cần gửi đăng ký cho **Trưởng bộ phận** trước **17:00 ngày làm việc liền kề trước đó** qua cổng hệ thống nội bộ [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.337
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.782
+    },
+    "e2e_latency_sec": 3.133
+  },
+  {
+    "id": "TC05",
+    "question": "Chính sách cấp phát laptop cho đội ngũ lập trình viên và kỹ thuật như thế nào?",
+    "type": "semantic_paraphrasing",
+    "answerable": true,
+    "expected_answer": "Nhân viên kỹ thuật và phát triển sản phẩm được cấp 01 máy tính xách tay (MacBook Pro hoặc ThinkPad) theo cấu hình tiêu chuẩn của bộ phận IT. Thiết bị khấu hao trong 3 năm và sau 3 năm có quyền mua lại với giá 10% giá trị ban đầu.",
+    "generated_answer": "Chính sách cấp phát laptop cho đội ngũ kỹ thuật và lập trình viên (nhân viên kỹ thuật và phát triển sản phẩm) được quy định như sau:\n- Nhân viên kỹ thuật và phát triển sản phẩm được cấp 01 máy tính xách tay (MacBook Pro hoặc ThinkPad) theo cấu hình tiêu chuẩn của bộ phận IT [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].\n- Thiết bị này được khấu hao trong 03 năm. Sau 03 năm, nhân viên có quyền mua lại với mức giá ưu đãi là 10% giá trị ban đầu [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.335
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 2,
+        "valid_citations": 2,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]",
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.825
+    },
+    "e2e_latency_sec": 3.161
+  },
+  {
+    "id": "TC06",
+    "question": "Bao giờ thì kế toán bắn tiền hoàn ứng công tác cho nhân viên?",
+    "type": "semantic_paraphrasing",
+    "answerable": true,
+    "expected_answer": "Phòng Tài chính - Kế toán chi trả hoàn ứng vào ngày 05 và ngày 20 hàng tháng qua tài khoản ngân hàng của nhân viên.",
+    "generated_answer": "Phòng Tài chính - Kế toán sẽ chi trả hoàn ứng cho nhân viên vào ngày 05 và ngày 20 hàng tháng qua tài khoản ngân hàng của nhân viên. \n\n[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.363
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 0.67,
+      "latency_sec": 0.697
+    },
+    "e2e_latency_sec": 3.076
+  },
+  {
+    "id": "TC07",
+    "question": "mẫu C65-HD áp dụng khi nào?",
+    "type": "exact_keyword",
+    "answerable": true,
+    "expected_answer": "Mẫu C65-HD (giấy xác nhận nghỉ việc hưởng bảo hiểm xã hội do cơ sở y tế cấp) áp dụng khi nhân viên nghỉ ốm đau từ 03 ngày trở lên.",
+    "generated_answer": "Mẫu C65-HD (giấy xác nhận nghỉ việc hưởng bảo hiểm xã hội) áp dụng khi nhân viên nghỉ ốm từ 03 ngày trở lên [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.326
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 1.172
+    },
+    "e2e_latency_sec": 3.503
+  },
+  {
+    "id": "TC08",
+    "question": "200.000 VNĐ",
+    "type": "exact_keyword",
+    "answerable": true,
+    "expected_answer": "Mọi chi phí từ 200.000 VNĐ trở lên bắt buộc phải có hóa đơn điện tử VAT xuất theo thông tin mã số thuế của Công ty Hopita để được thanh toán và hoàn ứng.",
+    "generated_answer": "Dựa trên tài liệu của công ty Hopita, đối với khoản chi phí từ 200.000 VNĐ trở lên, quy định áp dụng là:\n- Mọi chi phí từ 200.000 VNĐ trở lên bắt buộc phải có hóa đơn điện tử VAT xuất theo thông tin mã số thuế của Công ty Hopita [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.34
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 1.38
+    },
+    "e2e_latency_sec": 3.72
+  },
+  {
+    "id": "TC09",
+    "question": "Nếu một nhân viên đã làm việc 6 năm liên tục tại Hopita thì có tổng cộng bao nhiêu ngày phép năm và phép tồn năm trước được dùng đến khi nào?",
+    "type": "multi_document",
+    "answerable": true,
+    "expected_answer": "Nhân viên có 14 ngày phép năm (12 ngày tiêu chuẩn + 2 ngày thâm niên do đủ 6 năm làm việc). Phép năm chưa sử dụng hết được chuyển sang quý 1 của năm sau và có hạn chót sử dụng là 31/03.",
+    "generated_answer": "Dựa trên tài liệu của công ty Hopita:\n\n- **Số ngày phép năm:** Nhân viên chính thức có sẵn 12 ngày phép năm. Cứ mỗi 03 năm làm việc liên tục sẽ được cộng thêm 01 ngày phép năm. Do đó, nhân viên đã làm việc 6 năm liên tục sẽ có số ngày phép năm là: 12 ngày + 2 ngày (do có 2 lần mốc 3 năm) = **14 ngày phép năm** [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].\n- **Hạn sử dụng phép tồn năm trước:** Phép năm chưa sử dụng hết trong năm sẽ được chuyển tiếp sang quý 1 của năm tiếp theo với **hạn chót sử dụng là 31/03** [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.354
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 2,
+        "valid_citations": 2,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]",
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.947
+    },
+    "e2e_latency_sec": 3.306
+  },
+  {
+    "id": "TC10",
+    "question": "Quy định về thời hạn nghỉ phép của công ty như thế nào?",
+    "type": "ambiguous",
+    "answerable": true,
+    "expected_answer": "Nhân viên chính thức có 12 ngày phép năm hưởng nguyên lương. Cứ mỗi 3 năm thâm niên được cộng thêm 1 ngày. Phép tồn được chuyển tiếp sang quý 1 năm sau với hạn dùng chót là 31/03.",
+    "generated_answer": "Quy định về thời hạn liên quan đến nghỉ phép trong công ty được quy định như sau:\n\n* **Thời hạn sử dụng phép năm:** Phép năm chưa sử dụng hết trong năm sẽ được chuyển tiếp sang quý 1 của năm tiếp theo với hạn chót sử dụng là ngày 31/03 [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].\n* **Thời hạn thông báo khi nghỉ ốm:** \n  * Nhân viên nghỉ ốm dưới 03 ngày cần thông báo cho Trưởng bộ phận [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].\n  * Nhân viên nghỉ từ 03 ngày trở lên cần có giấy xác nhận nghỉ việc hưởng bảo hiểm xã hội (mẫu C65-HD) do cơ sở y tế cấp [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.347
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 3,
+        "valid_citations": 3,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]",
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]",
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 0.67,
+      "latency_sec": 0.963
+    },
+    "e2e_latency_sec": 3.321
+  },
+  {
+    "id": "TC11",
+    "question": "Mức lương tháng 13 và tiền thưởng Tết của công ty Hopita được tính như thế nào?",
+    "type": "unanswerable",
+    "answerable": false,
+    "expected_answer": "INSUFFICIENT_EVIDENCE",
+    "generated_answer": "INSUFFICIENT_EVIDENCE",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": null,
+      "hit_at_3": null,
+      "mrr_at_3": null,
+      "latency_sec": 0.355
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": true,
+        "expected_refusal": true,
+        "abstention_correct": true,
+        "status": "CORRECT_ABSTENTION"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_accuracy": 1.0
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.854
+    },
+    "e2e_latency_sec": 3.219
+  },
+  {
+    "id": "TC12",
+    "question": "Chính sách nghỉ thai sản cho lao động nữ tại công ty quy định bao nhiêu tháng và hỗ trợ tài chính bao nhiêu?",
+    "type": "unanswerable",
+    "answerable": false,
+    "expected_answer": "INSUFFICIENT_EVIDENCE",
+    "generated_answer": "INSUFFICIENT_EVIDENCE",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": null,
+      "hit_at_3": null,
+      "mrr_at_3": null,
+      "latency_sec": 0.336
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": true,
+        "expected_refusal": true,
+        "abstention_correct": true,
+        "status": "CORRECT_ABSTENTION"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_accuracy": 1.0
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.66
+    },
+    "e2e_latency_sec": 3.008
+  },
+  {
+    "id": "TC13",
+    "question": "Công ty có xe đưa đón nhân viên từ nội thành đến văn phòng không?",
+    "type": "unanswerable",
+    "answerable": false,
+    "expected_answer": "INSUFFICIENT_EVIDENCE",
+    "generated_answer": "INSUFFICIENT_EVIDENCE",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": null,
+      "hit_at_3": null,
+      "mrr_at_3": null,
+      "latency_sec": 0.347
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": true,
+        "expected_refusal": true,
+        "abstention_correct": true,
+        "status": "CORRECT_ABSTENTION"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_accuracy": 1.0
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.722
+    },
+    "e2e_latency_sec": 3.078
+  },
+  {
+    "id": "TC14",
+    "question": "Bảng lương chi tiết và hệ số thưởng KPI của Ban Giám Đốc năm 2026 là bao nhiêu?",
+    "type": "unauthorized",
+    "answerable": false,
+    "expected_answer": "INSUFFICIENT_EVIDENCE",
+    "generated_answer": "INSUFFICIENT_EVIDENCE",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": null,
+      "hit_at_3": null,
+      "mrr_at_3": null,
+      "latency_sec": 0.357
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": true,
+        "expected_refusal": true,
+        "abstention_correct": true,
+        "status": "CORRECT_ABSTENTION"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_accuracy": 1.0
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.861
+    },
+    "e2e_latency_sec": 3.218
+  },
+  {
+    "id": "TC15",
+    "question": "tro cap an trua hang thang cua nhan vien la bao nhieu?",
+    "type": "vietnamese_no_accent",
+    "answerable": true,
+    "expected_answer": "Trợ cấp ăn trưa là 730.000 VNĐ/tháng được chi trả cùng kỳ lương hàng tháng.",
+    "generated_answer": "Trợ cấp ăn trưa của nhân viên là 730.000 VNĐ/tháng [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.392
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 0.33,
+      "latency_sec": 0.724
+    },
+    "e2e_latency_sec": 3.119
+  },
+  {
+    "id": "TC16",
+    "question": "gio lam viec bat dau tu may gio va thu bay co phai lam khong",
+    "type": "vietnamese_no_accent",
+    "answerable": true,
+    "expected_answer": "Giờ làm việc bắt đầu từ 08:30 đến 17:30 (Thứ Hai đến Thứ Sáu). Thứ Bảy và Chủ Nhật nghỉ cố định, không phải làm việc.",
+    "generated_answer": "Dựa trên tài liệu:\n- Giờ làm việc tiêu chuẩn bắt đầu từ **08:30** đến 17:30 (từ Thứ Hai đến Thứ Sáu) [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].\n- Ngày làm việc trong tuần là từ Thứ Hai đến hết Thứ Sáu, còn **Thứ Bảy và Chủ Nhật được nghỉ cố định** (không phải làm việc) [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.364
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 2,
+        "valid_citations": 2,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]",
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.805
+    },
+    "e2e_latency_sec": 3.171
+  },
+  {
+    "id": "TC17",
+    "question": "han chot nop hoa don hoan ung cong tac phi la ngay bao nhieu",
+    "type": "vietnamese_no_accent",
+    "answerable": true,
+    "expected_answer": "Hạn nộp hóa đơn, chứng từ hoàn ứng là ngày 25 hàng tháng.",
+    "generated_answer": "Hạn chót nộp hóa đơn, chứng từ hoàn ứng công tác phí là ngày 25 hàng tháng [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.393
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": true,
+        "citation_count": 1,
+        "valid_citations": 1,
+        "citation_accuracy": 1.0,
+        "citations_found": [
+          "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+        ]
+      },
+      "correctness_score": 1.0,
+      "latency_sec": 0.562
+    },
+    "e2e_latency_sec": 2.958
+  },
+  {
+    "id": "TC18",
+    "question": "Nhân viên nghỉ ốm dưới 3 ngày có cần giấy bảo hiểm xã hội không và cần giấy tờ gì?",
+    "type": "factual",
+    "answerable": true,
+    "expected_answer": "Nghỉ ốm dưới 03 ngày không cần giấy bảo hiểm xã hội, chỉ cần thông báo cho Trưởng bộ phận và có đơn thuốc hợp lệ.",
+    "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 57.371411322s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-3.5-flash-lite', 'location': 'global'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '57s'}]}}",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.342
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_count": 0,
+        "valid_citations": 0,
+        "citation_accuracy": 0.0,
+        "citations_found": []
+      },
+      "correctness_score": 0.0,
+      "latency_sec": 0.237
+    },
+    "e2e_latency_sec": 2.59
+  },
+  {
+    "id": "TC19",
+    "question": "Sau khi hết thời gian khấu hao laptop 3 năm, nhân viên có được giữ máy không hay phải mua lại và giá bao nhiêu?",
+    "type": "factual",
+    "answerable": true,
+    "expected_answer": "Sau 03 năm khấu hao, nhân viên có quyền mua lại laptop với mức giá ưu đãi 10% giá trị ban đầu của thiết bị.",
+    "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 54.757058335s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.5-flash-lite'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '54s'}]}}",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.365
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_count": 0,
+        "valid_citations": 0,
+        "citation_accuracy": 0.0,
+        "citations_found": []
+      },
+      "correctness_score": 0.0,
+      "latency_sec": 0.232
+    },
+    "e2e_latency_sec": 2.613
+  },
+  {
+    "id": "TC20",
+    "question": "Quy định bảo mật khi truy cập vào hệ thống máy chủ nội bộ của công ty yêu cầu những điều kiện gì?",
+    "type": "factual",
+    "answerable": true,
+    "expected_answer": "Truy cập hệ thống máy chủ nội bộ bắt buộc phải thông qua VPN công ty và bật xác thực 2 yếu tố (2FA). Đồng thời không được tải mã nguồn, tài liệu lên dịch vụ đám mây cá nhân chưa phê duyệt.",
+    "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 52.149337881s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.5-flash-lite'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '52s'}]}}",
+    "retrieval": {
+      "retrieved_chunk_ids": [
+        "chk_0f021391"
+      ],
+      "hit_at_1": 1.0,
+      "hit_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "latency_sec": 0.344
+    },
+    "generation": {
+      "abstention": {
+        "is_refusal": false,
+        "expected_refusal": false,
+        "abstention_correct": true,
+        "status": "CORRECT_ANSWER"
+      },
+      "citation": {
+        "has_citation": false,
+        "citation_count": 0,
+        "valid_citations": 0,
+        "citation_accuracy": 0.0,
+        "citations_found": []
+      },
+      "correctness_score": 0.0,
+      "latency_sec": 0.248
+    },
+    "e2e_latency_sec": 2.602
+  }
+]

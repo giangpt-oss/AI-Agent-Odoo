@@ -79,6 +79,22 @@ class GatewayClient:
             logger.error("Error calling Gateway user connections: %s", e)
             return {"status": "ERROR", "message": str(e)}
 
+    async def _workspace_request(self, user_id: int, service: str, arguments: dict[str, Any], endpoint: str, timeout: float = 10.0) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(f"{self.base_url}/internal/v1/users/{user_id}/workspace/{endpoint}", json={"service": service, **arguments}, headers=self._headers())
+            if response.status_code == 200:
+                return response.json()
+            return {"status": "PERMISSION_DENIED" if response.status_code == 403 else "SERVICE_ERROR", "message": response.text[:1000]}
+        except httpx.RequestError:
+            return {"status": "SERVICE_ERROR", "message": "Không thể kết nối Gateway Workspace."}
+
+    async def workspace_query(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+        return await self._workspace_request(user_id, service, arguments, "query", timeout)
+
+    async def workspace_prepare(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+        return await self._workspace_request(user_id, service, arguments, "preview", timeout)
+
     async def get_calendar_events(self, user_id: int, time_min: str, time_max: str) -> dict[str, Any]:
         """Lấy danh sách sự kiện lịch trong khoảng thời gian ISO 8601."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/calendar/events"
@@ -166,8 +182,9 @@ class GatewayClient:
         telegram_binding_id: str,
         action: str,
         arguments: dict[str, Any],
+        timeout: float = 12.0,
     ) -> dict[str, Any]:
-        """Thực thi action ngoại vi qua Gateway với đối soát binding_id."""
+        """Thực thi action ngoại vi qua Gateway với đối soát binding_id và dynamic timeout."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/actions"
         payload = {
             "operation_id": operation_id,
@@ -178,7 +195,7 @@ class GatewayClient:
             "arguments": arguments,
         }
         try:
-            async with httpx.AsyncClient(timeout=25.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     data = resp.json()
@@ -207,5 +224,94 @@ class GatewayClient:
             logger.error("Error calling Gateway execute_action: %s", e)
             return {"status": "SERVICE_ERROR", "message": str(e)}
 
+    async def get_action_status(
+        self,
+        user_id: int,
+        operation_id: str,
+        telegram_user_id: int,
+        chat_id: int,
+        telegram_binding_id: str,
+        timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        """Tra cứu trạng thái thao tác ghi đã thực hiện qua Gateway để đối soát."""
+        url = f"{self.base_url}/internal/v1/users/{user_id}/actions/{operation_id}"
+        params = {
+            "telegram_user_id": telegram_user_id,
+            "chat_id": chat_id,
+            "telegram_binding_id": telegram_binding_id,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url, params=params, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                elif resp.status_code == 404:
+                    return {"status": "not_found", "message": "Không tìm thấy thao tác trên ledger của Gateway."}
+                elif resp.status_code == 403:
+                    return {"status": "permission_denied", "message": "Không khớp quyền hoặc binding của người dùng."}
+                return {"status": "unknown_result", "message": resp.text}
+        except Exception as e:
+            logger.error("Error calling Gateway get_action_status: %s", e)
+            return {"status": "unknown_result", "message": str(e)}
+
+    async def get_odoo_catalog(self) -> dict[str, Any]:
+        """Lấy danh mục catalog models và fields được phép truy vấn từ Gateway."""
+        url = f"{self.base_url}/internal/v1/odoo/catalog"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                return {"status": "SERVICE_ERROR", "catalog": [], "message": resp.text}
+        except Exception as e:
+            logger.error("Error calling Gateway get_odoo_catalog: %s", e)
+            return {"status": "SERVICE_ERROR", "catalog": [], "message": str(e)}
+
+    async def query_odoo(
+        self,
+        user_id: int,
+        model: str,
+        fields: list[str] | None = None,
+        domain: list[Any] | None = None,
+        limit: int = 10,
+        offset: int = 0,
+        order: str | None = None,
+        count_only: bool = False,
+    ) -> dict[str, Any]:
+        """Truy vấn dữ liệu Odoo an toàn qua Gateway Whitelist Catalog."""
+        url = f"{self.base_url}/internal/v1/users/{user_id}/odoo/query"
+        payload = {
+            "model": model,
+            "fields": fields,
+            "domain": domain,
+            "limit": limit,
+            "offset": offset,
+            "order": order,
+            "count_only": count_only,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, json=payload, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                elif resp.status_code == 400:
+                    detail = resp.json().get("detail", {})
+                    msg = detail.get("message", resp.text)
+                    return {"status": "INVALID_QUERY", "message": msg, "items": []}
+                elif resp.status_code == 403:
+                    detail = resp.json().get("detail", {})
+                    msg = detail.get("message", "Tài khoản không có quyền truy cập dữ liệu này trên Odoo.")
+                    return {"status": "PERMISSION_DENIED", "message": msg, "items": []}
+                elif resp.status_code == 503:
+                    return {"status": "ODOO_UNAVAILABLE", "message": "Không thể kết nối đến hệ thống Odoo lúc này.", "items": []}
+                return {"status": "SERVICE_ERROR", "message": resp.text, "items": []}
+        except httpx.TimeoutException:
+            logger.warning("Gateway query_odoo timed out for user %s, model %s", user_id, model)
+            return {"status": "TIMEOUT", "message": "Quá thời gian chờ phản hồi từ Odoo.", "items": []}
+        except Exception as e:
+            logger.error("Error calling Gateway query_odoo: %s", e)
+            return {"status": "SERVICE_ERROR", "message": str(e), "items": []}
+
 
 gateway_client = GatewayClient()
+

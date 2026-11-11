@@ -157,7 +157,7 @@ async def test_prepare_calendar_update_fetches_real_snapshot_and_etag(agent_cont
         assert "user@gmail.com" in msg
         assert "Họp team cũ" in msg
         assert "Họp team mới" in msg
-        assert "/confirm" in msg
+        assert 'Mã tham chiếu: c_' in msg and '/confirm' not in msg
 
 
 @pytest.mark.asyncio
@@ -187,7 +187,7 @@ async def test_prepare_crm_update_fetches_real_snapshot_and_write_date(agent_con
         assert "Khách hàng VinFast" in msg
         assert "100,000,000" in msg
         assert "150,000,000" in msg
-        assert "/confirm" in msg
+        assert 'Mã tham chiếu: c_' in msg and '/confirm' not in msg
 
 
 def test_format_action_result_conflict_and_permission_denied():

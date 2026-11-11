@@ -1,6 +1,6 @@
 import logging
 import httpx
-from fastapi import APIRouter, Request, Form, Query, HTTPException
+from fastapi import APIRouter, Form, Query
 from fastapi.responses import HTMLResponse
 
 from app.core.config import get_settings
@@ -35,7 +35,7 @@ async def odoo_verify_page(token: str = Query(..., description="Mã xác thực 
                 <div class="card">
                     <h2>⚠️ LIÊN KẾT HẾT HẠN</h2>
                     <p>Liên kết xác thực này đã hết hạn hoặc không hợp lệ.</p>
-                    <p>Vui lòng quay lại Telegram và gõ <b>/start</b> hoặc <b>xác thực</b> để nhận liên kết mới.</p>
+                    <p>Vui lòng quay lại cổng kết nối tài khoản để lấy liên kết xác thực mới.</p>
                 </div>
             </body>
             </html>
@@ -254,6 +254,7 @@ async def odoo_verify_submit(
     settings = get_settings()
     if settings.TELEGRAM_BOT_TOKEN:
         try:
+            from app.connectors.telegram.text import plain_text
             tg_url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
             roles_text = ", ".join(profile.get("roles", []))
             notify_text = (
@@ -270,8 +271,7 @@ async def odoo_verify_submit(
             async with httpx.AsyncClient(timeout=10.0) as http_client:
                 await http_client.post(tg_url, json={
                     "chat_id": chat_id,
-                    "text": notify_text,
-                    "parse_mode": "Markdown"
+                    "text": plain_text(notify_text)
                 })
         except Exception as e:
             logger.error(f"Không thể gửi thông báo Telegram: {e}")

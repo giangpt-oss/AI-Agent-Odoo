@@ -1,0 +1,64 @@
+{
+  "dataset_name": "Hopita Internal Knowledge Base",
+  "total_test_cases": 20,
+  "answerable_count": 16,
+  "unanswerable_count": 4,
+  "retrieval_metrics": {
+    "hit_rate_at_1": 1.0,
+    "hit_rate_at_3": 1.0,
+    "mrr_at_3": 1.0,
+    "retrieval_latency_p50_sec": 0.354,
+    "retrieval_latency_p95_sec": 2.158
+  },
+  "generation_metrics": {
+    "answer_correctness": 0.6833,
+    "abstention_accuracy": 1.0,
+    "citation_compliance_rate": 0.6875,
+    "generation_latency_p50_sec": 0.724,
+    "generation_latency_p95_sec": 1.38,
+    "e2e_latency_p50_sec": 3.133,
+    "e2e_latency_p95_sec": 4.515
+  },
+  "by_category": {
+    "ambiguous": {
+      "count": 1,
+      "avg_correctness": 0.67,
+      "avg_latency_sec": 3.321
+    },
+    "exact_keyword": {
+      "count": 2,
+      "avg_correctness": 1.0,
+      "avg_latency_sec": 3.612
+    },
+    "factual": {
+      "count": 6,
+      "avg_correctness": 0.1667,
+      "avg_latency_sec": 2.991
+    },
+    "multi_document": {
+      "count": 1,
+      "avg_correctness": 1.0,
+      "avg_latency_sec": 3.306
+    },
+    "semantic_paraphrasing": {
+      "count": 3,
+      "avg_correctness": 0.89,
+      "avg_latency_sec": 3.123
+    },
+    "unanswerable": {
+      "count": 3,
+      "avg_correctness": 1.0,
+      "avg_latency_sec": 3.102
+    },
+    "unauthorized": {
+      "count": 1,
+      "avg_correctness": 1.0,
+      "avg_latency_sec": 3.218
+    },
+    "vietnamese_no_accent": {
+      "count": 3,
+      "avg_correctness": 0.7767,
+      "avg_latency_sec": 3.083
+    }
+  }
+}

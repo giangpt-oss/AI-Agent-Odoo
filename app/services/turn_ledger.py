@@ -41,6 +41,8 @@ class TurnLedger:
                 conn.execute("ALTER TABLE turn_records ADD COLUMN telegram_binding_id TEXT")
             if "payload_hash" not in columns:
                 conn.execute("ALTER TABLE turn_records ADD COLUMN payload_hash TEXT")
+            if "cache_scope" not in columns:
+                conn.execute("ALTER TABLE turn_records ADD COLUMN cache_scope TEXT")
             conn.commit()
 
     def get_turn_record(self, request_id: str) -> Optional[dict]:
@@ -94,7 +96,7 @@ class TurnLedger:
         except sqlite3.IntegrityError:
             return False
 
-    def record_turn_completed(self, request_id: str, messages: List[str]) -> None:
+    def record_turn_completed(self, request_id: str, messages: List[str], cache_scope: str | None = None) -> None:
         """Ghi nhận turn đã hoàn thành cùng danh sách messages trả về."""
         now = datetime.now(UTC).isoformat()
         messages_json = json.dumps(messages, ensure_ascii=False)
@@ -102,10 +104,10 @@ class TurnLedger:
             conn.execute(
                 """
                 UPDATE turn_records
-                SET status = 'completed', messages_json = ?, completed_at = ?
+                SET status = 'completed', messages_json = ?, completed_at = ?, cache_scope = ?
                 WHERE request_id = ?
                 """,
-                (messages_json, now, request_id),
+                (messages_json, now, cache_scope, request_id),
             )
             conn.commit()
 

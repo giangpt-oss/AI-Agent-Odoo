@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RAGEvaluationDatasetSchema",
+  "description": "Standard schema for Golden Evaluation Dataset in enterprise RAG systems",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Dataset schema version"
+    },
+    "corpus_name": {
+      "type": "string",
+      "description": "Name of the reference knowledge corpus"
+    },
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "question",
+          "expected_answer",
+          "relevant_document_ids",
+          "relevant_chunk_ids",
+          "expected_evidence",
+          "department",
+          "user_role",
+          "question_type",
+          "difficulty",
+          "answerable",
+          "corpus_version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique test case identifier (e.g. TC01)"
+          },
+          "question": {
+            "type": "string",
+            "description": "User question or prompt to the RAG system"
+          },
+          "expected_answer": {
+            "type": "string",
+            "description": "Ground truth expected answer or abstention response"
+          },
+          "relevant_document_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of ground truth document IDs or filenames that contain the answer"
+          },
+          "relevant_chunk_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of ground truth chunk IDs or chunk positional indices"
+          },
+          "expected_evidence": {
+            "type": "string",
+            "description": "Exact text quotation or fact snippet from corpus that justifies the answer"
+          },
+          "department": {
+            "type": "string",
+            "description": "Target department (HR, Finance, Tech, Admin, Legal, etc.)"
+          },
+          "user_role": {
+            "type": "string",
+            "description": "Required role or permission to view this knowledge (Employee, Manager, HR_Admin, etc.)"
+          },
+          "question_type": {
+            "type": "string",
+            "enum": [
+              "factual",
+              "semantic_paraphrasing",
+              "exact_keyword",
+              "multi_document",
+              "ambiguous",
+              "unanswerable",
+              "conflicting",
+              "unauthorized",
+              "vietnamese_accent",
+              "vietnamese_no_accent"
+            ],
+            "description": "Evaluation question category"
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": ["easy", "medium", "hard"],
+            "description": "Retrieval and reasoning difficulty"
+          },
+          "answerable": {
+            "type": "boolean",
+            "description": "True if knowledge base contains sufficient evidence, False if system must abstain"
+          },
+          "corpus_version": {
+            "type": "string",
+            "description": "Corpus version identifier (e.g. 2026.1)"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["VERIFIED", "DRAFT", "UNVERIFIED"],
+            "default": "VERIFIED",
+            "description": "Ground truth verification status"
+          }
+        }
+      }
+    }
+  },
+  "required": ["version", "corpus_name", "test_cases"]
+}
+

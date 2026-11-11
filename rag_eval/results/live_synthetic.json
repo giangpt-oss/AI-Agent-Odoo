@@ -1,0 +1,325 @@
+{
+  "dataset_version": "a14d6be0d53ddba9f85593ca629d583102314b95a41ad4c09a0c74dd7f6d8a3f",
+  "corpus_version": "5eec3b32885dd13b2185e859393a16c2f49d12a0608590ada233f7c6bc9c91d1",
+  "dataset_status": "UNVERIFIED synthetic fixture",
+  "cases": [
+    {
+      "question": "Giờ làm việc tại Hà Nội",
+      "expected_ids": [
+        "hours"
+      ],
+      "expected_facts": [
+        "08:30",
+        "17:30"
+      ],
+      "expected_refusal": false,
+      "trace": {
+        "correlation_id": "9dcff8fc90894909bc6f43ebd88db49d",
+        "branches": {
+          "dense": {
+            "results": [
+              {
+                "chunk_id": "hours",
+                "distance": 0.047858864068984985
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 0.3038976192474365
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 0.3077019155025482
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 0.32821768522262573
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 0.33158305287361145
+              },
+              {
+                "chunk_id": "conflict-a",
+                "distance": 0.3360932469367981
+              },
+              {
+                "chunk_id": "conflict-b",
+                "distance": 0.3373284935951233
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 0.3405052721500397
+              }
+            ],
+            "ms": 369.348
+          },
+          "sparse": {
+            "results": [
+              {
+                "chunk_id": "hours",
+                "bm25": -9.530853744834065
+              }
+            ],
+            "ms": 1.881
+          }
+        },
+        "final_ids": [
+          "hours",
+          "leave",
+          "returns",
+          "contract-other",
+          "contract"
+        ],
+        "fusion_scores": {
+          "hours": 0.03278688524590164,
+          "leave": 0.016129032258064516,
+          "returns": 0.015873015873015872,
+          "contract-other": 0.015625,
+          "contract": 0.015384615384615385,
+          "conflict-a": 0.015151515151515152,
+          "conflict-b": 0.014925373134328358,
+          "stock": 0.014705882352941176
+        },
+        "retrieval_ms": 374.737,
+        "generation_ms": 3440.664,
+        "token_usage": {
+          "prompt_token_count": 349,
+          "candidates_token_count": 31,
+          "total_token_count": 380
+        }
+      },
+      "answer": "Giờ làm việc tại Hà Nội là từ 08:30 đến 17:30 [Nguồn [1]: Synthetic fixture].",
+      "retrieved_ids": [
+        "hours",
+        "leave",
+        "returns",
+        "contract-other",
+        "contract"
+      ],
+      "cited_ids": [
+        "hours"
+      ],
+      "abstention_correct": true,
+      "expected_fact_coverage": 1.0,
+      "citation_expected_evidence_precision": 1.0,
+      "end_to_end_ms": 4414.822200000344
+    },
+    {
+      "question": "gio lam viec tai Ha Noi",
+      "expected_ids": [
+        "hours"
+      ],
+      "expected_facts": [
+        "08:30",
+        "17:30"
+      ],
+      "expected_refusal": false,
+      "trace": {
+        "correlation_id": "c0253c81b17f43d486eb76340271a2fb",
+        "branches": {
+          "dense": {
+            "results": [
+              {
+                "chunk_id": "hours",
+                "distance": 0.12120919674634933
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 0.297052264213562
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 0.3064166307449341
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 0.3067571520805359
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 0.3157861828804016
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 0.3205232620239258
+              },
+              {
+                "chunk_id": "conflict-a",
+                "distance": 0.3249291479587555
+              },
+              {
+                "chunk_id": "conflict-b",
+                "distance": 0.32558801770210266
+              }
+            ],
+            "ms": 348.776
+          },
+          "sparse": {
+            "results": [
+              {
+                "chunk_id": "hours",
+                "bm25": -9.530853744834065
+              }
+            ],
+            "ms": 2.019
+          }
+        },
+        "final_ids": [
+          "hours",
+          "returns",
+          "leave",
+          "contract-other",
+          "contract"
+        ],
+        "fusion_scores": {
+          "hours": 0.03278688524590164,
+          "returns": 0.016129032258064516,
+          "leave": 0.015873015873015872,
+          "contract-other": 0.015625,
+          "contract": 0.015384615384615385,
+          "stock": 0.015151515151515152,
+          "conflict-a": 0.014925373134328358,
+          "conflict-b": 0.014705882352941176
+        },
+        "retrieval_ms": 386.485,
+        "generation_ms": 1893.806,
+        "token_usage": {
+          "prompt_token_count": 349,
+          "candidates_token_count": 31,
+          "total_token_count": 380
+        }
+      },
+      "answer": "Giờ làm việc tại Hà Nội là từ 08:30 đến 17:30 [Nguồn [1]: Synthetic fixture].",
+      "retrieved_ids": [
+        "hours",
+        "returns",
+        "leave",
+        "contract-other",
+        "contract"
+      ],
+      "cited_ids": [
+        "hours"
+      ],
+      "abstention_correct": true,
+      "expected_fact_coverage": 1.0,
+      "citation_expected_evidence_precision": 1.0,
+      "end_to_end_ms": 2871.5011999993294
+    },
+    {
+      "question": "Đơn xin nghỉ phép",
+      "expected_ids": [
+        "leave"
+      ],
+      "expected_facts": [
+        "3 ngày"
+      ],
+      "expected_refusal": false,
+      "trace": {
+        "correlation_id": "1483721ea0634bf0a721fe099f754faf",
+        "branches": {
+          "dense": {
+            "results": [
+              {
+                "chunk_id": "leave",
+                "distance": 0.09697086364030838
+              },
+              {
+                "chunk_id": "conflict-a",
+                "distance": 0.28270065784454346
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 0.2845051884651184
+              },
+              {
+                "chunk_id": "conflict-b",
+                "distance": 0.2853410243988037
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 0.29285842180252075
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 0.3134804368019104
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 0.31789249181747437
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 0.32424798607826233
+              }
+            ],
+            "ms": 354.891
+          },
+          "sparse": {
+            "results": [
+              {
+                "chunk_id": "leave",
+                "bm25": -6.828221812006572
+              }
+            ],
+            "ms": 4.059
+          }
+        },
+        "final_ids": [
+          "leave",
+          "conflict-a",
+          "hours",
+          "conflict-b",
+          "returns"
+        ],
+        "fusion_scores": {
+          "leave": 0.03278688524590164,
+          "conflict-a": 0.016129032258064516,
+          "hours": 0.015873015873015872,
+          "conflict-b": 0.015625,
+          "returns": 0.015384615384615385,
+          "stock": 0.015151515151515152,
+          "contract-other": 0.014925373134328358,
+          "contract": 0.014705882352941176
+        },
+        "retrieval_ms": 356.644
+      },
+      "error_category": "rate_limit",
+      "http_status": 429,
+      "end_to_end_ms": 3649.5310999998765
+    }
+  ],
+  "embedding": "gemini-embedding-001",
+  "generation_model": "gemini-3-flash-preview",
+  "status": "PARTIAL",
+  "attempted": 3,
+  "successful": 2,
+  "error_rate": 0.3333333333333333,
+  "metrics": {
+    "abstention_correct": {
+      "mean": 1,
+      "n": 2
+    },
+    "expected_fact_coverage": {
+      "mean": 1.0,
+      "n": 2
+    },
+    "citation_expected_evidence_precision": {
+      "mean": 1.0,
+      "n": 2
+    },
+    "retrieval_ms": {
+      "p50": 380.611,
+      "p95": 385.8976
+    },
+    "generation_ms": {
+      "p50": 2667.235,
+      "p95": 3363.3211000000006
+    },
+    "end_to_end_ms": {
+      "p50": 3643.161699999837,
+      "p95": 4337.656150000294
+    }
+  },
+  "semantic_correctness": "NOT_EVALUATED",
+  "faithfulness": "NOT_EVALUATED"
+}

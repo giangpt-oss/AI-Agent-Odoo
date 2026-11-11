@@ -2,6 +2,7 @@ import logging
 from typing import Any
 import httpx
 from app.core.config import get_settings
+from app.connectors.telegram.text import plain_text
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +33,17 @@ class TelegramConnector:
         chat_id: int,
         text: str,
         reply_markup: dict[str, Any] | None = None,
-        parse_mode: str = "Markdown",
+        parse_mode: str = "",
     ) -> bool:
         """Gửi tin nhắn văn bản về cho người dùng."""
         if not self.bot_token:
             logger.info(f"[Mock Telegram] To {chat_id}: {text}")
             return True
 
+        # Old callers may pass parse_mode; intentionally omit it from the Telegram payload.
         payload: dict[str, Any] = {
             "chat_id": chat_id,
-            "text": text,
-            "parse_mode": parse_mode,
+            "text": plain_text(text),
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup

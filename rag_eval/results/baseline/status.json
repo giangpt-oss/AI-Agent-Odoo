@@ -1,0 +1,4 @@
+{
+  "offline_unit_suite": {"status": "PASS", "passed": 216, "seconds": 14.69, "embedding": "deterministic test double"},
+  "enterprise_quality_baseline": {"status": "BLOCKED", "reason": "Legacy runner reads the default corpus and sends excerpts to Gemini. Corpus egress and independent golden labels are unverified. Its generated answers use a separate generation path and token overlap is not answer correctness."}
+}

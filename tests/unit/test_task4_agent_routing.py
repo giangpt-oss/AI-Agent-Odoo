@@ -79,7 +79,7 @@ def test_calendar_create_not_intercepted_by_view(agent_client):
     assert resp.status_code == 200
     msg = resp.json()["messages"][0]
     assert "Bản xem trước tạo sự kiện Lịch Google" in msg
-    assert "/confirm" in msg
+    assert 'Mã tham chiếu: c_' in msg and '/confirm' not in msg
     assert "Họp giao ban đầu tuần" in msg
     assert "Lịch Google (7 ngày tới" not in msg
 
@@ -101,7 +101,7 @@ def test_calendar_update_returns_preview(agent_client):
     assert resp.status_code == 200
     msg = resp.json()["messages"][0]
     assert "Bản xem trước cập nhật sự kiện Lịch Google" in msg
-    assert "/confirm" in msg
+    assert 'Mã tham chiếu: c_' in msg and '/confirm' not in msg
     assert "evt_999" in msg
 
 
@@ -122,7 +122,7 @@ def test_gmail_send_not_intercepted_by_keyword_reading(agent_client):
     assert resp.status_code == 200
     msg = resp.json()["messages"][0]
     assert "Bản xem trước gửi thư Gmail" in msg
-    assert "/confirm" in msg
+    assert 'Mã tham chiếu: c_' in msg and '/confirm' not in msg
     assert "Thư Gmail chưa đọc" not in msg
     assert "Lịch Google" not in msg
 
@@ -146,7 +146,7 @@ def test_calendar_update_confirmation_execution(agent_client):
     )
     assert resp_preview.status_code == 200
     msg = resp_preview.json()["messages"][0]
-    match = re.search(r"/confirm\s+([a-zA-Z0-9_\-]+)", msg)
+    match = re.search(r"\b(c_[a-f0-9]+)\b", msg)
     assert match is not None
     conf_id = match.group(1)
 

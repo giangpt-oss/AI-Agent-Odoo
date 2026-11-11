@@ -1,0 +1,35 @@
+# QUY CHẾ VÀ NỘI QUY CÔNG TY CÔNG NGHỆ HOPITA
+Phiên bản: 2026.1 - Hiệu lực: Từ ngày 01/01/2026
+
+## 1. Thời gian làm việc và Chế độ chấm công
+- Giờ làm việc tiêu chuẩn: Từ 08:30 đến 17:30 (Thứ Hai đến Thứ Sáu). Nghỉ trưa từ 12:00 đến 13:30.
+- Ngày làm việc trong tuần: Từ Thứ Hai đến hết Thứ Sáu. Thứ Bảy và Chủ Nhật nghỉ cố định.
+- Chế độ làm việc từ xa (Work From Home - WFH):
+  + Mỗi nhân viên chính thức được quyền đăng ký làm việc từ xa tối đa 02 ngày/tuần sau khi hoàn thành thời gian thử việc.
+  + Đăng ký WFH cần gửi cho Trưởng bộ phận trước 17:00 ngày làm việc liền kề trước đó qua cổng hệ thống nội bộ.
+
+## 2. Chính sách Nghỉ phép và Chế độ đãi ngộ
+- Nghỉ phép năm:
+  + Mỗi nhân viên chính thức có 12 ngày phép năm hưởng nguyên lương/năm tài chính.
+  + Thâm niên công tác: Cứ mỗi 03 năm làm việc liên tục tại công ty được cộng thêm 01 ngày phép năm.
+  + Phép năm chưa sử dụng hết trong năm sẽ được chuyển tiếp sang quý 1 của năm tiếp theo (hạn chót sử dụng là 31/03).
+- Nghỉ ốm đau và chế độ bảo hiểm:
+  + Nhân viên nghỉ ốm dưới 03 ngày cần thông báo Trưởng bộ phận và có đơn thuốc hợp lệ.
+  + Nghỉ từ 03 ngày trở lên cần có giấy xác nhận nghỉ việc hưởng bảo hiểm xã hội (mẫu C65-HD) do cơ sở y tế cấp.
+- Trợ cấp ăn trưa và gửi xe:
+  + Trợ cấp ăn trưa: 730.000 VNĐ/tháng được chi trả cùng kỳ lương hàng tháng.
+  + Công ty miễn phí 100% chi phí gửi xe máy tại tòa nhà văn phòng cho toàn bộ nhân viên.
+
+## 3. Chính sách Thiết bị làm việc và Bảo mật thông tin
+- Thiết bị công nghệ:
+  + Nhân viên kỹ thuật và phát triển sản phẩm được cấp 01 máy tính xách tay (MacBook Pro hoặc ThinkPad) theo cấu hình tiêu chuẩn của bộ phận IT.
+  + Thiết bị được khấu hao trong 03 năm. Sau 03 năm nhân viên có quyền mua lại với mức giá ưu đãi 10% giá trị ban đầu.
+- Bảo mật thông tin:
+  + Mọi mã nguồn, tài liệu dự án và thông tin khách hàng tuyệt đối không được tải lên các dịch vụ đám mây cá nhân chưa được phê duyệt.
+  + Truy cập hệ thống máy chủ nội bộ bắt buộc phải thông qua VPN công ty và bật xác thực 2 yếu tố (2FA).
+
+## 4. Quy trình thanh toán công tác phí và Hoàn ứng
+- Hạn nộp hóa đơn, chứng từ hoàn ứng là ngày 25 hàng tháng.
+- Mọi chi phí từ 200.000 VNĐ trở lên bắt buộc phải có hóa đơn điện tử VAT xuất theo thông tin mã số thuế của Công ty Hopita.
+- Thời gian phòng Tài chính - Kế toán chi trả hoàn ứng: Vào ngày 05 và ngày 20 hàng tháng qua tài khoản ngân hàng của nhân viên.
+
