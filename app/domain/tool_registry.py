@@ -89,6 +89,8 @@ class ToolRegistry:
             lines.append("• 📊 Báo cáo Odoo: doanh thu, doanh số, tồn kho hiện tại, công việc Project; tự chọn Word hoặc Excel theo mục đích.")
         if self.get_tool("sales.quotation.draft"):
             lines.append("• 🧾 Báo giá: thu thập thông tin, chốt giá/thuế và xác nhận tạo báo giá nháp.")
+        if self.get_tool("knowledge.query"):
+            lines.append("• 📚 Kho Tri Thức (RAG): Tra cứu quy chế, sổ tay, chính sách và tài liệu nội bộ đã lập chỉ mục.")
 
         lines.extend([
             "",
@@ -477,6 +479,62 @@ def build_default_tool_registry() -> ToolRegistry:
                     "limit": {"type": "integer", "description": "Số lượng nhân viên tối đa (mặc định 10)"},
                 },
             },
+        )
+    )
+
+    # 7. Kho Tri Thức (RAG - Knowledge Base)
+    registry.register(
+        ToolDefinition(
+            name="knowledge.query",
+            category="knowledge",
+            action_type="read",
+            required_permission=GatewayPermission.KNOWLEDGE_READ,
+            description="Tra cứu câu hỏi, chính sách, quy chế, sổ tay hoặc tài liệu doanh nghiệp từ Kho Tri Thức (RAG)",
+            parameter_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string", "description": "Câu hỏi hoặc nội dung cần tra cứu trong kho tri thức"},
+                    "top_k": {"type": "integer", "description": "Số lượng đoạn trích tối đa (mặc định 5)"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="knowledge.documents.list",
+            category="knowledge",
+            action_type="read",
+            required_permission=GatewayPermission.KNOWLEDGE_READ,
+            description="Xem danh sách các tài liệu, hồ sơ đã được nạp/lập chỉ mục trong Kho Tri Thức (RAG)",
+            parameter_schema={"type": "object", "properties": {}},
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="knowledge.documents.index",
+            category="knowledge",
+            action_type="write",
+            required_permission=GatewayPermission.KNOWLEDGE_WRITE,
+            description="Lập chỉ mục (index) các file tài liệu (.pdf, .docx, .xlsx, .txt, .csv) vào Kho Tri Thức RAG",
+            parameter_schema={
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "Danh sách đường dẫn file hoặc thư mục cần index"},
+                },
+            },
+        )
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="knowledge.documents.status",
+            category="knowledge",
+            action_type="read",
+            required_permission=GatewayPermission.KNOWLEDGE_WRITE,
+            description="Xem trạng thái tác vụ lập chỉ mục của bạn",
+            parameter_schema={"type": "object", "required": ["job_id"],
+                              "properties": {"job_id": {"type": "string"}}},
         )
     )
 

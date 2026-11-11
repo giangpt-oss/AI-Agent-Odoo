@@ -472,7 +472,7 @@ class ConversationHistoryStore:
         chat_id: int,
         binding_id: Optional[str],
         database: Optional[str] = None,
-        lease_seconds: float = 18.0,
+        lease_seconds: float = 30.0,
     ) -> Optional[str]:
         """Thử lấy lease cho phiên hội thoại để tuần tự hóa các turn cùng session.
         Trả về lease_token nếu thành công, None nếu session đang bị chiếm giữ."""

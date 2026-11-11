@@ -329,10 +329,13 @@ async def handle_telegram_turn(
     request: Request,
 ):
     turn_start_time = time.time()
-    turn_budget = 18.0
-    turn_deadline = turn_start_time + 18.0
+    cache_scope = None
+    knowledge_turn = False
+    turn_budget = 30.0
+    turn_deadline = turn_start_time + 30.0
 
     async def _run_entire_turn() -> list[str]:
+        nonlocal cache_scope, knowledge_turn
         nonlocal turn_budget, turn_deadline
         payload_hash = hashlib.sha256(req.text.encode("utf-8")).hexdigest()
 
@@ -382,6 +385,7 @@ async def handle_telegram_turn(
             user_info["telegram_binding_id"] = req.telegram_binding_id
 
         context = build_gateway_user_context(user_info)
+        cache_scope = json.dumps([context.tenant, context.database])
         verified_binding_id = context.telegram_binding_id
 
         if context.user_id != req.gateway_user_id:
@@ -445,6 +449,8 @@ async def handle_telegram_turn(
                 )
 
             if turn_record["status"] == "completed":
+                if turn_record.get("cache_scope") != cache_scope:
+                    return ["Kết quả cũ không còn xác minh được phạm vi truy cập. Vui lòng gửi yêu cầu mới."]
                 cached_msgs = json.loads(turn_record["messages_json"]) if turn_record.get("messages_json") else []
                 return cached_msgs
 
@@ -507,8 +513,13 @@ async def handle_telegram_turn(
 
         try:
             # 4. Phân tích ý định duy nhất (NaturalPipeline: fast-path hoặc tối đa 1 LLM call)
+            if "knowledge.query" in session_ctx.get("last_read", {}):
+                # Legacy answers were cached before the workspace policy was enforced.
+                session_ctx["last_read"].pop("knowledge.query")
+                session_ctx["history"] = []
             session_ctx['_turn_deadline'] = turn_deadline
             intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
+            knowledge_turn = (intent_res.tool_name or "").startswith("knowledge.")
 
             # 5. Thực thi trực tiếp qua UnifiedExecutor (không gọi parser phụ lần hai)
             from app.services.unified_executor import unified_executor
@@ -532,7 +543,7 @@ async def handle_telegram_turn(
                 clean_text,
                 database=context.database,
             )
-            if messages:
+            if messages and not (intent_res.tool_name or "").startswith("knowledge."):
                 conversation_history_store.append_turn(
                     context.tenant,
                     context.user_id,
@@ -557,7 +568,7 @@ async def handle_telegram_turn(
                 )
 
     try:
-        async with asyncio.timeout(18.0) as turn_timeout:
+        async with asyncio.timeout(30.0) as turn_timeout:
             messages = await _run_entire_turn()
     except HTTPException:
         raise
@@ -565,7 +576,7 @@ async def handle_telegram_turn(
         logger.warning("Turn processing timed out after %ss for request_id: %s", turn_budget, req.request_id)
         from app.services.error_handler import ErrorCode, format_error_message
         messages = [format_error_message(ErrorCode.TURN_TIMEOUT)]
-        if turn_budget > 18:
+        if turn_budget > 30:
             messages = ['Chưa nhận được kết quả đầy đủ của bước xử lý báo giá. Hãy hỏi trạng thái theo số báo giá; không gửi lại thao tác để tránh thực hiện trùng.']
     except Exception as e:
         logger.error("Error in turn execution: %s", e, exc_info=True)
@@ -575,7 +586,8 @@ async def handle_telegram_turn(
             err_msg = f"{err_msg}\n(Mã yêu cầu: {req.request_id})"
         messages = [err_msg]
 
-    turn_ledger.record_turn_completed(req.request_id, messages)
+    cached_messages = ["Yêu cầu kho tri thức đã được xử lý. Hãy gửi câu hỏi mới để tra cứu theo quyền hiện tại."] if knowledge_turn else messages
+    turn_ledger.record_turn_completed(req.request_id, cached_messages, cache_scope)
     return TelegramTurnResponse(
         request_id=req.request_id,
         messages=messages,

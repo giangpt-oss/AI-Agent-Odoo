@@ -1,0 +1,54 @@
+{
+  "test_a": {
+    "test": "Test A: Context Removal",
+    "question": "Thời gian nghỉ trưa và số ngày làm việc từ xa tối đa tại Công ty Hopita là bao nhiêu?",
+    "answer_with_context": "Dựa vào tài liệu, thông tin tại Công ty Hopita như sau:\n- Thời gian nghỉ trưa: Từ 12:00 đến 13:30.\n- Số ngày làm việc từ xa tối đa: Tối đa 02 ngày/tuần (sau thời gian thử việc).",
+    "answer_without_context": "INSUFFICIENT_EVIDENCE",
+    "passed": true,
+    "finding": "LLM tuân thủ chỉ dẫn: trả lời chính xác khi có context và từ chối (INSUFFICIENT_EVIDENCE) khi thiếu context."
+  },
+  "test_b": {
+    "test": "Test B: Controlled Knowledge",
+    "question": "Ngân sách và chủ nhiệm của dự án bí mật Xylon-99 là ai và bao nhiêu tiền?",
+    "retrieved_score": 0.8809554039724764,
+    "generated_answer": "Dự án bí mật Xylon-99 có thông tin về ngân sách và chủ nhiệm như sau:\n- **Chủ nhiệm dự án:** Tiến sĩ Elena Hoàng (mã nhân viên HP-9901) [Nguồn [1]].\n- **Ngân sách:** 47.85 tỷ VNĐ [Nguồn [1]].\n\n[Nguồn [1]]",
+    "passed": true,
+    "finding": "RAG pipeline trích xuất chính xác thông tin giả định kiểm soát, chứng minh câu trả lời sinh ra từ retrieval chứ không phải từ tri thức nền của LLM."
+  },
+  "test_c": {
+    "test": "Test C: Irrelevant Context",
+    "question": "Hạn chót nộp hóa đơn hoàn ứng công tác phí là ngày mấy hàng tháng?",
+    "context_supplied": "Nguồn [1]: Cong_thuc_nau_pho.txt\nĐể nấu nước dùng phở bò thơm ngon, cần ninh xương ống bò trong 8 tiếng cùng với quế, hồi, thảo quả nướng.\nThêm gừng nướng đập dập và hành tây để nước dùng trong và ngọt tự nhiên.",
+    "generated_answer": "INSUFFICIENT_EVIDENCE",
+    "passed": true,
+    "finding": "LLM kháng ảo giác (anti-hallucination) thành công khi context hoàn toàn không liên quan, trả về INSUFFICIENT_EVIDENCE."
+  },
+  "test_d": {
+    "test": "Test D: Conflicting Documents",
+    "question": "Chính sách mới nhất hiện nay cho phép nhân viên WFH tối đa mấy ngày một tuần?",
+    "retrieved_items": [
+      {
+        "id": "chk_wfh_v2",
+        "score": 0.9204269479046742,
+        "doc": "Chính sách WFH 2026 (v2.0 - Mới nhất): Mỗi nhân viên được làm việc từ xa tối đa 03 ngày/tuần."
+      },
+      {
+        "id": "chk_wfh_v1",
+        "score": 0.9004855270432015,
+        "doc": "Chính sách WFH 2024 (v1.0): Mỗi nhân viên chỉ được làm việc từ xa tối đa 01 ngày/tuần."
+      }
+    ],
+    "generated_answer": "Dựa trên tài liệu mới nhất (v2.0 - năm 2026), chính sách mới nhất cho phép nhân viên làm việc từ xa (WFH) tối đa **03 ngày/tuần**.\n\n*(Nguồn: Nguồn [1] - Chính sách WFH 2026 v2.0)*",
+    "passed": true,
+    "finding": "Khi context có cả 2 bản, LLM nhận diện đúng bản mới nhất 2026 (03 ngày) nhờ system prompt. Tuy nhiên, hệ thống retrieval hiện tại KHÔNG có cơ chế lọc hay boost freshness ở tầng vector store."
+  },
+  "test_e": {
+    "test": "Test E: Missing Knowledge (Abstention)",
+    "question": "Chính sách nghỉ thai sản của công ty Hopita chi trả bao nhiêu tháng lương và chế độ quà tặng thế nào?",
+    "retrieved_results_count": 1,
+    "best_score": 0.8618577724897893,
+    "generated_answer": "INSUFFICIENT_EVIDENCE",
+    "passed": true,
+    "finding": "RAG pipeline từ chối trả lời chính xác (INSUFFICIENT_EVIDENCE) khi kho tri thức không có thông tin."
+  }
+}

@@ -1,10 +1,14 @@
 from dataclasses import dataclass, field
+import hashlib
+import json
 from typing import Any, Optional, Set
 from app.domain.task_identity import build_owner_key
 
 
 class GatewayPermission:
     """Các quyền nghiệp vụ được Gateway xác minh và ánh xạ."""
+    KNOWLEDGE_READ = "knowledge.read"
+    KNOWLEDGE_WRITE = "knowledge.write"
     TASKS_READ = "tasks.read"
     TASKS_WRITE = "tasks.write"
     CALENDAR_READ = "calendar.read"
@@ -50,6 +54,13 @@ class GatewayUserContext:
 
     def has_permission(self, permission: str) -> bool:
         return permission in self.permissions
+
+    @property
+    def knowledge_workspace(self) -> str:
+        if not self.owner_key or not self.telegram_binding_id or self.user_id <= 0:
+            return ""
+        identity = json.dumps([self.tenant, self.database], ensure_ascii=False).encode("utf-8")
+        return "kb_" + hashlib.sha256(identity).hexdigest()
 
     @property
     def display_job_title(self) -> str:

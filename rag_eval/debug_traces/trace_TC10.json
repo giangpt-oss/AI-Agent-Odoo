@@ -1,0 +1,37 @@
+{
+  "id": "TC10",
+  "question": "Quy định về thời hạn nghỉ phép của công ty như thế nào?",
+  "type": "ambiguous",
+  "answerable": true,
+  "expected_answer": "Nhân viên chính thức có 12 ngày phép năm hưởng nguyên lương. Cứ mỗi 3 năm thâm niên được cộng thêm 1 ngày. Phép tồn được chuyển tiếp sang quý 1 năm sau với hạn dùng chót là 31/03.",
+  "generated_answer": "Dựa trên tài liệu của công ty, quy định về thời hạn liên quan đến nghỉ phép năm như sau:\n- Phép năm chưa sử dụng hết trong năm sẽ được chuyển tiếp sang quý 1 của năm tiếp theo với hạn chót sử dụng là ngày 31/03 [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+  "retrieval": {
+    "retrieved_chunk_ids": [
+      "chk_0f021391"
+    ],
+    "hit_at_1": 1.0,
+    "hit_at_3": 1.0,
+    "mrr_at_3": 1.0,
+    "latency_sec": 0.351
+  },
+  "generation": {
+    "abstention": {
+      "is_refusal": false,
+      "expected_refusal": false,
+      "abstention_correct": true,
+      "status": "CORRECT_ANSWER"
+    },
+    "citation": {
+      "has_citation": true,
+      "citation_count": 1,
+      "valid_citations": 1,
+      "citation_accuracy": 1.0,
+      "citations_found": [
+        "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+      ]
+    },
+    "correctness_score": 0.33,
+    "latency_sec": 1.008
+  },
+  "e2e_latency_sec": 1.359
+}

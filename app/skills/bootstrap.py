@@ -148,22 +148,7 @@ def build_default_registry() -> SkillRegistry:
     except Exception as e:
         logger.error(f"Lỗi đăng ký Meeting/Note skills: {e}")
 
-    # 9. Knowledge Skills
-    try:
-        from app.skills.knowledge.knowledge_skills import (
-            KnowledgeIndexSkill,
-            SemanticSearchSkill,
-            KnowledgeAnswerSkill,
-            KnowledgeRemoveSkill,
-            KnowledgeListSourcesSkill
-        )
-        registry.register(KnowledgeIndexSkill())
-        registry.register(SemanticSearchSkill())
-        registry.register(KnowledgeAnswerSkill())
-        registry.register(KnowledgeRemoveSkill())
-        registry.register(KnowledgeListSourcesSkill())
-    except Exception as e:
-        logger.error(f"Lỗi đăng ký Knowledge skills: {e}")
+    # Knowledge tools are exposed through the authenticated Gateway executor.
 
     # 10. Memory Skills
     try:

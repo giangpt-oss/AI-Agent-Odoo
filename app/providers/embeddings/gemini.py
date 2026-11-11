@@ -1,9 +1,9 @@
 import os
-import asyncio
 from typing import List
 from google import genai
 from google.genai import types
 from app.providers.embeddings.base import EmbeddingProvider
+from app.providers.gemini_retry import call_gemini, GeminiRequestError
 
 class GeminiEmbeddingProvider(EmbeddingProvider):
     def __init__(self, model: str = "gemini-embedding-001", api_key: str = None):
@@ -14,10 +14,13 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
     @property
     def client(self):
         if self._client is None:
-            key = self._api_key or os.getenv("GEMINI_API_KEY")
+            from app.core.config import get_settings
+            settings = get_settings()
+            key = self._api_key or getattr(settings, "GEMINI_API_KEY", None) or os.getenv("GEMINI_API_KEY")
             if not key:
-                raise ValueError("GEMINI_API_KEY is missing.")
-            self._client = genai.Client(api_key=key)
+                raise GeminiRequestError("configuration")
+            self._client = genai.Client(api_key=key, http_options=types.HttpOptions(
+                timeout=8000, retry_options=types.HttpRetryOptions(attempts=1)))
         return self._client
         
     @property
@@ -37,7 +40,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             )
             return result.embeddings[0].values
             
-        return await asyncio.to_thread(_sync_embed)
+        return await call_gemini("embedding", _sync_embed)
         
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         def _sync_embed():
@@ -48,6 +51,6 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             )
             return [e.values for e in result.embeddings]
             
-        return await asyncio.to_thread(_sync_embed)
+        return await call_gemini("embedding", _sync_embed)
 
 default_embedding_provider = GeminiEmbeddingProvider()

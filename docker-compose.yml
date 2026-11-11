@@ -26,6 +26,7 @@ services:
         condition: service_healthy
     volumes:
       - agent_sqlite_data:/app/data
+      - ./knowledge_docs:/app/knowledge_docs:ro
     networks:
       - agent_net
       - gateway_net

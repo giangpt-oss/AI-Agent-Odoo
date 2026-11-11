@@ -1,0 +1,35 @@
+{
+  "id": "TC01",
+  "question": "Giờ làm việc tiêu chuẩn của công ty Hopita là từ mấy giờ đến mấy giờ?",
+  "type": "factual",
+  "answerable": true,
+  "expected_answer": "Giờ làm việc tiêu chuẩn của công ty Hopita là từ 08:30 đến 17:30 (Thứ Hai đến Thứ Sáu), nghỉ trưa từ 12:00 đến 13:30.",
+  "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 50.592140748s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3.5-flash-lite'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '50s'}]}}",
+  "retrieval": {
+    "retrieved_chunk_ids": [
+      "chk_0f021391"
+    ],
+    "hit_at_1": 1.0,
+    "hit_at_3": 1.0,
+    "mrr_at_3": 1.0,
+    "latency_sec": 2.158
+  },
+  "generation": {
+    "abstention": {
+      "is_refusal": false,
+      "expected_refusal": false,
+      "abstention_correct": true,
+      "status": "CORRECT_ANSWER"
+    },
+    "citation": {
+      "has_citation": false,
+      "citation_count": 0,
+      "valid_citations": 0,
+      "citation_accuracy": 0.0,
+      "citations_found": []
+    },
+    "correctness_score": 0.0,
+    "latency_sec": 0.345
+  },
+  "e2e_latency_sec": 4.515
+}

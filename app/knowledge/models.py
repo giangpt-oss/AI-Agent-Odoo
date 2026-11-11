@@ -51,7 +51,7 @@ class KnowledgeChunk(BaseModel):
 class IndexingJob(BaseModel):
     job_id: str = Field(default_factory=lambda: f"job_{uuid.uuid4().hex[:8]}")
     type: str = "INDEX"
-    status: str = "PENDING"  # PENDING, RUNNING, COMPLETED, FAILED, CANCELLED
+    status: str = "PENDING"  # PENDING, RUNNING, COMPLETED, PARTIAL, FAILED, CANCELLED
     progress: int = 0
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     finished_at: Optional[str] = None

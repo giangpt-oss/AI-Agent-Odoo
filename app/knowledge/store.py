@@ -1,9 +1,17 @@
 import sqlite3
 import json
-from typing import List, Dict, Any, Optional
-from pathlib import Path
+import re
+import unicodedata
+from typing import List, Dict, Optional
 from app.services.file_service import file_service
-from app.knowledge.models import KnowledgeSource, IndexingJob
+from app.knowledge.models import KnowledgeSource, KnowledgeChunk, IndexingJob
+
+
+def sparse_terms(text: str) -> list[str]:
+    folded = unicodedata.normalize("NFKD", text.casefold().replace("đ", "d"))
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    identifiers = re.findall(r"\b\w+(?:[-./_]\w+)+\b", folded)
+    return re.findall(r"[^\W_]+", folded) + ["id" + value.encode().hex() for value in identifiers]
 
 class KnowledgeMetadataStore:
     def __init__(self):
@@ -43,11 +51,14 @@ class KnowledgeMetadataStore:
                 )
             """)
             job_cols = {r[1] for r in conn.execute("PRAGMA table_info(indexing_jobs)")}
+            conn.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+                chunk_id UNINDEXED, source_id UNINDEXED, document UNINDEXED,
+                metadata UNINDEXED, terms, tokenize='unicode61')""")
             if "payload" not in job_cols:
                 conn.execute("ALTER TABLE indexing_jobs ADD COLUMN payload TEXT")
             conn.commit()
 
-    def upsert_source(self, source: KnowledgeSource) -> None:
+    def upsert_source(self, source: KnowledgeSource, chunks: list[KnowledgeChunk] | None = None) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO sources 
@@ -58,7 +69,25 @@ class KnowledgeMetadataStore:
                 source.workspace_id, source.owner_id, source.mime_type, source.created_at, 
                 source.updated_at, source.indexed_at, source.version, source.state, source.hash
             ))
-            conn.commit()
+            if chunks is not None:
+                conn.execute("DELETE FROM knowledge_fts WHERE source_id = ?", (source.source_id,))
+                conn.executemany("INSERT INTO knowledge_fts VALUES (?, ?, ?, ?, ?)", [
+                    (chunk.chunk_id, source.source_id, chunk.text,
+                     json.dumps(chunk.model_dump(include={"source_id", "page", "section", "sheet", "slide"})),
+                     " ".join(sparse_terms(chunk.text))) for chunk in chunks
+                ])
+
+    def search_sparse(self, workspace_id: str, query: str, limit: int) -> list[dict]:
+        terms = list(dict.fromkeys(sparse_terms(query)))[:64]
+        if not terms or not workspace_id or workspace_id.strip().lower() in {"", "*", "all", "default", "global"}:
+            return []
+        expression = " OR ".join(f'"{term}"' for term in terms)
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute("""SELECT chunk_id, document, metadata, bm25(knowledge_fts)
+                FROM knowledge_fts JOIN sources USING (source_id)
+                WHERE knowledge_fts MATCH ? AND sources.workspace_id = ? AND sources.state = 'INDEXED'
+                ORDER BY bm25(knowledge_fts), chunk_id LIMIT ?""", (expression, workspace_id, limit)).fetchall()
+        return [{"chunk_id": row[0], "document": row[1], "metadata": json.loads(row[2]), "bm25": row[3]} for row in rows]
 
     def get_source_by_path(self, path: str, workspace_id: str) -> Optional[KnowledgeSource]:
         with sqlite3.connect(self.db_path) as conn:
@@ -106,10 +135,13 @@ class KnowledgeMetadataStore:
 
     def delete_source(self, source_id: str) -> None:
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM knowledge_fts WHERE source_id = ?", (source_id,))
             conn.execute("DELETE FROM sources WHERE source_id = ?", (source_id,))
             conn.commit()
 
-    def list_sources(self, workspace_id: str) -> List[KnowledgeSource]:
+    def list_sources(self, workspace_id: Optional[str] = None) -> List[KnowledgeSource]:
+        if not workspace_id or workspace_id.strip().lower() in {"", "*", "all", "default", "global"}:
+            return []
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("SELECT * FROM sources WHERE workspace_id = ?", (workspace_id,))
             rows = cursor.fetchall()

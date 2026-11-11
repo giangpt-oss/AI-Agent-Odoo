@@ -1,0 +1,368 @@
+{
+  "summary": {
+    "A_semantic_only": {
+      "hit_rate_at_1": 1.0,
+      "hit_rate_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "total_queries_evaluated": 16
+    },
+    "B_bm25_only": {
+      "hit_rate_at_1": 1.0,
+      "hit_rate_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "total_queries_evaluated": 16
+    },
+    "C_current_hybrid": {
+      "hit_rate_at_1": 1.0,
+      "hit_rate_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "total_queries_evaluated": 16
+    },
+    "D_rrf_true_hybrid": {
+      "hit_rate_at_1": 1.0,
+      "hit_rate_at_3": 1.0,
+      "mrr_at_3": 1.0,
+      "total_queries_evaluated": 16
+    }
+  },
+  "bonus_triggered_count": 1,
+  "total_test_cases": 16,
+  "traces": [
+    {
+      "test_case_id": "TC01",
+      "question": "Giờ làm việc tiêu chuẩn của công ty Hopita là từ mấy giờ đến mấy giờ?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC02",
+      "question": "Trợ cấp ăn trưa hàng tháng cho nhân viên là bao nhiêu?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC03",
+      "question": "Hạn chót nộp hóa đơn, chứng từ hoàn ứng công tác phí là ngày nào trong tháng?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC04",
+      "question": "Tôi muốn ở nhà làm online thì cần gửi đăng ký cho ai và trước mấy giờ?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC05",
+      "question": "Chính sách cấp phát laptop cho đội ngũ lập trình viên và kỹ thuật như thế nào?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC06",
+      "question": "Bao giờ thì kế toán bắn tiền hoàn ứng công tác cho nhân viên?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC07",
+      "question": "mẫu C65-HD áp dụng khi nào?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC08",
+      "question": "200.000 VNĐ",
+      "bonus_triggered_in_c": true,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC09",
+      "question": "Nếu một nhân viên đã làm việc 6 năm liên tục tại Hopita thì có tổng cộng bao nhiêu ngày phép năm và phép tồn năm trước được dùng đến khi nào?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC10",
+      "question": "Quy định về thời hạn nghỉ phép của công ty như thế nào?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC15",
+      "question": "tro cap an trua hang thang cua nhan vien la bao nhieu?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC16",
+      "question": "gio lam viec bat dau tu may gio va thu bay co phai lam khong",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC17",
+      "question": "han chot nop hoa don hoan ung cong tac phi la ngay bao nhieu",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC18",
+      "question": "Nhân viên nghỉ ốm dưới 3 ngày có cần giấy bảo hiểm xã hội không và cần giấy tờ gì?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    },
+    {
+      "test_case_id": "TC19",
+      "question": "Sau khi hết thời gian khấu hao laptop 3 năm, nhân viên có được giữ máy không hay phải mua lại và giá bao nhiêu?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5f9e2eed",
+        "chk_5dc86444"
+      ]
+    },
+    {
+      "test_case_id": "TC20",
+      "question": "Quy định bảo mật khi truy cập vào hệ thống máy chủ nội bộ của công ty yêu cầu những điều kiện gì?",
+      "bonus_triggered_in_c": false,
+      "res_a": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ],
+      "res_b": [
+        "chk_0f021391"
+      ],
+      "res_c": [
+        "chk_0f021391"
+      ],
+      "res_d": [
+        "chk_0f021391",
+        "chk_5dc86444",
+        "chk_5f9e2eed"
+      ]
+    }
+  ]
+}

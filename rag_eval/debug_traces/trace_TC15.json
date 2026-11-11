@@ -1,0 +1,37 @@
+{
+  "id": "TC15",
+  "question": "tro cap an trua hang thang cua nhan vien la bao nhieu?",
+  "type": "vietnamese_no_accent",
+  "answerable": true,
+  "expected_answer": "Trợ cấp ăn trưa là 730.000 VNĐ/tháng được chi trả cùng kỳ lương hàng tháng.",
+  "generated_answer": "Trợ cấp ăn trưa của nhân viên là 730.000 VNĐ/tháng [Nguồn [1]: Quy_che_cong_ty_Hopita.txt].",
+  "retrieval": {
+    "retrieved_chunk_ids": [
+      "chk_0f021391"
+    ],
+    "hit_at_1": 1.0,
+    "hit_at_3": 1.0,
+    "mrr_at_3": 1.0,
+    "latency_sec": 0.392
+  },
+  "generation": {
+    "abstention": {
+      "is_refusal": false,
+      "expected_refusal": false,
+      "abstention_correct": true,
+      "status": "CORRECT_ANSWER"
+    },
+    "citation": {
+      "has_citation": true,
+      "citation_count": 1,
+      "valid_citations": 1,
+      "citation_accuracy": 1.0,
+      "citations_found": [
+        "[Nguồn [1]: Quy_che_cong_ty_Hopita.txt]"
+      ]
+    },
+    "correctness_score": 0.33,
+    "latency_sec": 0.724
+  },
+  "e2e_latency_sec": 3.119
+}

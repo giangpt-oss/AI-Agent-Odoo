@@ -1,6 +1,4 @@
-import os
 import json
-from pathlib import Path
 from typing import List, Dict, Any
 import chromadb
 from chromadb.config import Settings
@@ -32,10 +30,10 @@ class ChromaVectorStore(VectorStore):
                 "source_id": chunk.source_id,
                 "position": chunk.position
             }
-            if chunk.page: meta["page"] = chunk.page
-            if chunk.section: meta["section"] = chunk.section
-            if chunk.sheet: meta["sheet"] = chunk.sheet
-            if chunk.slide: meta["slide"] = chunk.slide
+            for field in ("page", "section", "sheet", "slide"):
+                value = getattr(chunk, field)
+                if value:
+                    meta[field] = value
             
             # Pack nested dicts as JSON string
             if chunk.metadata:
@@ -78,6 +76,7 @@ class ChromaVectorStore(VectorStore):
                 "chunk_id": chunk_id,
                 "document": document,
                 "metadata": metadata,
+                "distance": distance,
                 "score": score
             })
         return out

@@ -38,7 +38,10 @@ class NaturalPipeline:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
         if getattr(get_settings(), 'ENABLE_QUOTATION_APPROVAL_FLOW', False):
-            from app.business.operations import interpret_quotation_flow
+            from app.business.operations import interpret_quotation_flow, needs_customer_acceptance_clarification
+            if needs_customer_acceptance_clarification(clean_text):
+                return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                    clarification_prompt='Khách hàng đã thực sự chấp thuận báo giá chưa? Tôi cần xác định rõ trước khi chuẩn bị chuyển thành đơn bán; chưa thực hiện thay đổi trên Odoo.')
             flow = interpret_quotation_flow(clean_text)
             if flow:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.quotation_flow', parameters=flow)
@@ -101,6 +104,34 @@ class NaturalPipeline:
             if base_cmd == "/workspace":
                 from app.workspace.agent import parse_command
                 return parse_command(clean_text)
+
+            if base_cmd in {"/knowledge", "/rag"}:
+                sub_cmd = tokens[1].lower() if len(tokens) > 1 else "list"
+                if sub_cmd == "list":
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.READ,
+                        tool_name="knowledge.documents.list",
+                    )
+                if sub_cmd == "status":
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.READ,
+                        tool_name="knowledge.documents.status",
+                        parameters={"job_id": tokens[2].strip()} if len(tokens) > 2 else {},
+                    )
+                if sub_cmd in {"index", "load"}:
+                    paths_arg = tokens[2].strip() if len(tokens) > 2 else ""
+                    paths_list = [p.strip() for p in paths_arg.split(",") if p.strip()] if paths_arg else []
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.PREPARE_WRITE,
+                        tool_name="knowledge.documents.index",
+                        parameters={"paths": paths_list} if paths_list else {},
+                    )
+                q = clean_text[len(tokens[0]):].strip()
+                return IntentAnalysisResult(
+                    intent_type=IntentType.READ,
+                    tool_name="knowledge.query",
+                    parameters={"query": q},
+                )
 
             if base_cmd == "/today":
                 return IntentAnalysisResult(
@@ -241,6 +272,25 @@ class NaturalPipeline:
                     intent_type=IntentType.REPLY,
                     reply_text=self.registry.generate_capability_overview(list(context.permissions)),
                 )
+
+        # Fast-path: Thao tác kho tri thức trực tiếp (0 LLM call)
+        if lower in {
+            "danh sách tài liệu", "xem danh sách tài liệu", "kho tri thức",
+            "danh mục tài liệu", "danh sách tài liệu kho tri thức", "xem kho tri thức"
+        }:
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="knowledge.documents.list",
+            )
+        if lower in {
+            "lập chỉ mục", "lập chỉ mục tài liệu", "nạp tài liệu",
+            "nạp tài liệu vào kho tri thức", "cập nhật tài liệu", "quét tài liệu"
+        }:
+            return IntentAnalysisResult(
+                intent_type=IntentType.PREPARE_WRITE,
+                tool_name="knowledge.documents.index",
+                parameters={},
+            )
 
         # 2. Fast-path: Lời chào THUẦN TÚY (Chỉ áp dụng khi TOÀN CÂU là lời chào/menu, không kèm nội dung khác)
         text_nopunct = re.sub(r"[^\w\s]", "", lower).strip()
@@ -579,7 +629,7 @@ class NaturalPipeline:
             from google import genai
             from google.genai import types
 
-            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=11000, retry_options=types.HttpRetryOptions(attempts=1)))
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=28000, retry_options=types.HttpRetryOptions(attempts=1)))
             model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite"
             resp = client.models.generate_content(
                 model=model,
@@ -594,8 +644,8 @@ class NaturalPipeline:
             )
             return resp.text or ""
 
-        # HTTP giới hạn 11 giây; lớp async chặn thời gian chờ toàn lời gọi.
-        return await asyncio.wait_for(asyncio.to_thread(_sync_call), timeout=12.0 if response_schema else 9.0)
+        # HTTP giới hạn 28 giây; lớp async chặn thời gian chờ toàn lời gọi.
+        return await asyncio.wait_for(asyncio.to_thread(_sync_call), timeout=28.0 if response_schema else 20.0)
 
     async def _dispatch_with_llm(
         self,
@@ -683,6 +733,12 @@ class NaturalPipeline:
 
         except Exception as e:
             logger.error("LLM dispatch error: %s", e)
+            try:
+                offline_res = self._offline_semantic_dispatch(text, context, session_context)
+                if offline_res.intent_type != IntentType.REPLY or "Tôi đã nhận được tin nhắn:" not in (offline_res.reply_text or ""):
+                    return offline_res
+            except Exception:
+                pass
             from app.services.error_handler import classify_exception
             _, err_msg = classify_exception(e)
             return IntentAnalysisResult(
@@ -982,7 +1038,35 @@ class NaturalPipeline:
                 tool_name="gmail.messages.unread",
             )
 
-        # 6. Ngữ cảnh nối tiếp
+        # 6. Tra cứu hoặc quản lý Kho Tri Thức (RAG)
+        if any(w in lower for w in [
+            "danh sách tài liệu", "tài liệu trong kho", "kho tri thức", "danh mục tài liệu", "xem tài liệu", "có tài liệu gì"
+        ]) and not any(w in lower for w in ["chính sách", "quy chế", "quy định", "nội quy", "hỏi", "tra cứu"]):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="knowledge.documents.list",
+            )
+
+        if any(w in lower for w in [
+            "lập chỉ mục", "nạp tài liệu", "index tài liệu", "quét tài liệu", "cập nhật tài liệu"
+        ]):
+            return IntentAnalysisResult(
+                intent_type=IntentType.PREPARE_WRITE,
+                tool_name="knowledge.documents.index",
+                parameters={},
+            )
+
+        if any(w in lower for w in [
+            "quy chế", "quy định", "nội quy", "chính sách", "sổ tay nhân viên",
+            "sổ tay", "hướng dẫn nội bộ", "tài liệu nội bộ", "tra cứu kho tri thức", "tra cứu tài liệu"
+        ]) or (session_context and session_context.get("last_read", {}).get("knowledge.query") and any(w in lower for w in ["thế nào", "bao lâu", "ai", "ở đâu"])):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="knowledge.query",
+                parameters={"query": clean},
+            )
+
+        # 7. Ngữ cảnh nối tiếp
         if session_context and any(w in lower for w in ["vừa tạo", "vừa đọc", "vừa rồi", "đó là gì", "có hạn khi nào", "ở đâu"]):
             last_read = session_context.get("last_read") or session_context.get("last_read_data")
             if last_read:

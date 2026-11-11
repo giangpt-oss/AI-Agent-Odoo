@@ -21,6 +21,7 @@ import sqlite3
 from app.domain.gateway_context import GatewayPermission, GatewayUserContext
 from app.domain.intent_schema import IntentAnalysisResult, IntentType
 from app.domain.tool_registry import ToolRegistry, global_tool_registry
+from app.knowledge.models import IndexingJob
 from app.providers.gateway_calendar import GatewayCalendarProvider
 from app.providers.gateway_crm import GatewayCRMProvider
 from app.providers.gateway_gmail import GatewayGmailProvider
@@ -246,6 +247,9 @@ class UnifiedExecutor:
                 return format_result(service_name, result)
             except ValueError as exc:
                 return [f"⚠️ Yêu cầu Workspace chưa hợp lệ: {exc}"]
+
+        if tool_name in {"knowledge.query", "knowledge.documents.list", "knowledge.documents.status"}:
+            return await self._execute_knowledge_tool(tool_name, params, context, chat_id)
 
         if tool_name == "identity.whoami":
             from app.api.v1.internal import format_whoami
@@ -563,6 +567,182 @@ class UnifiedExecutor:
 
         return [f"⚠️ Chưa có handler triển khai cho công cụ đọc `{tool_name}`."]
 
+    async def _execute_knowledge_tool(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        context: GatewayUserContext,
+        chat_id: int,
+    ) -> list[str]:
+        import os
+        from pathlib import Path
+        from app.knowledge.rag import rag_service
+        from app.knowledge.store import metadata_store
+        from app.knowledge.indexing import indexing_service
+        from app.core.exceptions import SkillPermissionError
+        from app.services.file_service import file_service
+        from app.providers.gemini_retry import GeminiRequestError
+
+        workspace_id = context.knowledge_workspace
+        owner_id = str(context.user_id)
+        permission = GatewayPermission.KNOWLEDGE_WRITE if tool_name == "knowledge.documents.index" else GatewayPermission.KNOWLEDGE_READ
+        if not workspace_id or not context.has_permission(permission):
+            return ["Tài khoản chưa có quyền truy cập kho tri thức này."]
+
+        if tool_name == "knowledge.query":
+            query = (params.get("query") or params.get("q") or "").strip()
+            if not query:
+                return ["⚠️ Vui lòng cung cấp câu hỏi hoặc nội dung bạn cần tra cứu trong Kho Tri Thức."]
+
+            try:
+                answer, results = await rag_service.get_answer(query, workspace_id=workspace_id)
+            except GeminiRequestError as exc:
+                messages = {
+                    "rate_limit": "Dịch vụ AI đang giới hạn lượt gọi. Vui lòng thử lại sau.",
+                    "authentication": "Dịch vụ AI từ chối xác thực. Cần kiểm tra cấu hình kết nối.",
+                    "configuration": "Chưa cấu hình kết nối AI cho kho tri thức.",
+                    "timeout": "Dịch vụ AI chưa phản hồi trong thời gian cho phép.",
+                }
+                return [messages.get(exc.category, "Dịch vụ AI tạm thời chưa phản hồi.")]
+            except Exception as exc:
+                logger.error("Knowledge request failed category=%s", type(exc).__name__)
+                return ["Không thể tra cứu kho tri thức lúc này."]
+
+            if not answer or "INSUFFICIENT_EVIDENCE" in answer.strip():
+                return [
+                    f"🔍 **Kết quả tra cứu:** Không tìm thấy thông tin phù hợp trong các tài liệu nội bộ hiện có cho câu hỏi:\n"
+                    f"*\"{query}\"*\n\n"
+                    f"💡 *Gợi ý: Bạn có thể đặt tài liệu bổ sung (.pdf, .docx, .xlsx, .txt) vào thư mục `knowledge_docs/` và yêu cầu: 'Lập chỉ mục tài liệu' để cập nhật kho tri thức.*"
+                ]
+
+            citation_lines = []
+            seen = set()
+            for r in results:
+                item_key = (r.title, r.source.get("page"), r.source.get("sheet"))
+                if item_key not in seen:
+                    seen.add(item_key)
+                    detail = ""
+                    if r.source.get("page"):
+                        detail += f" - Trang {r.source['page']}"
+                    if r.source.get("sheet"):
+                        detail += f" - Sheet {r.source['sheet']}"
+                    citation_lines.append(f"• 📄 **{r.title}**{detail}")
+
+            final_text = answer
+            if citation_lines and not any(kw in answer for kw in ["Nguồn [", "Nguồn tham khảo", "Tài liệu tham khảo"]):
+                final_text += "\n\n📚 **Nguồn tham khảo:**\n" + "\n".join(citation_lines)
+
+            return [final_text]
+
+        if tool_name == "knowledge.documents.list":
+            sources = await asyncio.to_thread(metadata_store.list_sources, workspace_id)
+            if not sources:
+                return [
+                    "📚 **Kho Tri Thức Hiện Tại:**\n"
+                    "Chưa có tài liệu nào được lập chỉ mục.\n\n"
+                    "💡 *Bạn hãy đặt các tệp tài liệu (.pdf, .docx, .xlsx, .txt, .csv) vào thư mục `knowledge_docs/` và yêu cầu: 'Lập chỉ mục tài liệu' để bắt đầu!*"
+                ]
+
+            lines = [f"📚 **Danh mục tài liệu trong Kho Tri Thức ({len(sources)} tài liệu):**\n"]
+            for idx, s in enumerate(sources, 1):
+                state_icon = "✅" if s.state == "INDEXED" else "⏳" if s.state == "INDEXING" else "⚠️"
+                lines.append(f"{idx}. {state_icon} **{s.title}** (`{s.source_type}`)")
+                if s.indexed_at:
+                    lines.append(f"   - Cập nhật: `{s.indexed_at[:19].replace('T', ' ')}`")
+            return ["\n".join(lines)]
+
+        if tool_name == "knowledge.documents.status":
+            job_id = str(params.get("job_id") or "").strip()
+            if not job_id:
+                return ["Cú pháp: /knowledge status <mã tác vụ>"]
+            job = await asyncio.to_thread(metadata_store.get_job, job_id)
+            payload = (job.payload or {}) if job else {}
+            if not job or payload.get("workspace_id") != workspace_id or payload.get("owner_id") != owner_id:
+                return ["Không tìm thấy tác vụ lập chỉ mục."]
+            return [self._format_knowledge_index_job(job)]
+
+        if tool_name == "knowledge.documents.index":
+            paths = params.get("paths") or []
+            if isinstance(paths, str):
+                paths = [paths]
+
+            # Tự động quét thư mục knowledge_docs nếu không chỉ định đường dẫn
+            if not paths:
+                scan_dir = f"knowledge_docs/{workspace_id}"
+                try:
+                    safe_dir = file_service.get_safe_path(scan_dir)
+                    if os.path.exists(safe_dir) and os.path.isdir(safe_dir):
+                        valid_exts = {".pdf", ".docx", ".xlsx", ".csv", ".txt", ".md"}
+                        for root, _, files in os.walk(safe_dir):
+                            for fname in files:
+                                if os.path.splitext(fname)[1].lower() in valid_exts:
+                                    full_fpath = os.path.join(root, fname)
+                                    rel_path = os.path.relpath(full_fpath, file_service.workspace_root)
+                                    paths.append(rel_path.replace("\\", "/"))
+                except Exception as exc:
+                    logger.warning("Không thể quét thư mục %s: %s", scan_dir, exc)
+
+            if not paths:
+                return [
+                    "⚠️ Không tìm thấy tài liệu nào để lập chỉ mục.\n"
+                    "Vui lòng đặt các tệp (.pdf, .docx, .xlsx, .txt, .csv) vào thư mục `knowledge_docs/` hoặc chỉ định đường dẫn tệp cụ thể."
+                ]
+
+            root = file_service.workspace_root / "knowledge_docs" / workspace_id
+            try:
+                normalized = [Path(file_service.get_safe_path(path)) for path in paths]
+                if any(not path.is_relative_to(root) for path in normalized):
+                    return ["Chỉ có thể lập chỉ mục tệp trong knowledge_docs/."]
+            except (ValueError, TypeError, SkillPermissionError):
+                return ["Đường dẫn tài liệu không hợp lệ."]
+            paths = list(dict.fromkeys(
+                path.relative_to(file_service.workspace_root).as_posix() for path in normalized
+            ))
+
+            job = IndexingJob(
+                type="FILE",
+                status="PENDING",
+                payload={"paths": paths, "workspace_id": workspace_id, "owner_id": owner_id},
+            )
+            job_id = job.job_id
+            await asyncio.to_thread(metadata_store.update_job, job)
+
+            try:
+                await indexing_service.enqueue_indexing_job(job_id, paths, workspace_id, owner_id)
+                wait_until = time.monotonic() + 5.0
+                while time.monotonic() < wait_until:
+                    stored = await asyncio.to_thread(metadata_store.get_job, job_id)
+                    if stored and stored.status in {"COMPLETED", "PARTIAL", "FAILED"}:
+                        return [self._format_knowledge_index_job(stored)]
+                    await asyncio.sleep(0.25)
+                return [
+                    f"⏳ **Hệ thống đang tiến hành lập chỉ mục {len(paths)} tài liệu trong nền...**\n"
+                    f"Mã tiến trình: `{job_id}`\n\n"
+                    f"Quá trình này sẽ hoàn tất sau ít phút. Kiểm tra bằng `/knowledge status {job_id}`."
+                ]
+            except Exception as exc:
+                logger.error("Lỗi lập chỉ mục tài liệu: %s", exc, exc_info=True)
+                return [f"⚠️ Đã xảy ra lỗi khi lập chỉ mục tài liệu: {exc}"]
+
+        return [f"⚠️ Chưa có handler triển khai cho công cụ knowledge `{tool_name}`."]
+
+    @staticmethod
+    def _format_knowledge_index_job(job: IndexingJob) -> str:
+        from os.path import basename
+
+        payload = job.payload or {}
+        if job.status in {"PENDING", "RUNNING"}:
+            return f"Lập chỉ mục đang xử lý ({job.progress}%). Mã tác vụ: {job.job_id}"
+        indexed = payload.get("indexed", [])
+        failed = payload.get("failed", [])
+        total = len(payload.get("paths", []))
+        lines = [f"Lập chỉ mục: {len(indexed)}/{total} tài liệu thành công."]
+        if failed:
+            lines.append("Tệp thất bại: " + ", ".join(basename(path) for path in failed))
+        if job.error:
+            lines.append("Tác vụ lập chỉ mục gặp lỗi.")
+        return "\n".join(lines)
+
     # =========================================================================
     # PREPARE WRITE HANDLERS (Preview generation)
     # =========================================================================
@@ -576,6 +756,9 @@ class UnifiedExecutor:
 
         if tool_def.required_permission and not context.has_permission(tool_def.required_permission):
             return [f"⚠️ Bạn chưa được cấp quyền `{tool_def.required_permission}` để thực hiện thao tác này."]
+
+        if tool_name == "knowledge.documents.index":
+            return await self._execute_knowledge_tool(tool_name, dict(intent.parameters), context, chat_id)
 
         if tool_name == "business.preview":
             from app.business.operations import prepare as prepare_operation

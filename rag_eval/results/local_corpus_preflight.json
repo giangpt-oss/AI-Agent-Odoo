@@ -1,0 +1,12 @@
+{
+  "mode": "local_parse_only",
+  "workspace_assignment": "unverified",
+  "files": [
+    {
+      "format": ".txt",
+      "bytes": 3061,
+      "chunks": 1,
+      "status": "parsed"
+    }
+  ]
+}

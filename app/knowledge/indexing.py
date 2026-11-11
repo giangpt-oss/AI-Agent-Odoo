@@ -1,15 +1,20 @@
 import os
 import hashlib
 import logging
+import re
+from pathlib import Path
+import csv
+import io
 from datetime import datetime
 from typing import List, Optional
 import asyncio
 
-from app.knowledge.models import KnowledgeSource, KnowledgeChunk, SourceType, IndexState, IndexingJob
+from app.knowledge.models import KnowledgeSource, KnowledgeChunk, SourceType, IndexState
 from app.knowledge.store import metadata_store
 from app.providers.vectorstore.chroma import default_vector_store
 from app.providers.embeddings.gemini import default_embedding_provider
 from app.services.file_service import file_service
+from app.core.config import get_settings
 
 import pypdf
 import docx
@@ -18,87 +23,119 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 class ChunkingStrategy:
-    MAX_TOKENS_ESTIMATE = 1000 # Roughly 4 chars per token, so ~4000 chars
-
-    @staticmethod
-    def chunk_text(text: str, source_id: str) -> List[KnowledgeChunk]:
-        # Simple paragraph / overlap chunking
-        # In a real app, use recursive character text splitter
-        paragraphs = text.split('\n\n')
+    @classmethod
+    def chunk_text(cls, text: str, source_id: str) -> List[KnowledgeChunk]:
         chunks = []
-        current_chunk = ""
-        pos = 0
-        
-        for p in paragraphs:
-            if len(current_chunk) + len(p) > ChunkingStrategy.MAX_TOKENS_ESTIMATE * 3:
-                if current_chunk:
-                    chunks.append(KnowledgeChunk(source_id=source_id, text=current_chunk.strip(), position=pos))
-                    pos += 1
-                current_chunk = p + "\n\n"
+        settings = get_settings()
+        size, overlap = settings.RAG_CHUNK_CHARS, settings.RAG_CHUNK_OVERLAP
+        if size < 2 or not 0 <= overlap < size // 2:
+            raise ValueError("Invalid RAG chunk size or overlap")
+        remaining = text.strip()
+        while remaining:
+            end = len(remaining)
+            if end > size:
+                end = size
+                for separator in ("\n\n", "\n", " "):
+                    boundary = remaining.rfind(separator, size // 2, end)
+                    if boundary >= 0:
+                        end = boundary + len(separator)
+                        break
+            chunks.append(KnowledgeChunk(
+                source_id=source_id, text=remaining[:end].strip(), position=len(chunks),
+            ))
+            if end == len(remaining):
+                break
+            remaining = remaining[end - overlap:].lstrip()
+        return chunks
+
+    @classmethod
+    def chunk_pdf(cls, path: str, source_id: str) -> List[KnowledgeChunk]:
+        chunks = []
+        empty_pages = []
+        with open(path, "rb") as file:
+            for page_number, page in enumerate(pypdf.PdfReader(file).pages, 1):
+                page_text = page.extract_text() or ""
+                if not page_text.strip():
+                    empty_pages.append(page_number)
+                for chunk in cls.chunk_text(page_text, source_id):
+                    chunk.page = str(page_number)
+                    chunk.position = len(chunks)
+                    chunks.append(chunk)
+        if empty_pages:
+            logger.warning("rag_pdf_empty_pages count=%d", len(empty_pages))
+            for chunk in chunks:
+                chunk.metadata["pages_without_text"] = empty_pages
+        return chunks
+
+    @classmethod
+    def chunk_docx(cls, path: str, source_id: str) -> List[KnowledgeChunk]:
+        document = docx.Document(path)
+        chunks, blocks = [], []
+        heading = None
+
+        def flush():
+            for chunk in cls.chunk_text("\n\n".join(blocks), source_id):
+                chunk.section = heading
+                chunk.position = len(chunks)
+                chunks.append(chunk)
+            blocks.clear()
+
+        for block in document.iter_inner_content():
+            if isinstance(block, docx.text.paragraph.Paragraph):
+                if block.style and block.style.name.startswith(("Heading", "Title")):
+                    flush()
+                    heading = block.text
+                blocks.append(block.text)
             else:
-                current_chunk += p + "\n\n"
-                
-        if current_chunk.strip():
-            chunks.append(KnowledgeChunk(source_id=source_id, text=current_chunk.strip(), position=pos))
-            
+                blocks.append("\n".join(" | ".join(cell.text for cell in row.cells) for row in block.rows))
+        flush()
         return chunks
 
-    @staticmethod
-    def chunk_pdf(path: str, source_id: str) -> List[KnowledgeChunk]:
+    @classmethod
+    def chunk_spreadsheet(cls, path: str, source_id: str) -> List[KnowledgeChunk]:
         chunks = []
-        try:
-            with open(path, "rb") as f:
-                reader = pypdf.PdfReader(f)
-                for i, page in enumerate(reader.pages):
-                    text = page.extract_text()
-                    if text:
-                        # Page boundary preferred
-                        chunks.append(KnowledgeChunk(
-                            source_id=source_id,
-                            text=text.strip()[:4000], # basic limit per chunk
-                            page=str(i+1),
-                            position=i
-                        ))
-        except Exception as e:
-            print(f"Error parsing PDF {path}: {e}")
-        return chunks
 
-    @staticmethod
-    def chunk_docx(path: str, source_id: str) -> List[KnowledgeChunk]:
-        chunks = []
-        try:
-            doc = docx.Document(path)
-            full_text = "\n".join([para.text for para in doc.paragraphs])
-            chunks = ChunkingStrategy.chunk_text(full_text, source_id)
-        except Exception as e:
-            print(f"Error parsing DOCX {path}: {e}")
-        return chunks
+        def add_sheet(sheet_name, frame):
+            def csv_line(values):
+                buffer = io.StringIO()
+                csv.writer(buffer, lineterminator="\n").writerow(values)
+                return buffer.getvalue()
 
-    @staticmethod
-    def chunk_spreadsheet(path: str, source_id: str) -> List[KnowledgeChunk]:
-        chunks = []
-        try:
-            if path.lower().endswith(".csv"):
-                df = pd.read_csv(path).head(50)
-                return [KnowledgeChunk(source_id=source_id, text=df.to_csv(index=False)[:4000], sheet="CSV", position=0)]
-            xl = pd.ExcelFile(path)
-            for i, sheet_name in enumerate(xl.sheet_names):
-                df = xl.parse(sheet_name).head(50) # Limit to top 50 rows for embedding
-                text = f"Sheet: {sheet_name}\nData:\n{df.to_csv(index=False)}"
-                chunks.append(KnowledgeChunk(
-                    source_id=source_id,
-                    text=text[:4000],
-                    sheet=sheet_name,
-                    position=i
-                ))
-        except Exception as e:
-            print(f"Error parsing Spreadsheet {path}: {e}")
+            header = csv_line(frame.columns)
+            limit = get_settings().RAG_CHUNK_CHARS
+            rows = []
+            length = len(header)
+            start = 2
+
+            def flush(end):
+                if rows:
+                    chunks.append(KnowledgeChunk(source_id=source_id, text=header + "".join(rows),
+                        sheet=sheet_name, section=f"Rows {start}-{end}", position=len(chunks)))
+
+            for number, record in enumerate(frame.itertuples(index=False, name=None), 2):
+                row = csv_line(record)
+                if len(header) + len(row) > limit:
+                    raise ValueError("Spreadsheet record exceeds configured chunk size")
+                if length + len(row) > limit:
+                    flush(number - 1)
+                    rows.clear()
+                    start, length = number, len(header)
+                rows.append(row)
+                length += len(row)
+            flush(len(frame) + 1)
+
+        if path.lower().endswith(".csv"):
+            add_sheet("CSV", pd.read_csv(path, dtype=str, keep_default_na=False, skip_blank_lines=False))
+        else:
+            with pd.ExcelFile(path) as workbook:
+                for sheet_name in workbook.sheet_names:
+                    add_sheet(sheet_name, workbook.parse(sheet_name, dtype=str, keep_default_na=False))
         return chunks
 
 class KnowledgeIndexingService:
     
     def __init__(self):
-        self._semaphore = asyncio.Semaphore(3)
+        self._job_lock = asyncio.Lock()
         self._queue: Optional[asyncio.Queue] = None
         self._worker_task: Optional[asyncio.Task] = None
         self._enqueued_jobs: set[str] = set()
@@ -135,7 +172,7 @@ class KnowledgeIndexingService:
             self._worker_task.cancel()
 
     async def _queue_worker_loop(self):
-        """Đọc từ queue và dispatch song song tối đa 3 tác vụ đồng thời thông qua Semaphore(3)."""
+        """Chạy lần lượt các job để tránh hai job thay thế cùng một chỉ mục."""
         async def _dispatch_job(job_id: str, paths: List[str], workspace_id: str, owner_id: str):
             try:
                 await self.run_indexing_job(job_id, paths, workspace_id, owner_id)
@@ -149,8 +186,7 @@ class KnowledgeIndexingService:
         while self._is_running:
             try:
                 job_id, paths, workspace_id, owner_id = await self._queue.get()
-                # Dispatch job chạy nền song song (được giới hạn bởi Semaphore(3))
-                asyncio.create_task(_dispatch_job(job_id, paths, workspace_id, owner_id))
+                await _dispatch_job(job_id, paths, workspace_id, owner_id)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -188,19 +224,27 @@ class KnowledgeIndexingService:
 
     async def index_file(self, path: str, workspace_id: str, owner_id: str) -> bool:
         safe_path = file_service.get_safe_path(path)
+        if not re.fullmatch(r"kb_[0-9a-f]{64}", workspace_id or ""):
+            return False
+        root = file_service.workspace_root.resolve() / "knowledge_docs" / workspace_id
+        if not Path(safe_path).is_relative_to(root):
+            return False
         if not os.path.exists(safe_path):
             return False
             
         # Detect type
         ext = os.path.splitext(safe_path)[1].lower()
-        if ext == ".pdf": src_type = SourceType.PDF
-        elif ext in [".docx"]: src_type = SourceType.DOCX
-        elif ext in [".xlsx", ".csv"]: src_type = SourceType.SPREADSHEET
-        elif ext in [".txt", ".md"]: src_type = SourceType.DOCUMENT
-        else:
-            return False # Unsupported
+        src_type = {".pdf": SourceType.PDF, ".docx": SourceType.DOCX,
+                    ".xlsx": SourceType.SPREADSHEET, ".csv": SourceType.SPREADSHEET,
+                    ".txt": SourceType.DOCUMENT, ".md": SourceType.DOCUMENT}.get(ext)
+        if src_type is None:
+            return False
             
         file_hash = await asyncio.to_thread(self._get_file_hash, safe_path)
+        if not file_hash:
+            return False
+        settings = get_settings()
+        file_hash = f"chunks-v3:{settings.RAG_CHUNK_CHARS}:{settings.RAG_CHUNK_OVERLAP}:{file_hash}"
         title = os.path.basename(safe_path)
         
         # Check if exists and unchanged
@@ -226,30 +270,38 @@ class KnowledgeIndexingService:
             
         await asyncio.to_thread(metadata_store.upsert_source, source)
         
-        # Parse and Chunk in Worker Thread (Không block Event Loop)
-        chunks = await asyncio.to_thread(self._sync_parse_and_chunk, safe_path, src_type, source.source_id)
-            
-        if not chunks:
+        try:
+            chunks = await asyncio.to_thread(
+                self._sync_parse_and_chunk, safe_path, src_type, source.source_id,
+            )
+            if not chunks:
+                source.state = IndexState.FAILED
+                await asyncio.to_thread(metadata_store.upsert_source, source)
+                return False
+            for chunk in chunks:
+                identity = f"{source.source_id}\0{chunk.position}\0{chunk.text}"
+                chunk.chunk_id = "chk_" + hashlib.sha256(identity.encode()).hexdigest()
+
+            embeddings = []
+            for start in range(0, len(chunks), 32):
+                batch = chunks[start:start + 32]
+                embeddings.extend(await default_embedding_provider.embed_batch([c.text for c in batch]))
+            if len(embeddings) != len(chunks):
+                raise ValueError("Embedding count does not match chunk count")
+
+            # Failed or interrupted replacements remain hidden until a complete retry.
+            await asyncio.to_thread(default_vector_store.delete_source, source.source_id)
+            await asyncio.to_thread(default_vector_store.upsert, chunks, embeddings)
+        except Exception:
             source.state = IndexState.FAILED
             await asyncio.to_thread(metadata_store.upsert_source, source)
-            return False
-            
-        # Embed
-        texts_to_embed = [c.text for c in chunks]
-        embeddings = await default_embedding_provider.embed_batch(texts_to_embed)
-        
-        # Remove old chunks in Vector DB if re-indexing
-        if existing:
-            await asyncio.to_thread(default_vector_store.delete_source, source.source_id)
-            
-        # Upsert new chunks in thread
-        await asyncio.to_thread(default_vector_store.upsert, chunks, embeddings)
-        
-        # Update metadata
+            raise
+
+        source.hash = file_hash
         source.state = IndexState.INDEXED
         source.indexed_at = datetime.now().isoformat()
-        source.updated_at = datetime.now().isoformat()
-        await asyncio.to_thread(metadata_store.upsert_source, source)
+        source.updated_at = source.indexed_at
+        await asyncio.to_thread(metadata_store.upsert_source, source, chunks)
         return True
 
     async def run_indexing_job(self, job_id: str, paths: List[str], workspace_id: str, owner_id: str):
@@ -260,25 +312,31 @@ class KnowledgeIndexingService:
         job.status = "RUNNING"
         await asyncio.to_thread(metadata_store.update_job, job)
         
-        async with self._semaphore:
-            success = 0
+        async with self._job_lock:
+            indexed = []
+            failed = []
             try:
                 for i, path in enumerate(paths):
                     try:
-                        if await self.index_file(path, workspace_id, owner_id):
-                            success += 1
-                    except Exception as e:
-                        print(f"Index error on {path}: {e}")
-                    job.progress = int(((i + 1) / len(paths)) * 100)
+                        succeeded = await self.index_file(path, workspace_id, owner_id)
+                    except Exception as exc:
+                        logger.warning("rag_index_file_failed job=%s category=%s", job_id, type(exc).__name__)
+                        succeeded = False
+                    (indexed if succeeded else failed).append(path)
+                    job.progress = int((i + 1) / len(paths) * 100)
                     await asyncio.to_thread(metadata_store.update_job, job)
-                    
-                job.status = "COMPLETED"
-                job.finished_at = datetime.now().isoformat()
-                await asyncio.to_thread(metadata_store.update_job, job)
-            except Exception as e:
+
+                job.payload = {**(job.payload or {}), "indexed": indexed, "failed": failed}
+                if not indexed:
+                    job.status = "FAILED"
+                elif failed:
+                    job.status = "PARTIAL"
+                else:
+                    job.status = "COMPLETED"
+            except Exception as exc:
                 job.status = "FAILED"
-                job.error = str(e)
-                job.finished_at = datetime.now().isoformat()
-                await asyncio.to_thread(metadata_store.update_job, job)
+                job.error = type(exc).__name__
+            job.finished_at = datetime.now().isoformat()
+            await asyncio.to_thread(metadata_store.update_job, job)
 
 indexing_service = KnowledgeIndexingService()

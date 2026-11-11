@@ -28,6 +28,21 @@ def allowed_action(settings, action=None):
         getattr(settings, 'ENABLE_QUOTATION_APPROVAL_FLOW', False) and (action is None or action in QUOTE_FLOW_ACTIONS))
 
 
+def explicit_customer_acceptance(text):
+    """Accept a past assertion, never a question, condition or negated statement."""
+    lower = text.lower().strip()
+    if re.search(r'\b(?:không|chưa|đừng|nếu|giả sử|khi|liệu)\b|\?', lower):
+        return False
+    return bool(re.search(r'khách.*đã.*(?:chấp thuận|đồng ý)|khách.*(?:chấp thuận|đồng ý) rồi', lower))
+
+
+def needs_customer_acceptance_clarification(text):
+    lower = text.lower()
+    return bool(re.search(r'\bS\d{3,}\b', text, re.I)
+                and re.search(r'chuyển.*đơn bán|xác nhận.*đơn', lower)
+                and not explicit_customer_acceptance(text))
+
+
 def interpret_quotation_flow(text):
     lower = text.lower().strip()
     names = re.findall(r'\bS\d{3,}\b', text, re.I)
@@ -40,7 +55,7 @@ def interpret_quotation_flow(text):
         action = 'reject_approval'
     elif re.search(r'^(?:hãy |giúp tôi |tôi muốn )?(?:duyệt|phê duyệt|grant approval)\b', lower):
         action = 'grant_approval'
-    elif re.search(r'khách.*đã.*(?:chấp thuận|đồng ý)|khách.*(?:chấp thuận|đồng ý) rồi', lower) and re.search(r'chuyển.*đơn bán|xác nhận.*đơn', lower):
+    elif explicit_customer_acceptance(text) and re.search(r'chuyển.*đơn bán|xác nhận.*đơn', lower):
         action = 'confirm'
     elif re.search(r'^(?:hãy |giúp tôi |tôi muốn )?gửi\b', lower) and 'báo giá' in lower:
         action = 'send'
@@ -51,6 +66,9 @@ def interpret_quotation_flow(text):
 
 
 def register(registry, tool_type):
+    from app.core.config import get_settings
+    settings = get_settings()
+    available_actions = [action for action in ACTIONS if allowed_action(settings, action)]
     common = {'type': 'object', 'additionalProperties': False}
     definitions = [
         ('business.quotation_flow', 'read', 'Xin duyệt/duyệt/từ chối/gửi báo giá theo số Odoo. Chỉ chuẩn bị bản xem trước, mọi thực thi phải xác nhận riêng. Không gọi để tạo báo giá mới.', {
@@ -62,7 +80,7 @@ def register(registry, tool_type):
             'kind': {'enum': ['contacts', 'products', 'sales', 'purchases', 'crm', 'stock', 'quants', 'activities', 'warehouses', 'locations', 'picking_types', 'lots', 'users', 'stages', 'teams', 'lost_reasons', 'taxes', 'uoms', 'currencies', 'pricelists', 'payment_terms', 'activity_types', 'countries', 'states', 'categories', 'models', 'attachments', 'move_lines', 'moves', 'product_templates', 'variant_values']},
             'query': {'type': 'string'}, 'company_id': {'type': 'integer'}}),
         ('business.draft', 'read', 'Thu thập/sửa nháp nghiệp vụ cục bộ. Không thay đổi Odoo; action=start/update/cancel, business_action là thao tác, data là payload.', {
-            'action': {'enum': ['start', 'update', 'cancel']}, 'business_action': {'enum': ACTIONS}, 'data': {'type': 'object'}}),
+            'action': {'enum': ['start', 'update', 'cancel']}, 'business_action': {'enum': available_actions}, 'data': {'type': 'object'}}),
         ('business.preview', 'write', 'Kiểm tra nháp trên Gateway và tạo bản xem trước có mã xác nhận; chưa ghi Odoo.', {}),
     ]
     for name, kind, description, props in definitions:

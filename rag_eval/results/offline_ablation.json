@@ -1,0 +1,1980 @@
+{
+  "dataset_status": "UNVERIFIED synthetic fixture, labels authored independently of retrieval output",
+  "dataset_version": "fc8346ad63e5ae20656460d322a2528ef28326ff4d8e92f8bb3bc06f895e96a3",
+  "corpus_version": "ecbbabbf2a5745647fedd644f19ca47d76ebd769d85f02e828df2d2701c6e11d",
+  "environment": {
+    "python": "3.11.9",
+    "sqlite": "3.45.1",
+    "chroma_hnsw": {
+      "space": "l2",
+      "ef_construction": 100,
+      "ef_search": 100,
+      "max_neighbors": 16,
+      "resize_factor": 1.2,
+      "sync_threshold": 1000
+    },
+    "embedding": "deterministic lexical test double, not Gemini"
+  },
+  "generation": {
+    "status": "NOT_EVALUATED",
+    "reason": "No external calls in offline evaluation"
+  },
+  "modes": {
+    "legacy_reconstructed": {
+      "metrics": {
+        "recall@1": 0.8571428571428571,
+        "precision@1": 0.8571428571428571,
+        "hit_rate@1": 0.8571428571428571,
+        "mrr@1": 0.8571428571428571,
+        "ndcg@1": 0.8571428571428571,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "hit_rate@3": 1.0,
+        "mrr@3": 0.9047619047619048,
+        "ndcg@3": 0.9285714285714286,
+        "recall@5": 1.0,
+        "precision@5": 0.2,
+        "hit_rate@5": 1.0,
+        "mrr@5": 0.9047619047619048,
+        "ndcg@5": 0.9285714285714286,
+        "recall@10": 1.0,
+        "precision@10": 0.1,
+        "hit_rate@10": 1.0,
+        "mrr@10": 0.9047619047619048,
+        "ndcg@10": 0.9285714285714286
+      },
+      "cases": [
+        {
+          "question": "Giờ làm việc tại Hà Nội",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "hours",
+            "leave",
+            "contract",
+            "contract-other",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 4.283700000087265,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "hours",
+                "distance": 0.690692663192749,
+                "score": 0.7914735550526217
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        },
+        {
+          "question": "gio lam viec tai Ha Noi",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "returns",
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock"
+          ],
+          "latency_ms": 1.7609999995329417,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "returns",
+                "distance": 1.7278344631195068,
+                "score": 0.36659115995492497
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 1.7418012619018555,
+                "score": 0.36472373614211123
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        },
+        {
+          "question": "Đơn xin nghỉ phép",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "leave"
+          ],
+          "retrieved_ids": [
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 1.5272000000550179,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "leave",
+                "distance": 0.7350889444351196,
+                "score": 0.7763393301578339
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 1.9999998807907104,
+                "score": 0.3333333465788105
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        },
+        {
+          "question": "HD-2026-A",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract"
+          ],
+          "retrieved_ids": [
+            "contract",
+            "contract-other",
+            "hours",
+            "leave",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 1.3818999996146886,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "contract",
+                "distance": 0.9045549035072327,
+                "score": 0.7250570609219522
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 1.2697032690048218,
+                "score": 0.4405862271319994
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 1.9999998807907104,
+                "score": 0.3333333465788105
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        },
+        {
+          "question": "HD-2026-B",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract-other"
+          ],
+          "retrieved_ids": [
+            "contract-other",
+            "contract",
+            "hours",
+            "leave",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 1.5562000007776078,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "contract-other",
+                "distance": 0.9045549035072327,
+                "score": 0.7250570609219522
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 1.2697032690048218,
+                "score": 0.4405862271319994
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 1.9999998807907104,
+                "score": 0.3333333465788105
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        },
+        {
+          "question": "PN22",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "stock"
+          ],
+          "retrieved_ids": [
+            "stock",
+            "hours",
+            "leave",
+            "contract",
+            "contract-other",
+            "returns"
+          ],
+          "latency_ms": 1.4290999988588737,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "stock",
+                "distance": 1.3675445318222046,
+                "score": 0.6223785388443528
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 1.9999998807907104,
+                "score": 0.3333333465788105
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 2.000000238418579,
+                "score": 0.3333333068423822
+              }
+            ]
+          }
+        },
+        {
+          "question": "trả hàng còn tem",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "returns"
+          ],
+          "retrieved_ids": [
+            "returns",
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock"
+          ],
+          "latency_ms": 1.3876000011805445,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "returns",
+                "distance": 0.6666666865348816,
+                "score": 0.5999999928474428
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 1.6837722063064575,
+                "score": 0.3726098651927879
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 1.9999998807907104,
+                "score": 0.3333333465788105
+              },
+              {
+                "chunk_id": "contract",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        },
+        {
+          "question": "Hành tinh sao Thổ có mấy vành đai?",
+          "scope": "eval-fixture",
+          "expected_ids": [],
+          "retrieved_ids": [
+            "contract",
+            "contract-other",
+            "stock",
+            "hours",
+            "leave",
+            "returns"
+          ],
+          "latency_ms": 1.3948000014352147,
+          "trace": {
+            "candidates": [
+              {
+                "chunk_id": "contract",
+                "distance": 1.776393175125122,
+                "score": 0.360179533993752
+              },
+              {
+                "chunk_id": "contract-other",
+                "distance": 1.776393175125122,
+                "score": 0.360179533993752
+              },
+              {
+                "chunk_id": "stock",
+                "distance": 1.776393175125122,
+                "score": 0.360179533993752
+              },
+              {
+                "chunk_id": "hours",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "leave",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              },
+              {
+                "chunk_id": "returns",
+                "distance": 2.0,
+                "score": 0.3333333333333333
+              }
+            ]
+          }
+        }
+      ],
+      "retrieval_ms_p50": 1.4781499994569458,
+      "retrieval_ms_p95": 3.400754999893252,
+      "failed_top_1": [
+        "gio lam viec tai Ha Noi"
+      ]
+    },
+    "dense": {
+      "metrics": {
+        "recall@1": 0.8571428571428571,
+        "precision@1": 0.8571428571428571,
+        "hit_rate@1": 0.8571428571428571,
+        "mrr@1": 0.8571428571428571,
+        "ndcg@1": 0.8571428571428571,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "hit_rate@3": 1.0,
+        "mrr@3": 0.9047619047619048,
+        "ndcg@3": 0.9285714285714286,
+        "recall@5": 1.0,
+        "precision@5": 0.2,
+        "hit_rate@5": 1.0,
+        "mrr@5": 0.9047619047619048,
+        "ndcg@5": 0.9285714285714286,
+        "recall@10": 1.0,
+        "precision@10": 0.1,
+        "hit_rate@10": 1.0,
+        "mrr@10": 0.9047619047619048,
+        "ndcg@10": 0.9285714285714286
+      },
+      "cases": [
+        {
+          "question": "Giờ làm việc tại Hà Nội",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "hours",
+            "leave",
+            "contract",
+            "contract-other",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 14.172500001222943,
+          "trace": {
+            "correlation_id": "d26aeb181c6d4ea4b92a4e1bd82878f3",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "hours",
+                    "distance": 0.690692663192749
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.177
+              }
+            },
+            "final_ids": [
+              "hours",
+              "leave",
+              "contract",
+              "contract-other",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "hours": 0.01639344262295082,
+              "leave": 0.016129032258064516,
+              "contract": 0.015873015873015872,
+              "contract-other": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 5.607
+          }
+        },
+        {
+          "question": "gio lam viec tai Ha Noi",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "returns",
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock"
+          ],
+          "latency_ms": 3.6218000004737405,
+          "trace": {
+            "correlation_id": "413951f0890442a38f93377dabbce142",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "returns",
+                    "distance": 1.7278344631195068
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 1.7418012619018555
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.054
+              }
+            },
+            "final_ids": [
+              "returns",
+              "leave",
+              "hours",
+              "contract",
+              "contract-other",
+              "stock"
+            ],
+            "fusion_scores": {
+              "returns": 0.01639344262295082,
+              "leave": 0.016129032258064516,
+              "hours": 0.015873015873015872,
+              "contract": 0.015625,
+              "contract-other": 0.015384615384615385,
+              "stock": 0.015151515151515152
+            },
+            "retrieval_ms": 3.589
+          }
+        },
+        {
+          "question": "Đơn xin nghỉ phép",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "leave"
+          ],
+          "retrieved_ids": [
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 3.7597000009554904,
+          "trace": {
+            "correlation_id": "73f69ac8dcee449cb1f606858b4de8e0",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "leave",
+                    "distance": 0.7350889444351196
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.162
+              }
+            },
+            "final_ids": [
+              "leave",
+              "hours",
+              "contract",
+              "contract-other",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "leave": 0.01639344262295082,
+              "hours": 0.016129032258064516,
+              "contract": 0.015873015873015872,
+              "contract-other": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.725
+          }
+        },
+        {
+          "question": "HD-2026-A",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract"
+          ],
+          "retrieved_ids": [
+            "contract",
+            "contract-other",
+            "hours",
+            "leave",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 3.431099999943399,
+          "trace": {
+            "correlation_id": "a76a951d860f4807b46f87dcdbbe7dc0",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "contract",
+                    "distance": 0.9045549035072327
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 1.2697032690048218
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.767
+              }
+            },
+            "final_ids": [
+              "contract",
+              "contract-other",
+              "hours",
+              "leave",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "contract": 0.01639344262295082,
+              "contract-other": 0.016129032258064516,
+              "hours": 0.015873015873015872,
+              "leave": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.394
+          }
+        },
+        {
+          "question": "HD-2026-B",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract-other"
+          ],
+          "retrieved_ids": [
+            "contract-other",
+            "contract",
+            "hours",
+            "leave",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 3.8572000012209173,
+          "trace": {
+            "correlation_id": "d845df79ac9d43279f1fd54c351b1c63",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 0.9045549035072327
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 1.2697032690048218
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.041
+              }
+            },
+            "final_ids": [
+              "contract-other",
+              "contract",
+              "hours",
+              "leave",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "contract-other": 0.01639344262295082,
+              "contract": 0.016129032258064516,
+              "hours": 0.015873015873015872,
+              "leave": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.817
+          }
+        },
+        {
+          "question": "PN22",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "stock"
+          ],
+          "retrieved_ids": [
+            "stock",
+            "hours",
+            "leave",
+            "contract",
+            "contract-other",
+            "returns"
+          ],
+          "latency_ms": 3.689900000608759,
+          "trace": {
+            "correlation_id": "4ef907a9611a443dbabb0fab59a1002c",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "stock",
+                    "distance": 1.3675445318222046
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.000000238418579
+                  }
+                ],
+                "ms": 1.915
+              }
+            },
+            "final_ids": [
+              "stock",
+              "hours",
+              "leave",
+              "contract",
+              "contract-other",
+              "returns"
+            ],
+            "fusion_scores": {
+              "stock": 0.01639344262295082,
+              "hours": 0.016129032258064516,
+              "leave": 0.015873015873015872,
+              "contract": 0.015625,
+              "contract-other": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.653
+          }
+        },
+        {
+          "question": "trả hàng còn tem",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "returns"
+          ],
+          "retrieved_ids": [
+            "returns",
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock"
+          ],
+          "latency_ms": 3.373200001078658,
+          "trace": {
+            "correlation_id": "2aeca62af6014713951c4c1e2d0fd81b",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "returns",
+                    "distance": 0.6666666865348816
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 1.6837722063064575
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.63
+              }
+            },
+            "final_ids": [
+              "returns",
+              "leave",
+              "hours",
+              "contract",
+              "contract-other",
+              "stock"
+            ],
+            "fusion_scores": {
+              "returns": 0.01639344262295082,
+              "leave": 0.016129032258064516,
+              "hours": 0.015873015873015872,
+              "contract": 0.015625,
+              "contract-other": 0.015384615384615385,
+              "stock": 0.015151515151515152
+            },
+            "retrieval_ms": 3.339
+          }
+        },
+        {
+          "question": "Hành tinh sao Thổ có mấy vành đai?",
+          "scope": "eval-fixture",
+          "expected_ids": [],
+          "retrieved_ids": [
+            "contract",
+            "contract-other",
+            "stock",
+            "hours",
+            "leave",
+            "returns"
+          ],
+          "latency_ms": 3.2281000003422378,
+          "trace": {
+            "correlation_id": "4a5f300ce44d49ee9a53beb5bf3f327c",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "contract",
+                    "distance": 1.776393175125122
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 1.776393175125122
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 1.776393175125122
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.602
+              }
+            },
+            "final_ids": [
+              "contract",
+              "contract-other",
+              "stock",
+              "hours",
+              "leave",
+              "returns"
+            ],
+            "fusion_scores": {
+              "contract": 0.01639344262295082,
+              "contract-other": 0.016129032258064516,
+              "stock": 0.015873015873015872,
+              "hours": 0.015625,
+              "leave": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.193
+          }
+        }
+      ],
+      "retrieval_ms_p50": 3.6558500005412498,
+      "retrieval_ms_p95": 10.562145001222234,
+      "failed_top_1": [
+        "gio lam viec tai Ha Noi"
+      ]
+    },
+    "sparse": {
+      "metrics": {
+        "recall@1": 1.0,
+        "precision@1": 1.0,
+        "hit_rate@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "hit_rate@3": 1.0,
+        "mrr@3": 1.0,
+        "ndcg@3": 1.0,
+        "recall@5": 1.0,
+        "precision@5": 0.2,
+        "hit_rate@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "recall@10": 1.0,
+        "precision@10": 0.1,
+        "hit_rate@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0
+      },
+      "cases": [
+        {
+          "question": "Giờ làm việc tại Hà Nội",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "hours"
+          ],
+          "latency_ms": 3.0017000008228933,
+          "trace": {
+            "correlation_id": "85f001e0616e465a9194c598b0687241",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "hours",
+                    "bm25": -7.365260597155592
+                  }
+                ],
+                "ms": 1.26
+              }
+            },
+            "final_ids": [
+              "hours"
+            ],
+            "fusion_scores": {
+              "hours": 0.01639344262295082
+            },
+            "retrieval_ms": 2.966
+          }
+        },
+        {
+          "question": "gio lam viec tai Ha Noi",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "hours"
+          ],
+          "latency_ms": 2.641099999891594,
+          "trace": {
+            "correlation_id": "859701b603f64d888808eb2fef84593a",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "hours",
+                    "bm25": -7.365260597155592
+                  }
+                ],
+                "ms": 1.069
+              }
+            },
+            "final_ids": [
+              "hours"
+            ],
+            "fusion_scores": {
+              "hours": 0.01639344262295082
+            },
+            "retrieval_ms": 2.61
+          }
+        },
+        {
+          "question": "Đơn xin nghỉ phép",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "leave"
+          ],
+          "retrieved_ids": [
+            "leave"
+          ],
+          "latency_ms": 2.407800000582938,
+          "trace": {
+            "correlation_id": "9c41a73ad93247f4a69b0c8102b495d8",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "leave",
+                    "bm25": -5.300386213405568
+                  }
+                ],
+                "ms": 0.992
+              }
+            },
+            "final_ids": [
+              "leave"
+            ],
+            "fusion_scores": {
+              "leave": 0.01639344262295082
+            },
+            "retrieval_ms": 2.379
+          }
+        },
+        {
+          "question": "HD-2026-A",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract"
+          ],
+          "retrieved_ids": [
+            "contract",
+            "contract-other"
+          ],
+          "latency_ms": 2.3913000004540663,
+          "trace": {
+            "correlation_id": "2f7ebd6de1484763bf19055580af1aa2",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "contract",
+                    "bm25": -3.702021986636771
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "bm25": -1.1531101451582975
+                  }
+                ],
+                "ms": 0.955
+              }
+            },
+            "final_ids": [
+              "contract",
+              "contract-other"
+            ],
+            "fusion_scores": {
+              "contract": 0.01639344262295082,
+              "contract-other": 0.016129032258064516
+            },
+            "retrieval_ms": 2.363
+          }
+        },
+        {
+          "question": "HD-2026-B",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract-other"
+          ],
+          "retrieved_ids": [
+            "contract-other",
+            "contract"
+          ],
+          "latency_ms": 2.513699999326491,
+          "trace": {
+            "correlation_id": "92202f8cf4334a07a8c68f7bfe7cb397",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "contract-other",
+                    "bm25": -3.702021986636771
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "bm25": -1.1531101451582975
+                  }
+                ],
+                "ms": 0.986
+              }
+            },
+            "final_ids": [
+              "contract-other",
+              "contract"
+            ],
+            "fusion_scores": {
+              "contract-other": 0.01639344262295082,
+              "contract": 0.016129032258064516
+            },
+            "retrieval_ms": 2.486
+          }
+        },
+        {
+          "question": "PN22",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "stock"
+          ],
+          "retrieved_ids": [
+            "stock"
+          ],
+          "latency_ms": 2.4011999994399957,
+          "trace": {
+            "correlation_id": "be6984573b7b436b81906a01ff09327b",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "stock",
+                    "bm25": -1.325096553351392
+                  }
+                ],
+                "ms": 0.918
+              }
+            },
+            "final_ids": [
+              "stock"
+            ],
+            "fusion_scores": {
+              "stock": 0.01639344262295082
+            },
+            "retrieval_ms": 2.376
+          }
+        },
+        {
+          "question": "trả hàng còn tem",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "returns"
+          ],
+          "retrieved_ids": [
+            "returns"
+          ],
+          "latency_ms": 2.61799999861978,
+          "trace": {
+            "correlation_id": "2108189c69374708bdcdec6c1e25c20d",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "returns",
+                    "bm25": -5.519712539477522
+                  }
+                ],
+                "ms": 1.079
+              }
+            },
+            "final_ids": [
+              "returns"
+            ],
+            "fusion_scores": {
+              "returns": 0.01639344262295082
+            },
+            "retrieval_ms": 2.593
+          }
+        },
+        {
+          "question": "Hành tinh sao Thổ có mấy vành đai?",
+          "scope": "eval-fixture",
+          "expected_ids": [],
+          "retrieved_ids": [
+            "stock",
+            "contract",
+            "contract-other"
+          ],
+          "latency_ms": 2.4621000011393335,
+          "trace": {
+            "correlation_id": "f2038cd8ff9d448f9acfd1bd89f14eb5",
+            "branches": {
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "stock",
+                    "bm25": -1.0198675496688743e-06
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "bm25": -9.80891719745223e-07
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "bm25": -9.80891719745223e-07
+                  }
+                ],
+                "ms": 1.035
+              }
+            },
+            "final_ids": [
+              "stock",
+              "contract",
+              "contract-other"
+            ],
+            "fusion_scores": {
+              "stock": 0.01639344262295082,
+              "contract": 0.016129032258064516,
+              "contract-other": 0.015873015873015872
+            },
+            "retrieval_ms": 2.436
+          }
+        }
+      ],
+      "retrieval_ms_p50": 2.487900000232912,
+      "retrieval_ms_p95": 2.8754900004969386,
+      "failed_top_1": []
+    },
+    "hybrid": {
+      "metrics": {
+        "recall@1": 1.0,
+        "precision@1": 1.0,
+        "hit_rate@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "recall@3": 1.0,
+        "precision@3": 0.3333333333333333,
+        "hit_rate@3": 1.0,
+        "mrr@3": 1.0,
+        "ndcg@3": 1.0,
+        "recall@5": 1.0,
+        "precision@5": 0.2,
+        "hit_rate@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "recall@10": 1.0,
+        "precision@10": 0.1,
+        "hit_rate@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0
+      },
+      "cases": [
+        {
+          "question": "Giờ làm việc tại Hà Nội",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "hours",
+            "leave",
+            "contract",
+            "contract-other",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 3.431099999943399,
+          "trace": {
+            "correlation_id": "64557c41a21049a3a62839264a4b636b",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "hours",
+                    "distance": 0.690692663192749
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.995
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "hours",
+                    "bm25": -7.365260597155592
+                  }
+                ],
+                "ms": 1.151
+              }
+            },
+            "final_ids": [
+              "hours",
+              "leave",
+              "contract",
+              "contract-other",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "hours": 0.03278688524590164,
+              "leave": 0.016129032258064516,
+              "contract": 0.015873015873015872,
+              "contract-other": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.404
+          }
+        },
+        {
+          "question": "gio lam viec tai Ha Noi",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "hours"
+          ],
+          "retrieved_ids": [
+            "hours",
+            "returns",
+            "leave",
+            "contract",
+            "contract-other",
+            "stock"
+          ],
+          "latency_ms": 3.2888999994611368,
+          "trace": {
+            "correlation_id": "d7263cd2eaa741e98b38493b5959174b",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "returns",
+                    "distance": 1.7278344631195068
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 1.7418012619018555
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.94
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "hours",
+                    "bm25": -7.365260597155592
+                  }
+                ],
+                "ms": 1.071
+              }
+            },
+            "final_ids": [
+              "hours",
+              "returns",
+              "leave",
+              "contract",
+              "contract-other",
+              "stock"
+            ],
+            "fusion_scores": {
+              "returns": 0.01639344262295082,
+              "leave": 0.016129032258064516,
+              "hours": 0.032266458495966696,
+              "contract": 0.015625,
+              "contract-other": 0.015384615384615385,
+              "stock": 0.015151515151515152
+            },
+            "retrieval_ms": 3.267
+          }
+        },
+        {
+          "question": "Đơn xin nghỉ phép",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "leave"
+          ],
+          "retrieved_ids": [
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 4.331699999966077,
+          "trace": {
+            "correlation_id": "05a50bdd930d4372ad074358c1a28daf",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "leave",
+                    "distance": 0.7350889444351196
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.432
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "leave",
+                    "bm25": -5.300386213405568
+                  }
+                ],
+                "ms": 2.736
+              }
+            },
+            "final_ids": [
+              "leave",
+              "hours",
+              "contract",
+              "contract-other",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "leave": 0.03278688524590164,
+              "hours": 0.016129032258064516,
+              "contract": 0.015873015873015872,
+              "contract-other": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 4.304
+          }
+        },
+        {
+          "question": "HD-2026-A",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract"
+          ],
+          "retrieved_ids": [
+            "contract",
+            "contract-other",
+            "hours",
+            "leave",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 4.061499999806983,
+          "trace": {
+            "correlation_id": "2db9630b14d24a9789ddc2f62f6f3a9f",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "contract",
+                    "distance": 0.9045549035072327
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 1.2697032690048218
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.464
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "contract",
+                    "bm25": -3.702021986636771
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "bm25": -1.1531101451582975
+                  }
+                ],
+                "ms": 1.209
+              }
+            },
+            "final_ids": [
+              "contract",
+              "contract-other",
+              "hours",
+              "leave",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "contract": 0.03278688524590164,
+              "contract-other": 0.03225806451612903,
+              "hours": 0.015873015873015872,
+              "leave": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 4.019
+          }
+        },
+        {
+          "question": "HD-2026-B",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "contract-other"
+          ],
+          "retrieved_ids": [
+            "contract-other",
+            "contract",
+            "hours",
+            "leave",
+            "stock",
+            "returns"
+          ],
+          "latency_ms": 4.082400000697817,
+          "trace": {
+            "correlation_id": "fefb0b2c7bbf4cbdb945f193e118003e",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 0.9045549035072327
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 1.2697032690048218
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 2.484
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "contract-other",
+                    "bm25": -3.702021986636771
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "bm25": -1.1531101451582975
+                  }
+                ],
+                "ms": 1.524
+              }
+            },
+            "final_ids": [
+              "contract-other",
+              "contract",
+              "hours",
+              "leave",
+              "stock",
+              "returns"
+            ],
+            "fusion_scores": {
+              "contract-other": 0.03278688524590164,
+              "contract": 0.03225806451612903,
+              "hours": 0.015873015873015872,
+              "leave": 0.015625,
+              "stock": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 4.042
+          }
+        },
+        {
+          "question": "PN22",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "stock"
+          ],
+          "retrieved_ids": [
+            "stock",
+            "hours",
+            "leave",
+            "contract",
+            "contract-other",
+            "returns"
+          ],
+          "latency_ms": 3.4682999994402053,
+          "trace": {
+            "correlation_id": "d969a48d78a548b3a8f454eb8aa450c2",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "stock",
+                    "distance": 1.3675445318222046
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.000000238418579
+                  }
+                ],
+                "ms": 1.928
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "stock",
+                    "bm25": -1.325096553351392
+                  }
+                ],
+                "ms": 1.176
+              }
+            },
+            "final_ids": [
+              "stock",
+              "hours",
+              "leave",
+              "contract",
+              "contract-other",
+              "returns"
+            ],
+            "fusion_scores": {
+              "stock": 0.03278688524590164,
+              "hours": 0.016129032258064516,
+              "leave": 0.015873015873015872,
+              "contract": 0.015625,
+              "contract-other": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.435
+          }
+        },
+        {
+          "question": "trả hàng còn tem",
+          "scope": "eval-fixture",
+          "expected_ids": [
+            "returns"
+          ],
+          "retrieved_ids": [
+            "returns",
+            "leave",
+            "hours",
+            "contract",
+            "contract-other",
+            "stock"
+          ],
+          "latency_ms": 3.139700000247103,
+          "trace": {
+            "correlation_id": "6f6f59275fba45519972849383c50da8",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "returns",
+                    "distance": 0.6666666865348816
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 1.6837722063064575
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 1.9999998807907104
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.74
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "returns",
+                    "bm25": -5.519712539477522
+                  }
+                ],
+                "ms": 1.061
+              }
+            },
+            "final_ids": [
+              "returns",
+              "leave",
+              "hours",
+              "contract",
+              "contract-other",
+              "stock"
+            ],
+            "fusion_scores": {
+              "returns": 0.03278688524590164,
+              "leave": 0.016129032258064516,
+              "hours": 0.015873015873015872,
+              "contract": 0.015625,
+              "contract-other": 0.015384615384615385,
+              "stock": 0.015151515151515152
+            },
+            "retrieval_ms": 3.109
+          }
+        },
+        {
+          "question": "Hành tinh sao Thổ có mấy vành đai?",
+          "scope": "eval-fixture",
+          "expected_ids": [],
+          "retrieved_ids": [
+            "contract",
+            "stock",
+            "contract-other",
+            "hours",
+            "leave",
+            "returns"
+          ],
+          "latency_ms": 3.186699999787379,
+          "trace": {
+            "correlation_id": "c46027ab01204c5fbec4db9c8458e03f",
+            "branches": {
+              "dense": {
+                "results": [
+                  {
+                    "chunk_id": "contract",
+                    "distance": 1.776393175125122
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "distance": 1.776393175125122
+                  },
+                  {
+                    "chunk_id": "stock",
+                    "distance": 1.776393175125122
+                  },
+                  {
+                    "chunk_id": "hours",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "leave",
+                    "distance": 2.0
+                  },
+                  {
+                    "chunk_id": "returns",
+                    "distance": 2.0
+                  }
+                ],
+                "ms": 1.742
+              },
+              "sparse": {
+                "results": [
+                  {
+                    "chunk_id": "stock",
+                    "bm25": -1.0198675496688743e-06
+                  },
+                  {
+                    "chunk_id": "contract",
+                    "bm25": -9.80891719745223e-07
+                  },
+                  {
+                    "chunk_id": "contract-other",
+                    "bm25": -9.80891719745223e-07
+                  }
+                ],
+                "ms": 1.179
+              }
+            },
+            "final_ids": [
+              "contract",
+              "stock",
+              "contract-other",
+              "hours",
+              "leave",
+              "returns"
+            ],
+            "fusion_scores": {
+              "contract": 0.03252247488101534,
+              "contract-other": 0.03200204813108039,
+              "stock": 0.032266458495966696,
+              "hours": 0.015625,
+              "leave": 0.015384615384615385,
+              "returns": 0.015151515151515152
+            },
+            "retrieval_ms": 3.157
+          }
+        }
+      ],
+      "retrieval_ms_p50": 3.449699999691802,
+      "retrieval_ms_p95": 4.244445000222186,
+      "failed_top_1": []
+    }
+  }
+}

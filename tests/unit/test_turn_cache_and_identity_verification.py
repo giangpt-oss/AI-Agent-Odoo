@@ -168,7 +168,7 @@ def test_valid_retry_returns_cached_turn_without_reexecuting(turn_cache_env):
 
     p_hash = hashlib.sha256("Chào bot".encode()).hexdigest()
     ledger.record_turn_start("req_valid_retry_1", 1, 123, 123, "bind_1", p_hash)
-    ledger.record_turn_completed("req_valid_retry_1", ["Chào bạn, mình có thể giúp gì?"])
+    ledger.record_turn_completed("req_valid_retry_1", ["Chào bạn, mình có thể giúp gì?"], "[null, null]")
 
     mock_identity = {
         "user_id": 1,

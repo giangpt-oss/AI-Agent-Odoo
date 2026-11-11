@@ -1,0 +1,35 @@
+{
+  "id": "TC02",
+  "question": "Trợ cấp ăn trưa hàng tháng cho nhân viên là bao nhiêu?",
+  "type": "factual",
+  "answerable": true,
+  "expected_answer": "Trợ cấp ăn trưa là 730.000 VNĐ/tháng, được chi trả cùng kỳ lương hàng tháng.",
+  "generated_answer": "ERROR: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 47.985118249s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-3.5-flash-lite', 'location': 'global'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '47s'}]}}",
+  "retrieval": {
+    "retrieved_chunk_ids": [
+      "chk_0f021391"
+    ],
+    "hit_at_1": 1.0,
+    "hit_at_3": 1.0,
+    "mrr_at_3": 1.0,
+    "latency_sec": 0.36
+  },
+  "generation": {
+    "abstention": {
+      "is_refusal": false,
+      "expected_refusal": false,
+      "abstention_correct": true,
+      "status": "CORRECT_ANSWER"
+    },
+    "citation": {
+      "has_citation": false,
+      "citation_count": 0,
+      "valid_citations": 0,
+      "citation_accuracy": 0.0,
+      "citations_found": []
+    },
+    "correctness_score": 0.0,
+    "latency_sec": 0.228
+  },
+  "e2e_latency_sec": 2.601
+}
