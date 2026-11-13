@@ -72,6 +72,28 @@ async def test_workspace_read_uses_gateway_and_checks_kind(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_workspace_read_accepts_background_job_with_bound_identity(monkeypatch):
+    from app.core.config import get_settings
+    from app.services.gateway_client import gateway_client
+    from app.services.turn_trace import request_id
+    from app.services.unified_executor import unified_executor
+
+    monkeypatch.setattr(get_settings(), "WORKSPACE_BACKGROUND_READS", True)
+    queue = AsyncMock(return_value={"status": "queued", "job_id": "job-bound"})
+    monkeypatch.setattr(gateway_client, "create_workspace_job", queue)
+    token = request_id.set("workspace-background-test")
+    try:
+        intent = IntentAnalysisResult(intent_type="read", tool_name="workspace.drive.read",
+                                      parameters={"method": "files.list"})
+        messages = await unified_executor.execute(intent, context(), 7, 7, {}, time.time() + 18, {})
+    finally:
+        request_id.reset(token)
+    assert "job-bound" in messages[0]
+    assert queue.await_args.args == (1, "workspace-background-test", "drive", "files.list")
+    assert queue.await_args.kwargs["telegram_binding_id"] == "binding"
+
+
+@pytest.mark.asyncio
 async def test_write_needs_preview_then_confirmation_and_freezes_arguments(monkeypatch, tmp_path):
     from app.services.confirmation_service import ConfirmationService
     from app.services.gateway_client import gateway_client

@@ -1,0 +1,59 @@
+[
+  {
+    "id": "q01_greeting",
+    "category": "greeting",
+    "text": "Xin chào bot, bạn có thể giúp gì cho tôi?",
+    "expect_drive_call": false,
+    "expect_tool": null
+  },
+  {
+    "id": "q02_whoami",
+    "category": "identity",
+    "text": "Tôi là ai?",
+    "expect_drive_call": false,
+    "expect_tool": "whoami"
+  },
+  {
+    "id": "q03_calendar_today",
+    "category": "calendar",
+    "text": "Hôm nay tôi có những cuộc họp hay lịch hẹn nào?",
+    "expect_drive_call": false,
+    "expect_tool": "calendar.events.list"
+  },
+  {
+    "id": "q04_gmail_unread",
+    "category": "gmail",
+    "text": "Kiểm tra hòm thư xem có email nào chưa đọc không?",
+    "expect_drive_call": false,
+    "expect_tool": "gmail.users.messages.list"
+  },
+  {
+    "id": "q05_drive_doc_search",
+    "category": "drive_knowledge",
+    "text": "Tìm cho tôi tài liệu quy trình thanh toán công tác phí trên Drive",
+    "expect_drive_call": true,
+    "expect_tool": "drive.knowledge"
+  },
+  {
+    "id": "q06_drive_missing_evidence",
+    "category": "drive_knowledge_missing",
+    "text": "Báo cáo tài chính quý 4 năm 2035 có lợi nhuận bao nhiêu?",
+    "expect_drive_call": true,
+    "expect_tool": "drive.knowledge"
+  },
+  {
+    "id": "q07_odoo_partner",
+    "category": "odoo_crm",
+    "text": "Tra cứu thông tin khách hàng Hopita trong Odoo",
+    "expect_drive_call": false,
+    "expect_tool": "odoo.res.partner.search"
+  },
+  {
+    "id": "q08_multi_source_lead_calendar",
+    "category": "multi_source",
+    "text": "Xem lịch họp ngày mai và đối chiếu xem có lịch với khách hàng VIP nào không?",
+    "expect_drive_call": false,
+    "expect_tool": "multi"
+  }
+]
+

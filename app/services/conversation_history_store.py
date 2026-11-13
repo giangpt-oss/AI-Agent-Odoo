@@ -51,6 +51,9 @@ class ConversationHistoryStore:
     def _init_db(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._get_connection() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS conversation_events (
+                event_id TEXT PRIMARY KEY, created_at REAL NOT NULL
+            )""")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS conversation_sessions (
                     session_key TEXT PRIMARY KEY,
@@ -225,6 +228,7 @@ class ConversationHistoryStore:
         role: str,
         content: str,
         database: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> None:
         key = self._build_key(tenant, user_id, chat_id, database, binding_id)
         curr_session = self.get_session(tenant, user_id, chat_id, binding_id, database)
@@ -237,6 +241,13 @@ class ConversationHistoryStore:
 
         now = time.time()
         with self._get_connection() as conn:
+            if event_id:
+                added = conn.execute(
+                    "INSERT OR IGNORE INTO conversation_events (event_id, created_at) VALUES (?, ?)",
+                    (event_id, now),
+                )
+                if not added.rowcount:
+                    return
             conn.execute(
                 """
                 INSERT INTO conversation_sessions (

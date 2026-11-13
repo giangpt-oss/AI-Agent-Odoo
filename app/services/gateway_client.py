@@ -2,6 +2,7 @@ import logging
 from typing import Any
 import httpx
 from app.core.config import get_settings
+from app.services.turn_trace import request_id
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,14 @@ class GatewayClient:
         self.secret = secret or settings.AGENT_TO_GATEWAY_SECRET
 
     def _headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Authorization": f"Bearer {self.secret}",
             "Content-Type": "application/json",
         }
+        correlation = request_id.get()
+        if correlation and correlation.isascii() and correlation.isprintable() and len(correlation) <= 128:
+            headers["X-Request-ID"] = correlation
+        return headers
 
     async def resolve_identity(
         self, telegram_user_id: int, chat_id: int, contract_version: int = 2
@@ -92,8 +97,76 @@ class GatewayClient:
     async def workspace_query(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
         return await self._workspace_request(user_id, service, arguments, "query", timeout)
 
+    async def drive_knowledge(self, context, terms, file_id):
+        payload = {"telegram_user_id": context.telegram_user_id, "chat_id": context.chat_id,
+                   "telegram_binding_id": context.telegram_binding_id, "terms": terms, "file_id": file_id}
+        try:
+            async with httpx.AsyncClient(timeout=28.0) as client:
+                url = f"{self.base_url}/internal/v1/users/{context.user_id}/workspace/drive-knowledge"
+                response = await client.post(url, json=payload, headers=self._headers())
+                if response.status_code == 403:
+                    return {"status": "PERMISSION_DENIED"}
+                response.raise_for_status()
+                return response.json()
+        except (httpx.HTTPError, ValueError):
+            return {"status": "SERVICE_ERROR"}
+
     async def workspace_prepare(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
         return await self._workspace_request(user_id, service, arguments, "preview", timeout)
+
+    async def create_workspace_job(
+        self,
+        user_id: int,
+        request_id: str,
+        service: str,
+        operation: str,
+        parameters: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+        media: dict[str, Any] | None = None,
+        is_write: bool = False,
+        operation_id: str | None = None,
+        wait_seconds: float = 2.0,
+        deadline_seconds: int = 120,
+        telegram_chat_id: int | None = None,
+        telegram_user_id: int | None = None,
+        telegram_binding_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Tạo và theo dõi Workspace Job bất đồng bộ qua Gateway."""
+        url = f"{self.base_url}/internal/v1/users/{user_id}/workspace/jobs"
+        payload = {
+            "request_id": request_id,
+            "operation_id": operation_id,
+            "service": service,
+            "operation": operation,
+            "parameters": parameters or {},
+            "body": body or {},
+            "media": media,
+            "is_write": is_write,
+            "wait_seconds": wait_seconds,
+            "deadline_seconds": deadline_seconds,
+            "telegram_chat_id": telegram_chat_id,
+            "telegram_user_id": telegram_user_id,
+            "telegram_binding_id": telegram_binding_id,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=wait_seconds + 3.0) as client:
+                resp = await client.post(url, json=payload, headers=self._headers())
+                if resp.status_code in (200, 202):
+                    return resp.json()
+                return {"status": "ERROR", "message": resp.text}
+        except httpx.RequestError as exc:
+            return {"status": "SERVICE_ERROR", "message": f"Không thể kết nối Gateway Jobs: {exc}"}
+
+    async def get_workspace_job(self, user_id: int, job_id: str) -> dict[str, Any]:
+        url = f"{self.base_url}/internal/v1/users/{user_id}/workspace/jobs/{job_id}"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.json()
+                return {"status": "ERROR", "message": resp.text}
+        except httpx.RequestError as exc:
+            return {"status": "SERVICE_ERROR", "message": str(exc)}
 
     async def get_calendar_events(self, user_id: int, time_min: str, time_max: str) -> dict[str, Any]:
         """Lấy danh sách sự kiện lịch trong khoảng thời gian ISO 8601."""

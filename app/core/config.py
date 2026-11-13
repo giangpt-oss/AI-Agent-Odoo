@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     # LLM Providers
     GEMINI_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
-    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai"] = "gemini"
+    GROQ_API_KEY: str | None = None
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "groq"] = "gemini"
     DEFAULT_LLM_MODEL: str = "gemini-3.5-flash-lite"
     RAG_TOP_K_DENSE: int = 20
     RAG_TOP_K_SPARSE: int = 20
@@ -70,6 +72,7 @@ class Settings(BaseSettings):
 
     # Gateway Integration Settings
     GATEWAY_BASE_URL: str = "http://localhost:8080"
+    WORKSPACE_BACKGROUND_READS: bool = False
     GATEWAY_TO_AGENT_SECRET: str = ""
     AGENT_TO_GATEWAY_SECRET: str = ""
 

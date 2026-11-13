@@ -17,6 +17,9 @@ class RAGAnswerService:
         self, query: str, workspace_id: str | None = None, ai_client: Optional[Any] = None, *, trace=None
     ) -> Tuple[str, List[SearchResult]]:
         results = await search_service.search(query, workspace_id, trace=trace)
+        return await self.answer_from_evidence(query, results, ai_client, trace=trace)
+
+    async def answer_from_evidence(self, query, results, ai_client=None, *, trace=None):
         
         if not results:
             return "INSUFFICIENT_EVIDENCE", []

@@ -488,8 +488,8 @@ def build_default_tool_registry() -> ToolRegistry:
             name="knowledge.query",
             category="knowledge",
             action_type="read",
-            required_permission=GatewayPermission.KNOWLEDGE_READ,
-            description="Tra cứu câu hỏi, chính sách, quy chế, sổ tay hoặc tài liệu doanh nghiệp từ Kho Tri Thức (RAG)",
+            required_permission="workspace.drive.read",
+            description="Tra cứu Google Drive để trả lời câu hỏi thông tin dựa trên tài liệu và trích dẫn nguồn",
             parameter_schema={
                 "type": "object",
                 "required": ["query"],

@@ -52,7 +52,8 @@ class HealthCheckService:
         
         # 5. AI Client
         gemini_key = os.getenv("GEMINI_API_KEY")
-        if gemini_key:
+        groq_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if gemini_key or groq_key:
             health["checks"]["ai_client"] = "OK"
         else:
             health["checks"]["ai_client"] = "ERROR: Missing API KEY"

@@ -476,7 +476,7 @@ async def handle_telegram_turn(
             chat_id=req.chat_id,
             binding_id=context.telegram_binding_id,
             database=context.database,
-            lease_seconds=turn_budget + 5.0,
+            lease_seconds=65.0,
         )
         if not lease_token:
             raise HTTPException(
@@ -521,20 +521,33 @@ async def handle_telegram_turn(
                 session_ctx["last_read"].pop("knowledge.query")
                 session_ctx["history"] = []
             session_ctx['_turn_deadline'] = turn_deadline
+            classification_started = time.perf_counter()
             intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
+            logger.info("request_id=%s classification_ms=%.3f tool=%s", req.request_id,
+                        (time.perf_counter() - classification_started) * 1000,
+                        intent_res.tool_name)
             knowledge_turn = (intent_res.tool_name or "").startswith("knowledge.")
+            if intent_res.tool_name == "knowledge.query":
+                turn_budget = 60.0
+                turn_deadline = turn_start_time + turn_budget
+                turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
 
             # 5. Thực thi trực tiếp qua UnifiedExecutor (không gọi parser phụ lần hai)
             from app.services.unified_executor import unified_executor
-            messages = await unified_executor.execute(
-                intent=intent_res,
-                context=context,
-                chat_id=req.chat_id,
-                telegram_user_id=req.telegram_user_id,
-                session_context=session_ctx,
-                deadline=turn_deadline,
-                user_info=user_info,
-            )
+            from app.services.turn_trace import request_id as trace_request_id
+            trace_token = trace_request_id.set(req.request_id)
+            try:
+                messages = await unified_executor.execute(
+                    intent=intent_res,
+                    context=context,
+                    chat_id=req.chat_id,
+                    telegram_user_id=req.telegram_user_id,
+                    session_context=session_ctx,
+                    deadline=turn_deadline,
+                    user_info=user_info,
+                )
+            finally:
+                trace_request_id.reset(trace_token)
 
             # Lưu lịch sử phiên hội thoại
             conversation_history_store.append_turn(
@@ -579,7 +592,9 @@ async def handle_telegram_turn(
         logger.warning("Turn processing timed out after %ss for request_id: %s", turn_budget, req.request_id)
         from app.services.error_handler import ErrorCode, format_error_message
         messages = [format_error_message(ErrorCode.TURN_TIMEOUT)]
-        if turn_budget > 30:
+        if knowledge_turn:
+            messages = ["Tra cứu Google Drive chưa hoàn tất trong thời gian cho phép. Hãy thử hỏi cụ thể hơn hoặc gửi link tệp."]
+        elif turn_budget > 30:
             messages = ['Chưa nhận được kết quả đầy đủ của bước xử lý báo giá. Hãy hỏi trạng thái theo số báo giá; không gửi lại thao tác để tránh thực hiện trùng.']
     except Exception as e:
         logger.error("Error in turn execution: %s", e, exc_info=True)
@@ -597,3 +612,70 @@ async def handle_telegram_turn(
         confirmation_buttons={index: message.confirmation_id for index, message in enumerate(messages)
                               if isinstance(message, ConfirmationPreview)},
     )
+
+
+class WorkspaceJobCompletedPayload(BaseModel):
+    job_id: str
+    user_id: int
+    request_id: str
+    status: str
+    service: str
+    operation: str
+    result: Optional[Any] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    telegram_chat_id: Optional[int] = None
+    telegram_user_id: Optional[int] = None
+    telegram_binding_id: Optional[str] = None
+
+
+@router.post("/workspace/job-completed", dependencies=[Depends(verify_gateway_secret)])
+async def workspace_job_completed_webhook(payload: WorkspaceJobCompletedPayload):
+    logger.info("Received workspace job completed callback for job_id=%s, status=%s", payload.job_id, payload.status)
+    messages = []
+    if payload.telegram_chat_id and payload.telegram_user_id and payload.telegram_binding_id:
+        try:
+            identity = await gateway_client.resolve_identity(payload.telegram_user_id, payload.telegram_chat_id)
+        except GatewayServiceError as exc:
+            raise HTTPException(503, "Chưa xác minh được liên kết Telegram") from exc
+        if (not identity or identity.get("user_id") != payload.user_id
+                or identity.get("telegram_binding_id") != payload.telegram_binding_id):
+            return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+        msg_text = ""
+        if payload.status == "completed":
+            if (isinstance(payload.result, dict) and payload.result.get("status") == "OK"
+                    and payload.service in {"drive", "docs", "sheets", "slides", "calendar", "gmail"}):
+                from app.workspace.agent import format_result
+
+                msg_text = "\n\n".join(format_result(payload.service, payload.result))
+            elif payload.service == "drive":
+                msg_text = f"✅ Tác vụ đọc tài liệu Google Drive (#{payload.job_id}) đã hoàn tất."
+            elif payload.service == "calendar":
+                msg_text = f"✅ Thao tác Lịch Google (#{payload.job_id}) đã xử lý xong."
+            elif payload.service == "gmail":
+                msg_text = f"✅ Thao tác Gmail (#{payload.job_id}) đã xử lý xong."
+            else:
+                msg_text = f"✅ Tác vụ Workspace (#{payload.job_id}) đã hoàn tất."
+        elif payload.status == "waiting_confirmation":
+            msg_text = f"Tác vụ Workspace (#{payload.job_id}) đang chờ xác nhận."
+        else:
+            err = payload.error_message or payload.error_code or "Lỗi không xác định"
+            msg_text = f"⚠️ Tác vụ Workspace (#{payload.job_id}) không thể hoàn tất: {err}"
+
+        try:
+            conversation_history_store.append_turn(
+                tenant=identity.get("tenant"),
+                user_id=payload.user_id,
+                chat_id=payload.telegram_chat_id,
+                binding_id=payload.telegram_binding_id,
+                database=identity.get("database"),
+                role="assistant",
+                content=msg_text,
+                event_id=f"workspace:{payload.job_id}",
+            )
+        except Exception as exc:
+            logger.warning("Could not append callback turn to history: %s", exc)
+            raise HTTPException(503, "Chưa lưu được kết quả Workspace") from exc
+        messages.append(msg_text)
+
+    return {"status": "accepted", "job_id": payload.job_id, "messages": messages}
