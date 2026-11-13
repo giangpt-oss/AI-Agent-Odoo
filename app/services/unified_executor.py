@@ -220,6 +220,12 @@ class UnifiedExecutor:
         params = dict(intent.parameters)
         timeout = max(1.0, min(10.0, remaining_time - 1.0))
 
+        if tool_name == "knowledge.query":
+            from app.knowledge.drive import answer_from_drive
+
+            query = (params.get("query") or params.get("q") or "").strip()
+            return await answer_from_drive(query, context)
+
         if tool_name and tool_name.startswith("business."):
             from app.business.operations import read as operation_read
             return await operation_read(tool_name, params, context)
@@ -239,6 +245,21 @@ class UnifiedExecutor:
                 service_name, kind = validate_tool(tool_name, params)
                 if kind != "read":
                     return ["⚠️ Thao tác ghi cần bản xem trước và xác nhận."]
+                from app.core.config import get_settings
+                from app.services.turn_trace import request_id
+
+                turn_id = request_id.get()
+                if (get_settings().WORKSPACE_BACKGROUND_READS and turn_id and context.telegram_binding_id
+                        and context.telegram_user_id and context.chat_id):
+                    job = await gateway_client.create_workspace_job(
+                        context.user_id, turn_id, service_name, params["method"],
+                        parameters=params.get("parameters"), body=params.get("body"), wait_seconds=0,
+                        telegram_chat_id=context.chat_id, telegram_user_id=context.telegram_user_id,
+                        telegram_binding_id=context.telegram_binding_id,
+                    )
+                    if job.get("job_id"):
+                        return [f"Đã nhận tác vụ Workspace (#{job['job_id']}). Tôi sẽ gửi kết quả khi xử lý xong."]
+                    return ["⚠️ Không thể đưa yêu cầu Workspace vào hàng đợi. Vui lòng thử lại."]
                 result = await gateway_client.workspace_query(context.user_id, service_name, params, timeout=timeout)
                 if result.get("status") == "OK":
                     content = result.get("data", {})
@@ -248,7 +269,7 @@ class UnifiedExecutor:
             except ValueError as exc:
                 return [f"⚠️ Yêu cầu Workspace chưa hợp lệ: {exc}"]
 
-        if tool_name in {"knowledge.query", "knowledge.documents.list", "knowledge.documents.status"}:
+        if tool_name in {"knowledge.documents.list", "knowledge.documents.status"}:
             return await self._execute_knowledge_tool(tool_name, params, context, chat_id)
 
         if tool_name == "identity.whoami":
@@ -576,63 +597,16 @@ class UnifiedExecutor:
     ) -> list[str]:
         import os
         from pathlib import Path
-        from app.knowledge.rag import rag_service
         from app.knowledge.store import metadata_store
         from app.knowledge.indexing import indexing_service
         from app.core.exceptions import SkillPermissionError
         from app.services.file_service import file_service
-        from app.providers.gemini_retry import GeminiRequestError
 
         workspace_id = context.knowledge_workspace
         owner_id = str(context.user_id)
         permission = GatewayPermission.KNOWLEDGE_WRITE if tool_name == "knowledge.documents.index" else GatewayPermission.KNOWLEDGE_READ
         if not workspace_id or not context.has_permission(permission):
             return ["Tài khoản chưa có quyền truy cập kho tri thức này."]
-
-        if tool_name == "knowledge.query":
-            query = (params.get("query") or params.get("q") or "").strip()
-            if not query:
-                return ["⚠️ Vui lòng cung cấp câu hỏi hoặc nội dung bạn cần tra cứu trong Kho Tri Thức."]
-
-            try:
-                answer, results = await rag_service.get_answer(query, workspace_id=workspace_id)
-            except GeminiRequestError as exc:
-                messages = {
-                    "rate_limit": "Dịch vụ AI đang giới hạn lượt gọi. Vui lòng thử lại sau.",
-                    "authentication": "Dịch vụ AI từ chối xác thực. Cần kiểm tra cấu hình kết nối.",
-                    "configuration": "Chưa cấu hình kết nối AI cho kho tri thức.",
-                    "timeout": "Dịch vụ AI chưa phản hồi trong thời gian cho phép.",
-                }
-                return [messages.get(exc.category, "Dịch vụ AI tạm thời chưa phản hồi.")]
-            except Exception as exc:
-                logger.error("Knowledge request failed category=%s", type(exc).__name__)
-                return ["Không thể tra cứu kho tri thức lúc này."]
-
-            if not answer or "INSUFFICIENT_EVIDENCE" in answer.strip():
-                return [
-                    f"🔍 **Kết quả tra cứu:** Không tìm thấy thông tin phù hợp trong các tài liệu nội bộ hiện có cho câu hỏi:\n"
-                    f"*\"{query}\"*\n\n"
-                    f"💡 *Gợi ý: Bạn có thể đặt tài liệu bổ sung (.pdf, .docx, .xlsx, .txt) vào thư mục `knowledge_docs/` và yêu cầu: 'Lập chỉ mục tài liệu' để cập nhật kho tri thức.*"
-                ]
-
-            citation_lines = []
-            seen = set()
-            for r in results:
-                item_key = (r.title, r.source.get("page"), r.source.get("sheet"))
-                if item_key not in seen:
-                    seen.add(item_key)
-                    detail = ""
-                    if r.source.get("page"):
-                        detail += f" - Trang {r.source['page']}"
-                    if r.source.get("sheet"):
-                        detail += f" - Sheet {r.source['sheet']}"
-                    citation_lines.append(f"• 📄 **{r.title}**{detail}")
-
-            final_text = answer
-            if citation_lines and not any(kw in answer for kw in ["Nguồn [", "Nguồn tham khảo", "Tài liệu tham khảo"]):
-                final_text += "\n\n📚 **Nguồn tham khảo:**\n" + "\n".join(citation_lines)
-
-            return [final_text]
 
         if tool_name == "knowledge.documents.list":
             sources = await asyncio.to_thread(metadata_store.list_sources, workspace_id)

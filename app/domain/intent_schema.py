@@ -54,6 +54,48 @@ class IntentAnalysisResult(BaseModel):
     draft: Optional[DraftPayload] = None
     confirmation_id: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Intent type mapping
+            itype = data.get("intent_type")
+            if itype in ("write", "create", "execute", "mutation", "update"):
+                data["intent_type"] = "prepare_write"
+            elif itype in ("chat", "answer", "info", "general"):
+                data["intent_type"] = "reply"
+            elif itype in ("ask", "clarification", "question"):
+                data["intent_type"] = "clarify"
+            elif itype in ("query", "search", "get", "view", "list"):
+                data["intent_type"] = "read"
+
+            if "tool" in data and not data.get("tool_name"):
+                data["tool_name"] = data.pop("tool")
+            elif "action" in data and not data.get("tool_name") and data.get("action") not in ("unknown", None):
+                data["tool_name"] = data.pop("action")
+
+            # Clarification prompt aliases
+            if not data.get("clarification_prompt"):
+                for key in ("question", "prompt", "clarify_prompt", "ask"):
+                    if data.get(key):
+                        data["clarification_prompt"] = data.pop(key)
+                        break
+            if not data.get("clarification_prompt") and data.get("intent_type") == "clarify":
+                if data.get("reply_text"):
+                    data["clarification_prompt"] = data.get("reply_text")
+                elif data.get("message"):
+                    data["clarification_prompt"] = data.pop("message")
+
+            # Reply text aliases
+            if not data.get("reply_text"):
+                for key in ("message", "response", "text", "content"):
+                    if data.get(key) and not isinstance(data.get(key), (dict, list)):
+                        data["reply_text"] = data.pop(key)
+                        break
+            if not data.get("reply_text") and data.get("intent_type") == "reply" and data.get("clarification_prompt"):
+                data["reply_text"] = data.get("clarification_prompt")
+        return data
+
     @model_validator(mode="after")
     def validate_intent_consistency(self) -> "IntentAnalysisResult":
         if self.intent_type in (IntentType.READ, IntentType.PREPARE_WRITE):

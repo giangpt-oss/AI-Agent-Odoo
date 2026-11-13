@@ -9,7 +9,7 @@ _ORIGINAL_CWD = Path.cwd()
 _SANDBOX = tempfile.TemporaryDirectory(prefix="agent-tests-")
 os.environ.update({
     "APP_DEBUG": "false", "DEBUG": "true", "AGENT_DATA_DIR": str(Path(_SANDBOX.name) / ".agent_data"),
-    "GEMINI_API_KEY": "", "OPENAI_API_KEY": "", "ODOO_API_KEY": "test-only",
+    "GEMINI_API_KEY": "", "OPENAI_API_KEY": "", "GROQ_API_KEY": "", "DEFAULT_LLM_PROVIDER": "gemini", "ODOO_API_KEY": "test-only",
     "ODOO_URL": "https://odoo.invalid", "ODOO_DB": "test", "ODOO_ADMIN_USERNAME": "test",
     "TELEGRAM_BOT_TOKEN": "123456789:TEST_ONLY_NOT_A_REAL_BOT_TOKEN",
     "TELEGRAM_WEBHOOK_SECRET": "test-webhook-secret", "ODOO_WEBHOOK_SECRET": "test-odoo-secret",

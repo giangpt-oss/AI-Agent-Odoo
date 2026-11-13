@@ -1347,8 +1347,8 @@ class GatewayAgentDispatcher:
         """Sử dụng LLM để phân tích yêu cầu tự nhiên thành Action Schema được cấp phép."""
         from app.core.config import get_settings
         settings = get_settings()
-        api_key = settings.GEMINI_API_KEY
-        if not api_key:
+        has_llm = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+        if not has_llm:
             return None
 
         allowed_actions = []
@@ -1384,6 +1384,48 @@ Yêu cầu người dùng: "{text}"
 Múi giờ: {context.timezone}
 Thời gian hiện tại: {datetime.now(UTC).isoformat()}
 """
+        if (settings.DEFAULT_LLM_PROVIDER == "groq" or not settings.GEMINI_API_KEY) and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY):
+            api_key = getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY
+            model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "openai/gpt-oss-120b"
+            if "gemini" in model.lower():
+                model = "openai/gpt-oss-120b"
+
+            def _sync_groq():
+                from openai import OpenAI
+                base_url = getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+                client = OpenAI(api_key=api_key, base_url=base_url, timeout=6.0)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                )
+                raw_text = resp.choices[0].message.content or "{}"
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```json"):
+                    raw_text = raw_text[7:]
+                if raw_text.startswith("```"):
+                    raw_text = raw_text[3:]
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3]
+                try:
+                    return json.loads(raw_text.strip())
+                except Exception:
+                    start_idx = raw_text.find("{")
+                    end_idx = raw_text.rfind("}")
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        return json.loads(raw_text[start_idx:end_idx+1])
+                    raise
+            try:
+                data = await asyncio.wait_for(asyncio.to_thread(_sync_groq), timeout=6.0)
+                if data and data.get("action") in allowed_actions:
+                    return data
+                return None
+            except Exception as e:
+                logger.warning("Groq parse action failed: %s", e)
+                return None
+
+        api_key = settings.GEMINI_API_KEY
         def _sync_call():
             from google import genai
             client = genai.Client(api_key=api_key)

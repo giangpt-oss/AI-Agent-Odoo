@@ -678,7 +678,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             settings = get_settings()
             # Nếu đang có API key hoặc mock/test LLM mà bị lỗi -> giữ nguyên draft/version, báo không chỉnh sửa được
             is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
-            if settings.GEMINI_API_KEY or is_mock_llm:
+            has_llm_key = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+            if has_llm_key or is_mock_llm:
                 return IntentAnalysisResult(
                     intent_type=IntentType.REPLY,
                     reply_text="⚠️ Không thể chỉnh sửa bản nháp vào lúc này do sự cố kết nối mô hình. Bản nháp hiện tại vẫn được giữ nguyên.",
@@ -714,6 +715,39 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
     async def _call_gemini_raw(self, prompt: str, response_schema=None) -> str:
         """Gọi mô hình với deadline hữu hạn, không tự thử lại HTTP."""
         settings = get_settings()
+        if (settings.DEFAULT_LLM_PROVIDER == "groq" or not settings.GEMINI_API_KEY) and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY):
+            api_key = getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY
+            model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "openai/gpt-oss-120b"
+            if "gemini" in model.lower():
+                model = "openai/gpt-oss-120b"
+
+            def _sync_groq_call() -> str:
+                from openai import OpenAI
+                base_url = getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+                client = OpenAI(api_key=api_key, base_url=base_url, timeout=28.0)
+                content_prompt = prompt
+                if response_schema:
+                    content_prompt += (
+                        "\n\nBẮT BUỘC trả về duy nhất 1 JSON object với các trường chuẩn:\n"
+                        "- intent_type: 'reply' | 'read' | 'draft' | 'prepare_write' | 'clarify' | 'unsupported'\n"
+                        "- tool_name: string (BẮT BUỘC cho 'read' và 'prepare_write', lấy đúng tên công cụ được cấp)\n"
+                        "- parameters: dict các tham số của công cụ\n"
+                        "- reply_text: string (bắt buộc khi intent_type='reply')\n"
+                        "- clarification_prompt: string (bắt buộc khi intent_type='clarify')\n"
+                        "Ví dụ prepare_write: {\"intent_type\": \"prepare_write\", \"tool_name\": \"tasks.personal.create\", \"parameters\": {\"title\": \"...\"}}"
+                    )
+                kwargs = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": content_prompt}],
+                    "temperature": 0.1,
+                }
+                if response_schema:
+                    kwargs["response_format"] = {"type": "json_object"}
+                resp = client.chat.completions.create(**kwargs)
+                return resp.choices[0].message.content or ""
+
+            return await asyncio.wait_for(asyncio.to_thread(_sync_groq_call), timeout=28.0 if response_schema else 20.0)
+
         api_key = settings.GEMINI_API_KEY
         if not api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
@@ -807,7 +841,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
 
         settings = get_settings()
         is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
-        if not settings.GEMINI_API_KEY and not is_mock_llm:
+        has_llm_key = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+        if not has_llm_key and not is_mock_llm:
             return self._offline_semantic_dispatch(text, context, session_context)
 
         try:
@@ -821,15 +856,26 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 cleaned = cleaned[:-3]
             cleaned = cleaned.strip()
 
-            data = json.loads(cleaned)
-            return IntentAnalysisResult.model_validate(data)
+            try:
+                data = json.loads(cleaned)
+            except Exception:
+                start_idx = cleaned.find("{")
+                end_idx = cleaned.rfind("}")
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    data = json.loads(cleaned[start_idx:end_idx+1])
+                else:
+                    raise
+            intent = IntentAnalysisResult.model_validate(data)
+            if intent.intent_type == IntentType.REPLY:
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="knowledge.query",
+                                            parameters={"query": text})
+            return intent
 
         except Exception as e:
             logger.error("LLM dispatch error: %s", e)
             try:
                 offline_res = self._offline_semantic_dispatch(text, context, session_context)
-                if offline_res.intent_type != IntentType.REPLY or "Tôi đã nhận được tin nhắn:" not in (offline_res.reply_text or ""):
-                    return offline_res
+                return offline_res
             except Exception:
                 pass
             from app.services.error_handler import classify_exception
@@ -907,14 +953,15 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             )
 
         # 2. Câu hỏi lý thuyết / hướng dẫn / giải thích
-        is_question = any(q in lower for q in ["cách ", "làm thế nào", "làm sao để", "hướng dẫn", "như thế nào", "là gì", "có nên"]) or clean.endswith("?")
+        is_question = clean.endswith("?") or any(q in lower for q in (
+            "cách ", "làm thế nào", "làm sao", "hướng dẫn", "như thế nào",
+            "là gì", "có nên", "bao nhiêu", "bao lâu", "khi nào", "ở đâu", "tại sao",
+        ))
         if is_question and any(act in lower for act in ["tạo công việc", "tạo task", "gửi email", "soạn thư", "tạo lịch", "tạo cuộc họp"]):
             return IntentAnalysisResult(
-                intent_type=IntentType.REPLY,
-                reply_text=(
-                    "Để tạo công việc cá nhân, bạn chỉ cần nhắn trực tiếp nội dung công việc (ví dụ: 'Tạo công việc chuẩn bị báo cáo quý'). "
-                    "Hệ thống sẽ luôn gửi bản xem trước để bạn xác nhận an toàn trước khi lưu."
-                ),
+                intent_type=IntentType.READ,
+                tool_name="knowledge.query",
+                parameters={"query": clean},
             )
 
         # 3. Yêu cầu tạo công việc cá nhân
@@ -992,6 +1039,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                         intent_type=IntentType.REPLY,
                         reply_text=f"📊 Số đã tra cứu là {cnt:,} {cat_vn}.",
                     )
+
+        # Câu hỏi thông tin mặc định tra cứu Drive. Chỉ chuyển sang dữ liệu trực tiếp
+        # khi người dùng chỉ rõ nguồn hoặc yêu cầu mở/xem một danh sách cụ thể.
+        explicit_source = re.search(r"\b(?:odoo|gmail|google calendar)\b", lower)
+        if is_question and not explicit_source and not lower.startswith(("xem ", "liệt kê ", "kiểm tra ", "danh sách ")):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="knowledge.query",
+                parameters={"query": clean},
+            )
 
         # 5. Tra cứu dữ liệu doanh nghiệp
         is_count_query = any(w in lower for w in [
@@ -1169,8 +1226,9 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 )
 
         return IntentAnalysisResult(
-            intent_type=IntentType.REPLY,
-            reply_text=f"Tôi đã nhận được tin nhắn: '{clean}'. Bạn có thể yêu cầu tôi xem lịch, kiểm tra email, tra cứu dữ liệu Odoo hoặc tạo công việc cá nhân.",
+            intent_type=IntentType.READ,
+            tool_name="knowledge.query",
+            parameters={"query": clean},
         )
 
 

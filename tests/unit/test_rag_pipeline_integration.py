@@ -9,7 +9,7 @@ from app.domain.intent_schema import IntentAnalysisResult, IntentType
 from app.domain.tool_registry import build_default_tool_registry
 from app.services.natural_pipeline import natural_pipeline
 from app.services.unified_executor import UnifiedExecutor
-from app.knowledge.models import SearchResult, KnowledgeSource, IndexState
+from app.knowledge.models import KnowledgeSource, IndexState
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def mock_context():
         tenant="default",
         database="test_db",
         odoo_uid=2,
-        permissions={"knowledge.read", "tasks.read"},
+        permissions={"knowledge.read", "tasks.read", "workspace.drive.read"},
     )
 
 
@@ -134,18 +134,8 @@ async def test_unified_executor_knowledge_query_success(mock_context):
         tool_name="knowledge.query",
         parameters={"query": "Giờ làm việc của công ty như thế nào?"},
     )
-    mock_results = [
-        SearchResult(
-            chunk_id="chk_1",
-            source_id="src_1",
-            title="Quy_che_cong_ty_Hopita.txt",
-            content="Giờ làm việc tiêu chuẩn: Từ 08:30 đến 17:30 (Thứ Hai đến Thứ Sáu).",
-            score=0.92,
-            source={"file": "knowledge_docs/Quy_che_cong_ty_Hopita.txt", "page": "1"},
-        )
-    ]
-    with patch("app.knowledge.rag.rag_service.get_answer", new_callable=AsyncMock) as mock_rag:
-        mock_rag.return_value = ("Công ty làm việc từ 08:30 đến 17:30 các ngày Thứ Hai đến Thứ Sáu.", mock_results)
+    with patch("app.knowledge.drive.answer_from_drive", new_callable=AsyncMock) as mock_rag:
+        mock_rag.return_value = ["Công ty làm việc từ 08:30 đến 17:30. Nguồn: Quy_che_cong_ty_Hopita.txt"]
         res = await executor.execute(
             intent=intent,
             context=mock_context,
@@ -168,8 +158,8 @@ async def test_unified_executor_knowledge_query_insufficient_evidence(mock_conte
         tool_name="knowledge.query",
         parameters={"query": "Công ty có xe đưa đón không?"},
     )
-    with patch("app.knowledge.rag.rag_service.get_answer", new_callable=AsyncMock) as mock_rag:
-        mock_rag.return_value = ("INSUFFICIENT_EVIDENCE", [])
+    with patch("app.knowledge.drive.answer_from_drive", new_callable=AsyncMock) as mock_rag:
+        mock_rag.return_value = ["Không tìm thấy thông tin phù hợp trên Drive."]
         res = await executor.execute(
             intent=intent,
             context=mock_context,
