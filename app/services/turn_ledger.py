@@ -5,9 +5,15 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import List, Optional
 
+from app.services.confirmation_service import ConfirmationPreview
 from app.services.file_service import file_service
 
 logger = logging.getLogger(__name__)
+
+
+def decode_messages(messages_json: str) -> list[str]:
+    return [ConfirmationPreview(item["text"], item["confirmation_id"]) if isinstance(item, dict) else item
+            for item in json.loads(messages_json)]
 
 
 class TurnLedger:
@@ -63,7 +69,7 @@ class TurnLedger:
         rec = self.get_turn_record(request_id)
         if rec and rec.get("status") == "completed" and rec.get("messages_json"):
             try:
-                return json.loads(rec["messages_json"])
+                return decode_messages(rec["messages_json"])
             except Exception as e:
                 logger.warning("Error parsing cached messages for request_id=%s: %s", request_id, e)
                 return None
@@ -99,7 +105,11 @@ class TurnLedger:
     def record_turn_completed(self, request_id: str, messages: List[str], cache_scope: str | None = None) -> None:
         """Ghi nhận turn đã hoàn thành cùng danh sách messages trả về."""
         now = datetime.now(UTC).isoformat()
-        messages_json = json.dumps(messages, ensure_ascii=False)
+        messages_json = json.dumps([
+            {"text": message, "confirmation_id": message.confirmation_id}
+            if isinstance(message, ConfirmationPreview) else message
+            for message in messages
+        ], ensure_ascii=False)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """

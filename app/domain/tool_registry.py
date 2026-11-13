@@ -544,7 +544,7 @@ def build_default_tool_registry() -> ToolRegistry:
     from app.core.config import get_settings
     settings = get_settings()
     register_business(registry, settings.ENABLE_REPORTING, settings.ENABLE_QUOTATIONS)
-    if settings.ENABLE_BUSINESS_ACTIONS or settings.ENABLE_QUOTATION_APPROVAL_FLOW:
+    if settings.ENABLE_BUSINESS_ACTIONS or settings.ENABLE_QUOTATION_APPROVAL_FLOW or settings.ENABLE_QUOTATIONS:
         from app.business.operations import register as register_operations
         register_operations(registry, ToolDefinition)
     return registry

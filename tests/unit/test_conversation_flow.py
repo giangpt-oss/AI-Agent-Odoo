@@ -162,3 +162,13 @@ async def test_turn_ledger_idempotency(temp_db_dir):
     # Khi Gateway retry cùng request_id -> lấy lại đúng messages cũ
     cached = ledger.get_turn(req_id)
     assert cached == ["Thông báo 1", "Thông báo 2"]
+def test_turn_ledger_preserves_preview_metadata(tmp_path):
+    from app.services.confirmation_service import ConfirmationPreview
+    from app.services.turn_ledger import TurnLedger
+
+    ledger = TurnLedger(tmp_path / 'turns.db')
+    assert ledger.record_turn_start('preview', 1, 2, 2)
+    ledger.record_turn_completed('preview', ['regular', ConfirmationPreview('Xem trước', 'c_0123abcd')])
+    messages = ledger.get_turn('preview')
+    assert messages == ['regular', 'Xem trước']
+    assert messages[1].confirmation_id == 'c_0123abcd'

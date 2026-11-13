@@ -2,6 +2,16 @@ from types import SimpleNamespace
 
 import pytest
 
+
+@pytest.mark.parametrize('text', [
+    'gửi yêu cầu xác nhận báo giá S00089',
+    'gửi sếp xác nhận báo giá S00089',
+    'nhờ cấp trên xác nhận báo giá S00089',
+])
+def test_request_manager_confirmation_routes_to_approval(text):
+    from app.business.operations import interpret_quotation_flow
+    assert interpret_quotation_flow(text)['action'] == 'request_approval'
+
 from app.business.operations import allowed_action, interpret_quotation_flow
 from app.business.quote_status import result_message
 

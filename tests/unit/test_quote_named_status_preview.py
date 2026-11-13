@@ -8,9 +8,17 @@ from app.business.quote_local import interpret
 from app.business.workflow import quote_preview
 
 
+def test_saved_missing_address_error_uses_display_names():
+    message = quote_status.quotation_failure_message('Còn thiếu thông tin: partner_invoice_id, partner_shipping_id')
+    assert 'yêu cầu nhầm' in message
+    assert 'tạo lại' in message
+    assert 'partner_' not in message
+
+
 def test_named_status_is_independent_of_active_draft_and_never_a_write():
     assert interpret('Báo giá S00086 trạng thái là gì?', {}) == {'action': 'status', 'quotation_name': 'S00086'}
     assert interpret('S00086', {}) == {'action': 'status', 'quotation_name': 'S00086'}
+    assert interpret('Báo giá S00086 đã gửi khách hàng chưa?', {}) == {'action': 'status', 'quotation_name': 'S00086'}
     assert interpret('Hủy báo giá S00086', {}) is None
     assert interpret('Xác nhận báo giá S00086', {}) is None
 

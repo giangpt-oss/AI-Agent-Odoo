@@ -14,6 +14,161 @@ from app.services.confirmation_service import ConfirmationService
 from app.services.conversation_history_store import ConversationHistoryStore
 
 
+def test_tao_lich_hop_is_recognized_as_quotation_chatter():
+    from app.business.operations import looks_like_quote_chatter
+    assert looks_like_quote_chatter('tạo lịch họp ngày 12/11/2026 12:00 A.M ở s00089', {})
+
+
+def test_quotation_requires_pricelist_before_confirmation():
+    draft = {'quotation_data': {'partner_id': 1, 'lines': [{'product_id': 2}]}, 'quotation_hints': {}}
+    assert 'cần bổ sung: bảng giá' in collector.state_prompt(draft).lower()
+
+
+def test_pricelist_selection_is_saved_as_a_named_reference():
+    draft = {'quotation_data': {'lines': []}, 'quotation_hints': {}}
+    collector.save_reference(draft, 'pricelists', 1, {'id': 7, 'display_name': 'Giá thương mại'})
+    assert draft['quotation_data']['pricelist_id'] == 7
+    assert 'Giá thương mại' in collector.quote_details(draft)
+
+
+@pytest.mark.asyncio
+async def test_request_for_boss_uses_last_created_quotation(quote_runtime, monkeypatch):
+    from app.business import quote_status
+
+    context, _, confirmations = quote_runtime
+    await collector.collect({'action': 'start', 'quantity': 1}, context)
+    draft = workflow.session(context)['active_draft']
+    cid, _ = confirmations.create_confirmation(user_id=1, chat_id=7, telegram_binding_id='fixture-binding',
+        action='sales.quotation.create', arguments={}, preview_text='preview', owner_key=context.owner_key,
+        draft_id=draft['draft_id'], draft_version=draft['version'], telegram_user_id=7)
+    assert confirmations.claim_and_validate(cid, 1, 7, 'fixture-binding')[0]
+    monkeypatch.setattr(quote_status, 'request', AsyncMock(return_value={
+        'status': 'completed', 'result': {'id': 88, 'name': 'S00089', 'company_id': [1, 'Company']},
+    }))
+    from app.core import config
+    settings = config.get_settings()
+    settings.ENABLE_QUOTATION_APPROVAL_FLOW = True
+    pipeline = natural_module.NaturalPipeline()
+    result = await pipeline.analyze_input('gửi yêu cầu xác nhận cho sếp', context, workflow.session(context))
+    assert result.tool_name == 'business.quotation_flow'
+    assert result.parameters['quotation_name'] == 'S00089'
+    assert result.parameters['company_id'] == 1
+    assert result.parameters['action'] == 'request_approval'
+
+
+@pytest.mark.asyncio
+async def test_quotation_chatter_routes_note_to_explicit_quote(quote_runtime, monkeypatch):
+    context, _, _ = quote_runtime
+    pipeline = natural_module.NaturalPipeline()
+    monkeypatch.setattr(pipeline, '_call_gemini_raw', AsyncMock(return_value=json.dumps({
+        'action': 'note', 'quotation_name': 'S00089', 'options': {'body': 'Đã gọi khách hàng'},
+    })))
+    result = await pipeline.analyze_input('Ghi chú báo giá S00089: Đã gọi khách hàng', context, {})
+    assert result.tool_name == 'business.quotation_chatter'
+    assert result.parameters == {'quotation_name': 'S00089', 'action': 'note', 'options': {'body': 'Đã gọi khách hàng'}}
+
+
+@pytest.mark.asyncio
+async def test_quotation_meeting_keeps_provided_time_and_people(quote_runtime, monkeypatch):
+    context, _, _ = quote_runtime
+    pipeline = natural_module.NaturalPipeline()
+    monkeypatch.setattr(pipeline, '_call_gemini_raw', AsyncMock(return_value=json.dumps({
+        'action': 'meeting', 'quotation_name': 'S12345', 'options': {
+            'summary': 'Họp với khách', 'start': '2026-12-12T09:00:00+07:00',
+            'stop': '2026-12-12T10:00:00+07:00', 'attendee_queries': ['Nguyễn An'],
+        },
+    })))
+    result = await pipeline.analyze_input('Lên lịch họp báo giá S00089 với Nguyễn An', context, {})
+    assert result.parameters['quotation_name'] == 'S00089'
+    assert result.parameters['options']['start'] == '2026-12-12T09:00:00+07:00'
+    assert result.parameters['options']['attendee_queries'] == ['Nguyễn An']
+
+
+@pytest.mark.asyncio
+async def test_quotation_message_creates_confirmation_for_correct_target(quote_runtime, monkeypatch):
+    from app.business import operations
+
+    context, store, confirmations = quote_runtime
+    monkeypatch.setattr(operations, 'store', store)
+    monkeypatch.setattr(operations, 'confirmation_service', confirmations)
+
+    async def gateway(_context, method, path, payload=None):
+        if path == 'business/lookup':
+            assert payload['kind'] == 'sales' and payload['query'] == 'S00089'
+            return {'items': [{'id': 88, 'name': 'S00089', 'company_id': [1, 'Company']}]}
+        assert path == 'business/prepare' and method == 'POST'
+        assert payload['action'] == 'business.sales.message'
+        assert payload['payload']['target_id'] == 88
+        assert payload['payload']['options'] == {'recipient': 'user@example.com', 'body': 'Xin chào'}
+        return {'status': 'ready', 'prepared_id': 'prepared-1', 'preview': {
+            'title': 'Gửi tin', 'target': {'id': 88, 'name': 'S00089'},
+            'recipients': [{'email': 'user@example.com'}], 'body': 'Xin chào',
+        }}
+
+    monkeypatch.setattr(operations, 'request', gateway)
+    messages = await operations.read('business.quotation_chatter', {
+        'action': 'message', 'quotation_name': 'S00089',
+        'options': {'recipient': 'user@example.com', 'body': 'Xin chào'},
+    }, context)
+    assert 'user@example.com' in messages[0] and 'Xin chào' in messages[0]
+    assert confirmations.get_confirmation(messages[0].confirmation_id)['action'] == 'business.sales.message'
+
+
+@pytest.mark.asyncio
+async def test_exact_references_and_quantity_return_one_confirmation(quote_runtime, monkeypatch):
+    context, _, confirmations = quote_runtime
+    original = collector.request
+
+    async def exact(*args):
+        return {**await original(*args), 'exact_match_unique': True}
+
+    monkeypatch.setattr(collector, 'request', exact)
+    messages = await collector.collect({'action': 'start', 'customer_query': 'Customer',
+                                        'product_query': 'Product', 'quantity': 2}, context)
+    assert 'bảng giá' in messages[0]
+    messages = await collector.collect({'selected_id': 33}, context)
+    preview = messages[0]
+    assert 'Customer' in preview and 'Product' in preview
+    saved = confirmations.get_confirmation(preview.confirmation_id)
+    assert json.loads(saved['arguments_json']) == {'partner_id': 11, 'pricelist_id': 33, 'lines': [{'product_id': 22, 'quantity': 2}]}
+    assert (await workflow.prepare(context))[0].confirmation_id == preview.confirmation_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change_quantity', [False, True])
+async def test_confirmed_quote_resumes_only_for_missing_fields(quote_runtime, monkeypatch, change_quantity):
+    from app.business import quote_status
+    from app.services import unified_executor as executor_module
+
+    context, store, confirmations = quote_runtime
+    await collector.collect({'action': 'start', 'customer_query': 'Customer', 'product_query': 'Product', 'quantity': 2}, context)
+    await collector.collect({'selected_id': 11}, context)
+    await collector.collect({'selected_id': 22}, context)
+    preview = (await collector.collect({'selected_id': 33}, context))[0]
+    cid = preview.confirmation_id
+    assert confirmations.claim_and_validate(cid, 1, 7, 'fixture-binding')[0]
+    remote = {'status': 'failed', 'result': {'missing_fields': ['custom_fields.x_reference'],
+                                           'field_labels': {'custom_fields.x_reference': 'Mã tham chiếu nội bộ'}}}
+    monkeypatch.setattr(quote_status, 'request', AsyncMock(return_value=remote))
+    monkeypatch.setattr(executor_module, 'confirmation_service', confirmations)
+    monkeypatch.setattr(executor_module, 'conversation_history_store', store)
+    execute = AsyncMock(return_value={'status': 'in_progress'})
+    monkeypatch.setattr(executor_module.gateway_client, 'execute_action', execute)
+    correction = {'custom_fields': {'x_reference': 'ABC'}}
+    if change_quantity:
+        correction['quantity'] = 3
+    message = (await collector.collect(correction, context))[0]
+    if change_quantity:
+        assert message.confirmation_id != cid
+        execute.assert_not_called()
+    else:
+        assert 'Đang tạo báo giá' in message
+        execute.assert_awaited_once()
+        attempt = confirmations.get_confirmation(execute.call_args.kwargs['operation_id'])
+        assert attempt['operation_id'] != confirmations.get_confirmation(cid)['operation_id']
+        assert json.loads(attempt['arguments_json'])['custom_fields'] == {'x_reference': 'ABC'}
+
+
 @pytest.fixture
 def quote_runtime(tmp_path, monkeypatch):
     store = ConversationHistoryStore(str(tmp_path / 'conversation.db'))
@@ -30,10 +185,73 @@ def quote_runtime(tmp_path, monkeypatch):
 
     async def rpc(ctx, method, path, params=None):
         assert method == 'GET' and path == 'quotations/lookup'
+        if params['kind'] == 'pricelists':
+            return {'items': [{'id': 33, 'display_name': 'Bảng giá'}]}
         return {'items': [{'id': 11, 'display_name': 'Customer'}]} if params['kind'] == 'partners' else {'items': [{'id': 22, 'display_name': 'Product', 'list_price': 100}]}
 
     monkeypatch.setattr(collector, 'request', rpc)
     return context, store, confirmations
+
+
+@pytest.mark.asyncio
+async def test_select_pricelist_before_quote_preview(quote_runtime, monkeypatch):
+    context, _, _ = quote_runtime
+    async def lookup(_context, _method, _path, params):
+        if params['kind'] == 'partners':
+            return {'items': [{'id': 11, 'display_name': 'Customer'}], 'exact_match_unique': True}
+        if params['kind'] == 'products':
+            return {'items': [{'id': 22, 'display_name': 'Product'}], 'exact_match_unique': True}
+        return {'items': [{'id': 31, 'display_name': 'Giá thương mại'}, {'id': 32, 'display_name': 'Giá bệnh viện'}]}
+    monkeypatch.setattr(collector, 'request', lookup)
+    monkeypatch.setattr(workflow, 'prepare', AsyncMock(return_value=['preview']))
+    result = await collector.collect({'action': 'start', 'customer_query': 'Customer', 'product_query': 'Product'}, context)
+    assert 'Giá thương mại' in result[0] and 'Giá bệnh viện' in result[0]
+    assert not workflow.session(context)['active_draft']['quotation_data'].get('pricelist_id')
+    result = await collector.collect({'selected_id': 32}, context)
+    draft = workflow.session(context)['active_draft']
+    assert draft['quotation_data']['pricelist_id'] == 32
+    assert 'Giá bệnh viện' in collector.quote_details(draft)
+    assert result == ['preview']
+
+
+def test_changing_pricelist_clears_old_explicit_prices():
+    draft = {'quotation_data': {'pricelist_id': 31, 'lines': [{'product_id': 22, 'price_unit': 100, 'price_confirmed': True}]}, 'quotation_hints': {}}
+    collector.save_reference(draft, 'pricelists', 1, {'id': 32, 'display_name': 'Giá bệnh viện'})
+    assert draft['quotation_data']['lines'] == [{'product_id': 22}]
+
+
+def test_multiline_quote_facts_are_extracted_without_ai():
+    from app.business.quote_local import interpret
+    text = ('Ban bảo vệ chăm sóc sức khỏe cán bộ Quảng Ninh\n'
+            'bảng giá : Giá cho KH thương mại (VND)\n'
+            'Dụng cụ tập cơ bàn, ngón tay Model: SY-HR03E, số lượng 2\n'
+            'Bộ tập trị liệu tay. Model: HB-SGN3, số lượng 3\nthuế bỏ qua')
+    facts = interpret(text, {'draft_type': 'quotation'})
+    assert facts['customer_query'] == 'Ban bảo vệ chăm sóc sức khỏe cán bộ Quảng Ninh'
+    assert facts['pricelist_query'] == 'Giá cho KH thương mại (VND)'
+    assert facts['line_updates'] == [
+        {'line_index': 1, 'product_query': 'SY-HR03E', 'quantity': 2.0, 'tax_ids': []},
+        {'line_index': 2, 'product_query': 'HB-SGN3', 'quantity': 3.0, 'tax_ids': []},
+    ]
+
+
+def test_multiline_extraction_rejects_unrecognized_clauses():
+    from app.business.quote_local import interpret
+    assert interpret('Khách A\nbảng giá: Giá A\nSản phẩm Model: X-1, số lượng 2\nchiết khấu 30%', {'draft_type': 'quotation'}) is None
+
+
+@pytest.mark.asyncio
+async def test_pricelist_search_retries_without_descriptive_prefix(quote_runtime, monkeypatch):
+    context, _, _ = quote_runtime
+    queries = []
+    async def lookup(_context, _method, _path, params):
+        queries.append(params['query'])
+        return {'items': [] if len(queries) == 1 else [{'id': 2, 'display_name': 'KH thương mại (VND)'}]}
+    monkeypatch.setattr(collector, 'request', lookup)
+    result = await collector.lookup_reference(context, 'pricelists', 'Giá cho KH thương mại (VND)', {})
+    assert queries == ['Giá cho KH thương mại (VND)', 'KH thương mại']
+    assert result['items'][0]['id'] == 2
+    assert not result.get('exact_match_unique')
 
 
 @pytest.mark.asyncio
@@ -97,6 +315,40 @@ async def test_active_quote_uses_typed_facts_and_does_not_confirm_price_answer(q
     assert result.intent_type == IntentType.READ
     assert result.tool_name == 'sales.quotation.collect'
     assert result.parameters['price_unit'] == 200000
+
+
+@pytest.mark.asyncio
+async def test_quote_interpreter_receives_recent_history_and_visible_selection_names(quote_runtime, monkeypatch):
+    import time
+    context, _, _ = quote_runtime
+    pipeline = natural_module.NaturalPipeline()
+    model = AsyncMock(return_value='{"action":"update","selected_id":32}')
+    monkeypatch.setattr(pipeline, '_call_gemini_raw', model)
+    active = {'draft_type': 'quotation', 'draft_id': 'quote-test', 'quotation_data': {'lines': []},
+              'quotation_hints': {'selection': {'kind': 'pricelists', 'ids': [32], 'at': time.time()}}}
+    history = [{'role': 'user', 'content': f'tin nhắn {i}'} for i in range(10)]
+    context_data = {'active_draft': active, 'history': history, 'last_read': {
+        'business_candidates_pricelists': {'data': {'items': [{'id': 32, 'display_name': 'Giá bệnh viện'},
+                                                               {'id': 99, 'display_name': 'Không còn được chọn'}]}}}}
+    result = await pipeline.analyze_input('lấy cái cho bệnh viên nhé', context, context_data)
+    assert result.parameters['selected_id'] == 32
+    prompt = model.call_args.args[0]
+    assert 'tin nhắn 0' in prompt and 'Giá bệnh viện' in prompt
+    assert 'Không còn được chọn' not in prompt
+
+
+@pytest.mark.asyncio
+async def test_model_permission_error_does_not_blame_user(quote_runtime, monkeypatch):
+    context, _, _ = quote_runtime
+    await collector.collect({'action': 'start'}, context)
+    class ProviderDenied(Exception):
+        code = 403
+    pipeline = natural_module.NaturalPipeline()
+    monkeypatch.setattr(pipeline, '_call_gemini_raw', AsyncMock(side_effect=ProviderDenied()))
+    result = await pipeline.analyze_input('đổi số lượng thành hai', context, workflow.session(context))
+    assert 'quyền' in result.clarification_prompt.lower()
+    assert 'chưa được' in result.clarification_prompt.lower()
+    assert 'customer_lead' not in result.clarification_prompt
 
 
 @pytest.mark.asyncio

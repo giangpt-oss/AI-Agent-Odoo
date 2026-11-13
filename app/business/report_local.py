@@ -16,6 +16,18 @@ def interpret(text, session, today):
         value = value[:match.start()].strip()
     if previous.get('report_id') and output_format and value in {'xuất lại', 'gửi lại', 'đổi sang', 'cho tôi'}:
         return ('reports.file', {'output_format': output_format})
+    emp_report = re.fullmatch(
+        r'(?:(?:cho tôi|tạo|lập|viết|xuất|lấy|xem)(?: cho tôi)? )?báo cáo (?:công việc|hoạt động|hiệu suất|tuần)(?: tuần)?(?: của)?(?: nhân viên)?(?:\s+(.+))?',
+        value
+    )
+    if emp_report:
+        emp_name = (emp_report[1] or '').strip()
+        params = {'report_type': 'employee_weekly'}
+        if emp_name and emp_name not in {'này', 'vừa rồi', 'gần nhất', 'hiện tại', 'hiện trạng'}:
+            params['employee_name'] = emp_name
+        if output_format:
+            params['output_format'] = output_format
+        return ('reports.create', params)
     report = re.fullmatch(r'(?:(?:cho tôi|tạo|lập|viết|xuất|lấy|xem)(?: cho tôi)? )?báo cáo (bán hàng|doanh thu|báo giá|mua hàng|rfq|crm|liên hệ|tồn kho|nhập xuất kho)(.*)', value)
     params = {}
     if report:
