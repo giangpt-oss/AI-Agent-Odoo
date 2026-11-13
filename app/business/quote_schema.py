@@ -22,6 +22,7 @@ class QuoteTurn(QuoteLineFacts):
     """Semantic interpretation only; IDs, persistence and validation are application-owned."""
     action: Literal['start', 'update', 'preview', 'status', 'show', 'confirm', 'cancel', 'finish_lines', 'explain', 'other'] = 'update'
     customer_query: str | None = Field(default=None, max_length=200)
+    pricelist_query: str | None = Field(default=None, max_length=200)
     selected_id: int | None = Field(default=None, gt=0, strict=True)
     line_updates: list[QuoteLineFacts] | None = Field(default=None, max_length=100)
     use_customer_addresses: bool | None = None

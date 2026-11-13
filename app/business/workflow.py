@@ -377,7 +377,7 @@ async def prepare(context, status_only=False) -> list[str]:
     if not context.has_permission('sales.create'):
         return ['Tài khoản chưa có quyền tạo báo giá trên Odoo.']
     payload = draft['quotation_data']
-    if not payload.get('partner_id') or not payload.get('lines') or any(not line.get('product_id') for line in payload['lines']):
+    if not payload.get('partner_id') or not payload.get('pricelist_id') or draft.get('quotation_hints', {}).get('pricelist_lookup_pending') or not payload.get('lines') or any(not line.get('product_id') for line in payload['lines']):
         return [state_prompt(draft)]
     if len(json.dumps(payload, ensure_ascii=False)) > 150000:
         return ['Nháp báo giá quá dài. Hãy giảm số dòng hoặc rút ngắn ghi chú.']

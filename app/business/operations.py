@@ -13,7 +13,7 @@ from app.services.conversation_history_store import conversation_history_store a
 OPS = {
     'contacts': 'create update archive restore delete', 'products': 'create update archive restore',
     'crm': 'create update assign stage won lost reopen archive restore delete convert',
-    'sales': 'create update copy confirm cancel draft lock unlock delete send export request_approval grant_approval reject_approval',
+    'sales': 'create update copy confirm cancel draft lock unlock delete send export request_approval grant_approval reject_approval message note activity meeting',
     'purchases': 'create update copy confirm approve reject cancel draft delete send',
     'stock': 'create update confirm reserve unreserve validate cancel return inventory backorder lot_create',
     'activities': 'create update done', 'notes': 'create',
@@ -21,10 +21,24 @@ OPS = {
 ACTIONS = [f'business.{module}.{op}' for module, operations in OPS.items() for op in operations.split()]
 QUOTE_FLOW_ACTIONS = {'business.sales.request_approval', 'business.sales.grant_approval',
                       'business.sales.reject_approval', 'business.sales.send', 'business.sales.confirm'}
+CHATTER_ACTIONS = {f'business.sales.{action}' for action in ('message', 'note', 'activity', 'meeting')}
+
+
+def looks_like_quote_chatter(text, active):
+    lower = text.casefold()
+    if re.match(r'^(?:(?:hãy|giúp tôi|cho tôi)\s+)?(?:xem|tra cứu|liệt kê|kiểm tra)\b', lower):
+        return False
+    if re.search(r'gửi\s+(?:email\s+|mail\s+)?(?:file\s+)?báo giá\b', lower) and not re.search(r'nội dung|tin nhắn|lời nhắn', lower):
+        return False
+    new_quote = re.match(r'^(?:(?:hãy|giúp tôi|tôi muốn)\s+)?(?:tạo|lập)(?:\s+cho tôi)?\s+(?:(?:một|1)\s+)?báo giá\b', lower)
+    request = re.search(r'ghi chú|gửi tin|gửi email|gửi mail|nhắn tin|tin nhắn|lên lịch|lịch họp|hẹn gọi|cuộc họp|việc cần làm|hoạt động|nhắc tôi|lịch nhắc|nhắc nhở', lower)
+    quote = re.search(r'\bbáo giá\b|\bS\d{3,}\b', text, re.I) or active.get('draft_type') == 'quotation'
+    quote = quote or active.get('business_action') in CHATTER_ACTIONS
+    return bool(request and quote and not new_quote)
 
 
 def allowed_action(settings, action=None):
-    return settings.ENABLE_BUSINESS_ACTIONS or (
+    return getattr(settings, 'ENABLE_BUSINESS_ACTIONS', False) or (getattr(settings, 'ENABLE_QUOTATIONS', False) and (action is None or action in CHATTER_ACTIONS)) or (
         getattr(settings, 'ENABLE_QUOTATION_APPROVAL_FLOW', False) and (action is None or action in QUOTE_FLOW_ACTIONS))
 
 
@@ -80,6 +94,9 @@ def register(registry, tool_type):
     available_actions = [action for action in ACTIONS if allowed_action(settings, action)]
     common = {'type': 'object', 'additionalProperties': False}
     definitions = [
+        ('business.quotation_chatter', 'read', 'Chuẩn bị gửi tin, ghi chú, hoạt động hoặc cuộc họp gắn với báo giá.', {
+            'quotation_name': {'type': 'string'}, 'action': {'enum': ['message', 'note', 'activity', 'meeting']},
+            'options': {'type': 'object'}, 'company_id': {'type': 'integer'}}),
         ('business.quotation_flow', 'read', 'Xin duyệt/duyệt/từ chối/gửi báo giá theo số Odoo. Chỉ chuẩn bị bản xem trước, mọi thực thi phải xác nhận riêng. Không gọi để tạo báo giá mới.', {
             'quotation_name': {'type': 'string'},
             'action': {'enum': ['request_approval', 'grant_approval', 'reject_approval', 'send', 'confirm']},
@@ -138,7 +155,10 @@ def format_result(data):
     if result.get('download_url'):
         output.append('Tải PDF: ' + result['download_url'])
     if result.get('delivery_status'):
-        output.append('Giao email: ' + result['delivery_status'])
+        states = {'queued': 'Odoo đã xếp email vào hàng đợi gửi', 'sent': 'Odoo ghi nhận email đã gửi',
+                  'unknown': 'Chưa xác minh được trạng thái gửi email trên Odoo',
+                  'submitted': 'Odoo đã tiếp nhận yêu cầu gửi email'}
+        output.append('Email: ' + states.get(result['delivery_status'], result['delivery_status']))
     if data.get('steps'):
         output.append('Các bước đã ghi nhận: ' + ', '.join(item['stage'] for item in data['steps']))
     return ['\n'.join(output)]
@@ -148,10 +168,11 @@ async def read(tool, params, context):
     from app.core.config import get_settings
     if not allowed_action(get_settings()):
         return ['Thao tác nghiệp vụ chưa được bật để nghiệm thu.']
-    if tool == 'business.quotation_flow':
+    if tool in ('business.quotation_flow', 'business.quotation_chatter'):
         name = str(params.get('quotation_name') or '').upper().strip()
         action = 'business.sales.' + str(params.get('action') or '')
-        if action not in QUOTE_FLOW_ACTIONS or not name or len(name) > 100 or not allowed_action(get_settings(), action):
+        permitted = QUOTE_FLOW_ACTIONS if tool == 'business.quotation_flow' else CHATTER_ACTIONS
+        if action not in permitted or not name or len(name) > 100 or not allowed_action(get_settings(), action):
             return ['Bạn muốn xử lý bước nào và báo giá có số nào trên Odoo?']
         lookup = {'kind': 'sales', 'query': name}
         if params.get('company_id'):
@@ -161,7 +182,10 @@ async def read(tool, params, context):
         if len(matches) != 1:
             return [found.get('message') or 'Chưa xác định duy nhất báo giá trong công ty tài khoản hiện tại. Hãy cung cấp số báo giá và công ty chính xác.']
         row = matches[0]
-        payload = {'target_id': row['id'], 'options': params.get('options') or {}}
+        if tool == 'business.quotation_chatter':
+            remember(context, 'quotation_chatter_target', {'name': name, 'company_id': row.get('company_id')})
+        options = dict(params.get('options') or {})
+        payload = {'target_id': row['id'], 'options': options}
         if row.get('company_id'):
             payload['company_id'] = row['company_id'][0]
         messages = await read('business.draft', {'action': 'start', 'business_action': action, 'data': payload}, context)
@@ -204,6 +228,32 @@ async def read(tool, params, context):
     data = copy.deepcopy(params.get('data') or {})
     if not isinstance(data, dict) or set(data) - {'company_id', 'target_id', 'target_kind', 'values', 'lines', 'options'}:
         return ['Nháp chỉ nhận company_id, target_id, target_kind, values, lines, options.']
+    if business_action in CHATTER_ACTIONS:
+        opts = data.get('options') or {}
+        if not isinstance(opts, dict):
+            return ['Thông tin hoạt động không hợp lệ.']
+        queries = []
+        if opts.get('user_query'):
+            queries.append(('users', opts.pop('user_query')))
+        queries.extend(('contacts', query) for query in opts.pop('attendee_queries', []))
+        attendees = list(opts.get('attendee_ids', []))
+        for kind, query in queries:
+            if not isinstance(query, str) or not query.strip():
+                return ['Tên người được chọn không hợp lệ.']
+            found = await request(context, 'POST', 'business/lookup', {'kind': kind, 'query': query, **(
+                {'company_id': data['company_id']} if data.get('company_id') else {})})
+            matches = [item for item in found.get('items', []) if query.casefold() in {
+                str(item.get('name') or '').casefold(), str(item.get('display_name') or '').casefold(),
+                str(item.get('email') or '').casefold()}]
+            if len(matches) != 1 or found.get('has_more'):
+                return [f'Không xác định duy nhất người dùng {query}. Vui lòng cung cấp tên chính xác hoặc ID Odoo.']
+            if kind == 'users':
+                opts['user_id'] = matches[0]['id']
+            else:
+                attendees.append(matches[0]['id'])
+        if attendees:
+            opts['attendee_ids'] = list(dict.fromkeys(attendees))
+        data['options'] = opts
     if len(json.dumps(data, ensure_ascii=False)) > 150000:
         return ['Nháp quá lớn; hãy chia thành từng chứng từ.']
     payload = copy.deepcopy(old.get('business_data', {})) if action == 'update' else {}
@@ -230,7 +280,7 @@ async def read(tool, params, context):
         return ['Nháp đã thay đổi ở tác vụ khác; hãy đọc lại trước khi sửa.']
     if old:
         invalidate(context, old)
-    if business_action in QUOTE_FLOW_ACTIONS:
+    if business_action in QUOTE_FLOW_ACTIONS | CHATTER_ACTIONS:
         return await prepare(context)
     return [f"Đã lưu thông tin, phiên bản {saved['version']}. Chưa thay đổi Odoo. Bạn có thể yêu cầu xem trước để kiểm tra trước khi thực hiện."]
 
@@ -269,8 +319,8 @@ def preview_text(preview):
             lines.append(f"{change.get('label') or change.get('field')}: {change.get('before')} → {change.get('after')}")
     elif changes:
         lines.append('Thay đổi: ' + json.dumps(changes, ensure_ascii=False, default=str))
-    for key, label in {'affected_variant_ids': 'Biến thể cùng bị ảnh hưởng', 'lines': 'Dòng hàng', 'recipients': 'Người nhận', 'subject': 'Tiêu đề', 'body': 'Nội dung', 'attachments': 'File đính kèm', 'execution_lines': 'Số lượng thực hiện', 'backorder': 'Phần còn lại', 'return_lines': 'Dòng trả hàng', 'destination': 'Vị trí đích', 'before_quantity': 'Tồn trước', 'counted_quantity': 'Số kiểm kê', 'difference': 'Chênh lệch', 'conversion': 'Chuyển đổi CRM', 'lost_reason': 'Lý do thua', 'feedback': 'Kết quả hoạt động', 'notice': 'Lưu ý'}.items():
-        if key in preview:
+    for key, label in {'affected_variant_ids': 'Biến thể cùng bị ảnh hưởng', 'lines': 'Dòng hàng', 'recipients': 'Người nhận', 'subject': 'Tiêu đề', 'body': 'Nội dung', 'attachments': 'File đính kèm', 'activity_type': 'Loại hoạt động', 'summary': 'Tóm tắt', 'date_deadline': 'Ngày đến hạn', 'start': 'Bắt đầu', 'stop': 'Kết thúc', 'assignee': 'Phân công cho', 'attendees': 'Người tham dự', 'execution_lines': 'Số lượng thực hiện', 'backorder': 'Phần còn lại', 'return_lines': 'Dòng trả hàng', 'destination': 'Vị trí đích', 'before_quantity': 'Tồn trước', 'counted_quantity': 'Số kiểm kê', 'difference': 'Chênh lệch', 'conversion': 'Chuyển đổi CRM', 'lost_reason': 'Lý do thua', 'feedback': 'Kết quả hoạt động', 'notice': 'Lưu ý'}.items():
+        if key in preview and preview[key] is not None:
             value = preview[key]
             lines.append(label + ': ' + (json.dumps(value, ensure_ascii=False, default=str) if isinstance(value, (dict, list)) else str(value)))
     return '\n'.join(lines)
@@ -287,13 +337,16 @@ async def prepare(context):
         return ['Thao tác này chưa được bật.']
     response = await request(context, 'POST', 'business/prepare', {'action': draft['business_action'], 'payload': draft['business_data']})
     if response.get('status') == 'needs_information':
+        remember(context, 'business_missing', {'action': draft['business_action'], 'requirements': response.get('requirements', [])})
         requirements = response.get('requirements', [])
         lines = ['Cần bổ sung thông tin:']
         for item in requirements:
             label = item.get('label') or item['field']
             if item.get('choices'):
                 label += ': ' + ', '.join(f'{caption} ({value})' for value, caption in item['choices'])
-            lines.append(label + ' [' + item['field'] + ']')
+            field_labels = {'options.body': 'Nội dung', 'options.recipient': 'Email người nhận', 'options.activity_type': 'Loại hoạt động',
+                            'options.summary': 'Tóm tắt cuộc họp', 'options.start': 'Thời gian bắt đầu', 'options.stop': 'Thời gian kết thúc'}
+            lines.append(field_labels.get(item['field']) or label)
         if not requirements:
             lines.extend(response.get('missing', []))
         return ['\n'.join(lines) + '\nChưa thay đổi Odoo.']

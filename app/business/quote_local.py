@@ -13,6 +13,39 @@ def asks_delivery_or_approval_status(text):
                           r'(?:cấp trên|quản lý).*xác nhận.*chưa', text.casefold()))
 
 
+def structured_quote(text, draft):
+    """Parse a complete, unambiguous multiline quote without an AI request."""
+    data = draft.get('quotation_data') or {}
+    if data.get('lines') or data.get('partner_id') or data.get('pricelist_id'):
+        return None
+    rows = [row.strip() for row in text.splitlines() if row.strip()]
+    if len(rows) < 3:
+        return None
+    customer, pricelist, lines, no_tax = None, None, [], False
+    for row in rows:
+        price_match = re.fullmatch(r'bảng giá\s*:\s*(.+)', row, re.I)
+        product_match = re.fullmatch(r'(.+?)\s+model\s*:\s*([\w-]+)\s*[,;]\s*số lượng\s*:?\s*(\d+(?:[.,]\d+)?)', row, re.I)
+        if price_match and not pricelist:
+            pricelist = price_match[1].strip()
+        elif product_match:
+            quantity = float(product_match[3].replace(',', '.'))
+            if quantity <= 0:
+                return None
+            lines.append({'line_index': len(lines) + 1, 'product_query': product_match[2], 'quantity': quantity})
+        elif re.fullmatch(r'(?:thuế\s*(?:bỏ qua|không tính)|không (?:tính |áp dụng )?thuế)', row, re.I):
+            no_tax = True
+        elif customer is None and not lines and not pricelist and not re.search(r'[:;]', row):
+            customer = re.sub(r'^khách hàng\s*:\s*', '', row, flags=re.I).strip()
+        else:
+            return None
+    if not customer or not pricelist or not lines:
+        return None
+    if no_tax:
+        for line in lines:
+            line['tax_ids'] = []
+    return {'action': 'update', 'customer_query': customer, 'pricelist_query': pricelist, 'line_updates': lines}
+
+
 def interpret(text, draft, session=None):
     text = text.strip().rstrip('.!?').strip()
     lower = text.casefold()
@@ -29,6 +62,9 @@ def interpret(text, draft, session=None):
         return {'action': 'start'} if draft.get('draft_type') != 'quotation' or 'mới' in lower else {'action': 'preview'}
     if draft.get('draft_type') != 'quotation':
         return None
+    structured = structured_quote(text, draft)
+    if structured:
+        return structured
     if re.fullmatch(r'(?:dùng|lấy)(?: chính)? địa chỉ khách hàng(?: đã chọn)? cho (?:cả )?xuất hóa đơn và giao hàng', lower):
         return {'action': 'update', 'use_customer_addresses': True}
     session = session or {}

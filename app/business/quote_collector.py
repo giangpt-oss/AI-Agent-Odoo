@@ -1,6 +1,7 @@
 """Quote conversations store user facts before resolving Odoo references."""
 import copy
 import json
+import re
 import secrets
 import time
 
@@ -18,6 +19,8 @@ def state_prompt(draft):
     missing = []
     if not data.get('partner_id'):
         missing.append('chọn khách hàng từ Odoo' if hints.get('customer_query') else 'tên khách hàng')
+    if not data.get('pricelist_id'):
+        missing.append('bảng giá')
     if not lines:
         missing.append('tên sản phẩm và số lượng')
     for index, line in enumerate(lines, 1):
@@ -32,6 +35,7 @@ def quote_details(draft):
     data = draft['quotation_data']
     hints = draft.get('quotation_hints', {})
     details = ['Khách hàng: ' + str(hints.get('partner_label') or hints.get('customer_query') or data.get('partner_id') or 'chưa nhập')]
+    details.append('Bảng giá: ' + str(hints.get('pricelist_label') or 'chưa chọn'))
     for index, line in enumerate(data.get('lines', []), 1):
         product = hints.get(f'product_label_{index}') or hints.get(f'product_query_{index}') or line.get('product_id') or 'chưa nhập'
         quantity = line.get('quantity', 'theo mặc định Odoo')
@@ -49,7 +53,7 @@ def quote_details(draft):
             details.append(f"{name}: {value}")
     labels = {'validity_date': 'Ngày hết hạn báo giá', 'note': 'Ghi chú',
               'client_order_ref': 'Tham chiếu khách hàng', 'partner_invoice_id': 'Địa chỉ hóa đơn (ID)',
-              'partner_shipping_id': 'Địa chỉ giao hàng (ID)', 'pricelist_id': 'Bảng giá (ID)',
+              'partner_shipping_id': 'Địa chỉ giao hàng (ID)',
               'payment_term_id': 'Điều khoản thanh toán (ID)', 'fiscal_position_id': 'Vị thế thuế (ID)',
               'currency_id': 'Tiền tệ (ID)', 'origin': 'Chứng từ gốc'}
     details.extend(f"{label}: {data[name]}" for name, label in labels.items() if name in data)
@@ -63,6 +67,14 @@ def save_reference(draft, kind, index, row):
     if kind == 'partners':
         payload['partner_id'] = row['id']
         hints['partner_label'] = label
+    elif kind == 'pricelists':
+        if payload.get('pricelist_id') and payload['pricelist_id'] != row['id']:
+            for line in payload.get('lines', []):
+                for field in ('price_unit', 'price_confirmed', 'use_catalog_price'):
+                    line.pop(field, None)
+        payload['pricelist_id'] = row['id']
+        hints['pricelist_label'] = label
+        hints.pop('pricelist_lookup_pending', None)
     else:
         payload['lines'][index - 1]['product_id'] = row['id']
         hints[f'product_label_{index}'] = label
@@ -103,6 +115,19 @@ def save(context, draft, previous):
         confirmation_service.cancel_pending_draft_confirmations(user_id=context.user_id, chat_id=context.chat_id,
             telegram_binding_id=context.telegram_binding_id or 'default', draft_id=previous['draft_id'])
     return saved
+
+
+async def lookup_reference(context, kind, query, payload):
+    params = {'kind': kind, 'query': query, **({'company_id': payload['company_id']} if payload.get('company_id') else {})}
+    data = await request(context, 'GET', 'quotations/lookup', params)
+    if kind == 'pricelists' and data.get('items') == []:
+        simplified = re.sub(r'^giá\s+cho\s+', '', query.strip(), flags=re.I)
+        simplified = re.sub(r'\s*\([A-Z]{3}\)\s*$', '', simplified, flags=re.I).strip()
+        if simplified and simplified.casefold() != query.strip().casefold():
+            data = await request(context, 'GET', 'quotations/lookup', dict(params, query=simplified))
+            # A shortened query is a search, not proof that the intended price list is unique.
+            data.pop('exact_match_unique', None)
+    return data
 
 
 async def collect(params, context):
@@ -157,6 +182,11 @@ async def collect(params, context):
             if (hints.get('selection') or {}).get('kind') == 'partners':
                 hints.pop('selection', None)
         hints['customer_query'] = turn.customer_query
+    if turn.pricelist_query is not None:
+        if hints.get('pricelist_query', '').casefold() != turn.pricelist_query.casefold():
+            hints.pop('pricelist_label', None)
+            hints['pricelist_lookup_pending'] = True
+        hints['pricelist_query'] = turn.pricelist_query
     order_facts = turn.model_dump(exclude_none=True, include={
         'validity_date', 'partner_invoice_id', 'partner_shipping_id', 'pricelist_id',
         'payment_term_id', 'fiscal_position_id', 'currency_id', 'note', 'client_order_ref', 'origin',
@@ -196,9 +226,10 @@ async def collect(params, context):
     references.extend(('products', hints[f'product_query_{index}'], index)
                       for index, line in enumerate(payload['lines'], 1)
                       if not line.get('product_id') and hints.get(f'product_query_{index}'))
+    if hints.get('pricelist_query') and (not payload.get('pricelist_id') or hints.get('pricelist_lookup_pending')):
+        references.append(('pricelists', hints['pricelist_query'], 1))
     for kind, query, index in references:
-        data = await request(context, 'GET', 'quotations/lookup', {'kind': kind, 'query': query, **(
-            {'company_id': payload['company_id']} if payload.get('company_id') else {})})
+        data = await lookup_reference(context, kind, query, payload)
         if not isinstance(data.get('items'), list):
             return ['Đã lưu nháp. Tra cứu Odoo chưa hoàn tất: ' + str(data.get('message', 'hãy thử lại.'))]
         rows = data['items']
@@ -220,9 +251,22 @@ async def collect(params, context):
         if not saved:
             return ['Nháp đã thay đổi trong lúc tra cứu. Vui lòng xem lại.']
         if draft['quotation_hints'].get('selection'):
-            label = 'khách hàng' if kind == 'partners' else f'sản phẩm dòng {index}'
+            label = 'khách hàng' if kind == 'partners' else 'bảng giá' if kind == 'pricelists' else f'sản phẩm dòng {index}'
             options = '\n'.join(f"ID {row['id']}: {row.get('display_name') or row.get('name')}" for row in rows)
             return [f'Bạn muốn chọn {label} nào trong Odoo?\n{options}']
+    if not saved['quotation_data'].get('pricelist_id') and saved['quotation_data'].get('partner_id') and saved['quotation_data'].get('lines') and all(line.get('product_id') for line in saved['quotation_data']['lines']):
+        data = await request(context, 'GET', 'quotations/lookup', {'kind': 'pricelists', 'query': '', **(
+            {'company_id': saved['quotation_data']['company_id']} if saved['quotation_data'].get('company_id') else {})})
+        rows = data.get('items')
+        if not isinstance(rows, list) or not rows:
+            return ['Hãy cho biết tên bảng giá muốn dùng; tôi sẽ tìm trong Odoo.']
+        remember(context, 'business_candidates_pricelists', {'kind': 'pricelists', 'data': data, 'observed_at': time.time()})
+        draft = copy.deepcopy(saved)
+        draft['quotation_hints']['selection'] = {'kind': 'pricelists', 'line_index': 1, 'ids': [row['id'] for row in rows], 'at': time.time()}
+        if not save(context, draft, saved):
+            return ['Nháp đã thay đổi trong lúc tra cứu. Vui lòng xem lại.']
+        options = '\n'.join(f"ID {row['id']}: {row.get('display_name') or row.get('name')}" for row in rows)
+        return ['Bạn muốn chọn bảng giá nào? Bạn có thể trả lời bằng tên hoặc ID; nếu không thấy, hãy cho biết tên bảng giá.\n' + options]
     if saved != previous:
         resumed = await resume_quote(context, saved, prior)
         if resumed:

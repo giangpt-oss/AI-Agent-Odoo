@@ -764,6 +764,12 @@ class UnifiedExecutor:
             from app.business.operations import prepare as prepare_operation
             return await prepare_operation(context)
 
+        if tool_name == "business.draft":
+            # The model can label local draft collection as a write; it is still
+            # a read tool and must retain its normal preview/confirmation flow.
+            from app.business.operations import read as operation_read
+            return await operation_read(tool_name, dict(intent.parameters), context)
+
         if tool_name in ('crm.leads.create', 'crm.create', 'crm.leads.update', 'crm.update', 'crm.write'):
             from app.core.config import get_settings
             if get_settings().ENABLE_BUSINESS_ACTIONS:
@@ -1360,8 +1366,8 @@ class UnifiedExecutor:
         if not confirmation_service.mark_dispatched(conf_id, execution_token=exec_token):
             return ["⚠️ Phiên xử lý thao tác đã hết hạn hoặc không còn hiệu lực. Vui lòng thử lại."]
 
-        from app.business.operations import QUOTE_FLOW_ACTIONS
-        call_timeout = max(1.0, min(50.0 if norm_action in QUOTE_FLOW_ACTIONS else 14.0, remaining_time - 1.0))
+        from app.business.operations import CHATTER_ACTIONS, QUOTE_FLOW_ACTIONS
+        call_timeout = max(1.0, min(50.0 if norm_action in QUOTE_FLOW_ACTIONS | CHATTER_ACTIONS else 14.0, remaining_time - 1.0))
 
         try:
             gw_res = await gateway_client.execute_action(

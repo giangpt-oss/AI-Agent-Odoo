@@ -460,10 +460,11 @@ async def handle_telegram_turn(
         session_ctx = conversation_history_store.get_session(
             tenant=context.tenant, user_id=context.user_id, chat_id=req.chat_id,
             binding_id=context.telegram_binding_id, database=context.database)
-        if getattr(get_settings(), 'ENABLE_QUOTATION_APPROVAL_FLOW', False):
-            from app.business.operations import QUOTE_FLOW_ACTIONS, interpret_quotation_flow
+        if getattr(get_settings(), 'ENABLE_QUOTATION_APPROVAL_FLOW', False) or getattr(get_settings(), 'ENABLE_QUOTATIONS', False):
+            from app.business.operations import CHATTER_ACTIONS, QUOTE_FLOW_ACTIONS, interpret_quotation_flow, looks_like_quote_chatter
             active = session_ctx.get('active_draft') or {}
-            if interpret_quotation_flow(req.text) or (active.get('draft_type') == 'business' and active.get('business_action') in QUOTE_FLOW_ACTIONS):
+            if (interpret_quotation_flow(req.text) or looks_like_quote_chatter(req.text, active)
+                    or (active.get('draft_type') == 'business' and active.get('business_action') in QUOTE_FLOW_ACTIONS | CHATTER_ACTIONS)):
                 turn_budget = 60.0
                 turn_deadline = turn_start_time + turn_budget
                 turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
