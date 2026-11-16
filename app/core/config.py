@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     INTEGRATION_MODE: Literal["direct", "gateway"] = "direct"
 
     # Gateway Integration Settings
-    GATEWAY_BASE_URL: str = "http://localhost:8080"
+    GATEWAY_BASE_URL: str = "http://127.0.0.1:8080"
     WORKSPACE_BACKGROUND_READS: bool = False
     GATEWAY_TO_AGENT_SECRET: str = ""
     AGENT_TO_GATEWAY_SECRET: str = ""
