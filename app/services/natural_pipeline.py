@@ -320,6 +320,18 @@ class NaturalPipeline:
                 parameters={},
             )
 
+        # Fast-path: Trạng thái kết nối & Hồ sơ cá nhân (0 LLM call)
+        if any(w in lower for w in ["trạng thái kết nối", "kiểm tra kết nối", "tình trạng kết nối", "kết nối dịch vụ", "kết nối của tôi", "kết nối odoo", "kết nối google"]) or lower == "kết nối":
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="connections.status",
+            )
+        if any(w in lower for w in ["tôi là ai", "hồ sơ của tôi", "thông tin tài khoản", "whoami", "hồ sơ cá nhân", "hồ sơ"]):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="identity.whoami",
+            )
+
         # 2. Fast-path: Lời chào THUẦN TÚY (Chỉ áp dụng khi TOÀN CÂU là lời chào/menu, không kèm nội dung khác)
         text_nopunct = re.sub(r"[^\w\s]", "", lower).strip()
         pure_greetings = {
@@ -678,7 +690,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             settings = get_settings()
             # Nếu đang có API key hoặc mock/test LLM mà bị lỗi -> giữ nguyên draft/version, báo không chỉnh sửa được
             is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
-            has_llm_key = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+            has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
+            has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
+            has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
+            has_llm_key = has_gemini or has_groq or has_openai
             if has_llm_key or is_mock_llm:
                 return IntentAnalysisResult(
                     intent_type=IntentType.REPLY,
@@ -715,7 +730,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
     async def _call_gemini_raw(self, prompt: str, response_schema=None) -> str:
         """Gọi mô hình với deadline hữu hạn, không tự thử lại HTTP."""
         settings = get_settings()
-        if (settings.DEFAULT_LLM_PROVIDER == "groq" or not settings.GEMINI_API_KEY) and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY):
+        has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
+        has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
+        has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
+        if (getattr(settings, "DEFAULT_LLM_PROVIDER", None) == "groq" or not has_gemini) and (has_groq or has_openai):
             api_key = getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY
             model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "openai/gpt-oss-120b"
             if "gemini" in model.lower():
@@ -841,7 +859,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
 
         settings = get_settings()
         is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
-        has_llm_key = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+        has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
+        has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
+        has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
+        has_llm_key = has_gemini or has_groq or has_openai
         if not has_llm_key and not is_mock_llm:
             return self._offline_semantic_dispatch(text, context, session_context)
 
@@ -875,7 +896,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             logger.error("LLM dispatch error: %s", e)
             try:
                 offline_res = self._offline_semantic_dispatch(text, context, session_context)
-                return offline_res
+                if offline_res.tool_name != "knowledge.query":
+                    return offline_res
             except Exception:
                 pass
             from app.services.error_handler import classify_exception
@@ -1042,8 +1064,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
 
         # Câu hỏi thông tin mặc định tra cứu Drive. Chỉ chuyển sang dữ liệu trực tiếp
         # khi người dùng chỉ rõ nguồn hoặc yêu cầu mở/xem một danh sách cụ thể.
+        is_business_term = any(w in lower for w in [
+            "đối tác", "khách hàng", "nhà cung cấp", "liên hệ", "contact",
+            "sản phẩm", "tồn kho", "mặt hàng", "hàng hóa", "giá bán", "sku",
+            "đơn bán", "đơn hàng", "báo giá", "đơn mua", "đơn mua hàng", "nhập hàng",
+            "phiếu kho", "điều chuyển kho", "phiếu nhập", "phiếu xuất",
+            "hóa đơn", "công nợ", "chứng từ", "nhân viên", "danh bạ", "nhân sự", "đồng nghiệp",
+            "cơ hội", "crm", "lead", "lịch họp", "lịch của tôi", "email", "thư chưa đọc"
+        ])
         explicit_source = re.search(r"\b(?:odoo|gmail|google calendar)\b", lower)
-        if is_question and not explicit_source and not lower.startswith(("xem ", "liệt kê ", "kiểm tra ", "danh sách ")):
+        if is_question and not explicit_source and not is_business_term and not lower.startswith(("xem ", "liệt kê ", "kiểm tra ", "danh sách ")):
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="knowledge.query",
