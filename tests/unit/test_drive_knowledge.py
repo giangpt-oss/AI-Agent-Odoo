@@ -79,3 +79,29 @@ def test_only_google_file_urls_supply_ids():
     assert drive_reference("https://docs.google.com/spreadsheets/d/file_123/edit") == ("file_123", True)
     assert drive_reference("https://drive.google.com/drive/folders/folder123") == (None, True)
     assert drive_reference("https://drive.google.com.invalid/file/d/file123") == (None, False)
+
+
+@pytest.mark.asyncio
+async def test_information_question_queues_drive_with_original_question(monkeypatch):
+    from app.core.config import get_settings
+    from app.knowledge import drive
+    from app.services.turn_trace import request_id
+
+    context = GatewayUserContext(user_id=1, tenant="example", database="test", odoo_uid=1,
+        telegram_user_id=7, chat_id=7, telegram_binding_id="binding", permissions={"workspace.drive.read"})
+    monkeypatch.setattr(get_settings(), "WORKSPACE_BACKGROUND_READS", True)
+    queue = AsyncMock(return_value={"status": "queued", "job_id": "drive-job-test"})
+    monkeypatch.setattr(drive.gateway_client, "create_workspace_job", queue)
+    monkeypatch.setattr(drive.gateway_client, "drive_knowledge", AsyncMock(side_effect=AssertionError("Synchronous Drive call")))
+    question = "PN22 còn bao nhiêu bộ?"
+    intent = await NaturalPipeline().analyze_input(question, context, {})
+    token = request_id.set("drive-turn-test")
+    try:
+        messages = await UnifiedExecutor().execute(intent, context, 7, 7, {}, 9999999999, {})
+    finally:
+        request_id.reset(token)
+    assert "drive-job-test" in messages[0]
+    assert queue.await_args.args == (1, "drive-turn-test", "drive", "knowledge.search")
+    assert queue.await_args.kwargs["body"] == {"question": question}
+    assert queue.await_args.kwargs["deadline_seconds"] == 300
+    assert queue.await_args.kwargs["wait_seconds"] == 0

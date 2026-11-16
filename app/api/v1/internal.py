@@ -643,7 +643,12 @@ async def workspace_job_completed_webhook(payload: WorkspaceJobCompletedPayload)
             return {"status": "withheld", "job_id": payload.job_id, "messages": []}
         msg_text = ""
         if payload.status == "completed":
-            if (isinstance(payload.result, dict) and payload.result.get("status") == "OK"
+            if (payload.service == "drive" and payload.operation == "knowledge.search"
+                    and isinstance(payload.result, dict) and isinstance(payload.result.get("question"), str)):
+                from app.knowledge.drive import answer_from_drive
+                msg_text = "\n\n".join(await answer_from_drive(payload.result["question"], None,
+                                                               documents=payload.result))
+            elif (isinstance(payload.result, dict) and payload.result.get("status") == "OK"
                     and payload.service in {"drive", "docs", "sheets", "slides", "calendar", "gmail"}):
                 from app.workspace.agent import format_result
 
@@ -671,7 +676,7 @@ async def workspace_job_completed_webhook(payload: WorkspaceJobCompletedPayload)
                 database=identity.get("database"),
                 role="assistant",
                 content=msg_text,
-                event_id=f"workspace:{payload.job_id}",
+                event_id=f"workspace:{payload.job_id}" + (":unknown_result" if payload.status == "unknown_result" else ""),
             )
         except Exception as exc:
             logger.warning("Could not append callback turn to history: %s", exc)

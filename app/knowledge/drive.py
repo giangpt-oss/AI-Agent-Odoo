@@ -107,10 +107,18 @@ async def search_drive(question, context):
     return {"status": "OK", "skipped": response.get("skipped", 0) + failed}, evidence
 
 
-async def answer_from_drive(question, context):
+async def answer_from_drive(question, context, *, documents=None):
     if not question:
         return ["Bạn muốn tra cứu nội dung gì trên Google Drive?"]
-    status, evidence = await search_drive(question, context)
+    if documents is None:
+        status, evidence = await search_drive(question, context)
+    else:
+        file_id, _ = drive_reference(question)
+        clean_question = re.sub(r"https?://[^\s<>]+", "", question).strip()
+        with measure_stage("internal_retrieval_ms"):
+            evidence, failed = await asyncio.to_thread(extract_evidence, documents.get("files", []),
+                                                       clean_question, direct=bool(file_id))
+        status = {"status": documents.get("status"), "skipped": documents.get("skipped", 0) + failed}
     code = status.get("status")
     if code != "OK":
         messages = {

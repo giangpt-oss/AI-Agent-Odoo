@@ -221,9 +221,30 @@ class UnifiedExecutor:
         timeout = max(1.0, min(10.0, remaining_time - 1.0))
 
         if tool_name == "knowledge.query":
-            from app.knowledge.drive import answer_from_drive
+            from app.knowledge.drive import answer_from_drive, drive_reference, STOPWORDS
+            from app.core.config import get_settings
+            from app.services.turn_trace import request_id
+            import re
 
             query = (params.get("query") or params.get("q") or "").strip()
+            turn_id = request_id.get()
+            if (query and get_settings().WORKSPACE_BACKGROUND_READS and turn_id
+                    and context.telegram_binding_id and context.telegram_user_id and context.chat_id):
+                file_id, has_link = drive_reference(query)
+                if has_link and not file_id:
+                    return ["Hãy gửi link một tệp cụ thể hoặc đặt câu hỏi để tôi tìm trên Google Drive."]
+                clean = re.sub(r"https?://[^\s<>]+", "", query).strip()
+                words = re.findall(r"[^\W_]+(?:[-./_][^\W_]+)*", clean.casefold())
+                terms = list(dict.fromkeys(word for word in words if len(word) >= 2 and word not in STOPWORDS))[:8]
+                job = await gateway_client.create_workspace_job(
+                    context.user_id, turn_id, "drive", "knowledge.search",
+                    parameters={"terms": terms, "file_id": file_id}, body={"question": query},
+                    deadline_seconds=300, wait_seconds=0, telegram_chat_id=context.chat_id,
+                    telegram_user_id=context.telegram_user_id, telegram_binding_id=context.telegram_binding_id,
+                )
+                if job.get("job_id"):
+                    return [f"Đang tìm tài liệu Drive (#{job['job_id']}). Tôi sẽ gửi câu trả lời khi hoàn tất."]
+                return ["⚠️ Không thể đưa yêu cầu tìm tài liệu vào hàng đợi. Vui lòng thử lại."]
             return await answer_from_drive(query, context)
 
         if tool_name and tool_name.startswith("business."):
