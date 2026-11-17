@@ -66,6 +66,31 @@ class UnifiedExecutor:
         now_ts = time.time()
         remaining_time = max(0.5, deadline - now_ts)
 
+        if intent.intent_type == IntentType.TOOL_PLAN:
+            from app.core.config import get_settings
+            from app.services.turn_trace import request_id
+            from app.workspace.catalog import SERVICES
+
+            turn_id = request_id.get()
+            reads = {f"workspace.{service}.read" for service in SERVICES}
+            if (get_settings().WORKSPACE_BACKGROUND_READS and turn_id
+                    and context.telegram_binding_id and context.telegram_user_id and context.chat_id
+                    and all(step.tool_name in reads and context.has_permission(step.tool_name)
+                            for step in intent.steps)):
+                documents = {"drive", "docs", "sheets", "slides"}
+                long_read = any(step.tool_name.split(".")[1] in documents for step in intent.steps)
+                job = await gateway_client.create_workspace_job(
+                    context.user_id, turn_id, "workspace", "plan.read",
+                    body={"steps": [step.model_dump() for step in intent.steps]},
+                    wait_seconds=0, deadline_seconds=300 if long_read else 120,
+                    telegram_chat_id=context.chat_id, telegram_user_id=context.telegram_user_id,
+                    telegram_binding_id=context.telegram_binding_id,
+                )
+                if job.get("job_id"):
+                    return [f"Đã nhận kế hoạch đọc (#{job['job_id']}). Tôi sẽ gửi kết quả khi hoàn tất."]
+                return ["⚠️ Không thể đưa kế hoạch đọc vào hàng đợi."]
+            return await self._execute_workspace_plan(intent, context, chat_id, deadline)
+
         # 1. REPLY Intent
         if intent.intent_type == IntentType.REPLY:
             return [intent.reply_text or ""]
@@ -114,13 +139,115 @@ class UnifiedExecutor:
 
         # 8. READ Intent
         if intent.intent_type == IntentType.READ:
-            return await self._handle_read(intent, context, chat_id, user_info, remaining_time)
+            return await self._handle_read(intent, context, chat_id, user_info, remaining_time,
+                                           history=(session_context or {}).get("history"))
 
         # 9. PREPARE_WRITE Intent
         if intent.intent_type == IntentType.PREPARE_WRITE:
             return await self._handle_prepare_write(intent, context, chat_id)
 
         return ["⚠️ Không xác định được loại ý định xử lý."]
+
+    async def _execute_workspace_plan(self, intent, context, chat_id, deadline, *, background=False):
+        from app.services.workspace_tool_plan import StepResult, execute_plan, summarize_calendar_page
+        from app.workspace.agent import format_result, validate_tool
+        from app.workspace.catalog import SERVICES
+
+        allowed_names = {
+            f"workspace.{service}.{action}" for service in SERVICES for action in ("read", "write")
+        }
+        allowed_names.add("odoo.partners.search")
+        writes = []
+        for step in intent.steps:
+            tool = self.registry.get_tool(step.tool_name)
+            if (tool is None or tool.name not in allowed_names
+                    or (tool.required_permission and not context.has_permission(tool.required_permission))
+                    or (background and tool.action_type != "read")):
+                if background:
+                    raise PermissionError("Kế hoạch chứa công cụ ngoài quyền hoặc ngoài phạm vi.")
+                return ["⚠️ Kế hoạch chứa công cụ ngoài quyền hoặc ngoài phạm vi hỗ trợ."]
+            if tool.action_type == "write":
+                writes.append(step.id)
+        if len(writes) > 1 or any(
+            dependency in writes for step in intent.steps for dependency in step.depends_on
+        ):
+            return ["⚠️ Kế hoạch chỉ hỗ trợ một bước chuẩn bị ghi ở cuối."]
+
+        async def invoke(step, params, timeout):
+            if step.tool_name == "odoo.partners.search":
+                return await self._resolve_plan_partner(context, params)
+            service, kind = validate_tool(step.tool_name, params)
+            if kind == "write":
+                child = IntentAnalysisResult(
+                    intent_type=IntentType.PREPARE_WRITE, tool_name=step.tool_name, parameters=params,
+                )
+                messages = await self._handle_prepare_write(child, context, chat_id)
+                return StepResult("preview", messages)
+            result = await gateway_client.workspace_query(
+                context.user_id, service, params, timeout=timeout,
+            )
+            ok = result.get("status") == "OK"
+            data = result.get("data") if ok else None
+            if service == "calendar" and params["method"] == "events.list" and isinstance(data, dict):
+                messages = summarize_calendar_page(data)
+            else:
+                messages = format_result(service, result)
+            return StepResult("completed" if ok else "failed", messages, data)
+
+        # Prepare a write only once every read has succeeded, even if the model
+        # omitted a dependency. The existing confirmation remains authoritative.
+        steps = [
+            step.model_copy(update={"depends_on": [item.id for item in intent.steps if item.id != step.id]})
+            if step.id in writes else step
+            for step in intent.steps
+        ]
+        outcomes = await execute_plan(steps, invoke, deadline, writes=writes,
+                                      task_timeout=300 if background else 120)
+        if background:
+            return {
+                "steps": [
+                    {"id": step.id, "tool": step.tool_name, "status": outcomes[step.id].status,
+                     "messages": outcomes[step.id].messages}
+                    for step in steps
+                ],
+                "partial": any(result.status != "completed" for result in outcomes.values()),
+            }
+        return [
+            f"Bước {position} · {step.tool_name}\n" + "\n".join(outcomes[step.id].messages)
+            for position, step in enumerate(steps, 1)
+        ]
+
+    async def _resolve_plan_partner(self, context, params):
+        from app.business.source_filters import contact_filter
+        from app.services.workspace_tool_plan import StepResult
+
+        query = params.get("query")
+        if (not isinstance(query, str) or not query.strip() or len(query) > 200
+                or set(params) - {"query", "contact_kind", "record_scope"}):
+            return StepResult("failed", ["Cần tên hoặc email đối tác cụ thể."])
+        query = query.strip()
+        domain, _ = contact_filter(params, context)
+        if "@" in query:
+            domain.append(("email", "=", query))
+        elif "%" in query or "_" in query:
+            domain.append(("name", "=", query))
+        else:
+            domain.append(("name", "ilike", query))
+        result = await gateway_client.query_odoo(
+            user_id=context.user_id, model="res.partner", fields=["id", "name", "email"],
+            domain=domain, limit=2,
+        )
+        error = self._handle_odoo_query_error(result, "đối tác/khách hàng")
+        if error:
+            return StepResult("failed", error)
+        matches = result.get("items", [])
+        if len(matches) > 1 or result.get("total_count", 0) not in (None, 0, 1):
+            return StepResult("failed", ["Có nhiều đối tác phù hợp. Hãy chỉ rõ tên hoặc email của đối tác cần chọn."])
+        if len(matches) != 1 or not isinstance(matches[0].get("email"), str) or not matches[0]["email"].strip():
+            return StepResult("failed", ["Chưa tìm được email của đối tác."])
+        partner = matches[0]
+        return StepResult("completed", ["Đã xác định một đối tác có email trong Odoo."],
+                          {"email": partner["email"]})
 
     # =========================================================================
     # DRAFT HANDLER
@@ -208,6 +335,8 @@ class UnifiedExecutor:
         chat_id: int,
         user_info: dict[str, Any],
         remaining_time: float,
+        *,
+        history: list[dict] | None = None,
     ) -> list[str]:
         tool_name = intent.tool_name
         tool_def = self.registry.get_tool(tool_name) if tool_name else None
@@ -221,21 +350,22 @@ class UnifiedExecutor:
         timeout = max(1.0, min(10.0, remaining_time - 1.0))
 
         if tool_name == "knowledge.query":
-            from app.knowledge.drive import answer_from_drive, drive_reference, STOPWORDS
+            from app.knowledge.drive import (
+                answer_from_drive, drive_query_terms, drive_reference, resolve_drive_follow_up,
+            )
             from app.core.config import get_settings
             from app.services.turn_trace import request_id
-            import re
 
             query = (params.get("query") or params.get("q") or "").strip()
+            if query and get_settings().DRIVE_INDEX_ENABLED:
+                query = resolve_drive_follow_up(query, history or [])
             turn_id = request_id.get()
             if (query and get_settings().WORKSPACE_BACKGROUND_READS and turn_id
                     and context.telegram_binding_id and context.telegram_user_id and context.chat_id):
                 file_id, has_link = drive_reference(query)
                 if has_link and not file_id:
                     return ["Hãy gửi link một tệp cụ thể hoặc đặt câu hỏi để tôi tìm trên Google Drive."]
-                clean = re.sub(r"https?://[^\s<>]+", "", query).strip()
-                words = re.findall(r"[^\W_]+(?:[-./_][^\W_]+)*", clean.casefold())
-                terms = list(dict.fromkeys(word for word in words if len(word) >= 2 and word not in STOPWORDS))[:8]
+                _, terms = drive_query_terms(query)
                 job = await gateway_client.create_workspace_job(
                     context.user_id, turn_id, "drive", "knowledge.search",
                     parameters={"terms": terms, "file_id": file_id}, body={"question": query},

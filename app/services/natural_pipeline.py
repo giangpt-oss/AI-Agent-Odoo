@@ -37,6 +37,8 @@ class NaturalPipeline:
     ) -> IntentAnalysisResult:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
+        if lower.rstrip("?!.") in {"hôm nay tôi có gì", "hôm nay tôi cần làm gì", "hôm nay có gì"}:
+            return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="briefing.today")
         active = (session_context or {}).get('active_draft') or {}
         from app.business.operations import looks_like_quote_chatter
         if getattr(get_settings(), 'ENABLE_QUOTATIONS', False) and looks_like_quote_chatter(clean_text, active):
@@ -747,7 +749,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 if response_schema:
                     content_prompt += (
                         "\n\nBẮT BUỘC trả về duy nhất 1 JSON object với các trường chuẩn:\n"
-                        "- intent_type: 'reply' | 'read' | 'draft' | 'prepare_write' | 'clarify' | 'unsupported'\n"
+                        "- intent_type: 'reply' | 'read' | 'draft' | 'prepare_write' | 'clarify' | 'unsupported' | 'tool_plan'\n"
+                        "- steps: danh sách bước cho 'tool_plan' theo hướng dẫn của yêu cầu\n"
                         "- tool_name: string (BẮT BUỘC cho 'read' và 'prepare_write', lấy đúng tên công cụ được cấp)\n"
                         "- parameters: dict các tham số của công cụ\n"
                         "- reply_text: string (bắt buộc khi intent_type='reply')\n"
@@ -800,7 +803,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
     ) -> IntentAnalysisResult:
         available_tools = self.registry.list_tools(list(context.permissions))
         from app.services.intent_prompt import INTENT_PROMPT, tool_catalog
-        tools_summary = tool_catalog(available_tools)
+        from app.services.workspace_tool_plan import select_tools
+
+        selected = select_tools(text, available_tools)
+        tools_summary = tool_catalog(selected)
 
         # Nạp ngữ cảnh hội thoại có cấu trúc: tối đa 20 messages, giới hạn 12.000 ký tự
         context_blocks = []
@@ -887,6 +893,39 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 else:
                     raise
             intent = IntentAnalysisResult.model_validate(data)
+            names = [step.tool_name for step in intent.steps]
+            if intent.tool_name:
+                names.append(intent.tool_name)
+            selected_names = {tool.name for tool in selected}
+            allowed_names = {tool.name for tool in available_tools}
+            canonical_names = {
+                tool.name if (tool := self.registry.get_tool(name)) else name for name in names
+            }
+            if intent.steps and not canonical_names <= allowed_names:
+                return IntentAnalysisResult(
+                    intent_type=IntentType.UNSUPPORTED,
+                    reply_text="Công cụ cần thiết không khả dụng cho tài khoản hiện tại.",
+                )
+            if canonical_names <= allowed_names and not canonical_names <= selected_names:
+                expanded = select_tools(text, available_tools, expanded=True)
+                preferred = [tool for tool in available_tools if tool.name in canonical_names]
+                expanded = (preferred + [tool for tool in expanded if tool.name not in canonical_names])[:12]
+                expanded_names = {tool.name for tool in expanded}
+                if not canonical_names <= expanded_names:
+                    raise ValueError("Các công cụ yêu cầu vượt giới hạn định tuyến.")
+                raw_retry = await self._call_gemini_raw(
+                    user_prompt.replace(tools_summary, tool_catalog(expanded), 1),
+                    response_schema=IntentAnalysisResult.model_json_schema(),
+                )
+                intent = IntentAnalysisResult.model_validate_json(raw_retry.strip().removeprefix("```json").removesuffix("```").strip())
+                retry_names = [step.tool_name for step in intent.steps]
+                if intent.tool_name:
+                    retry_names.append(intent.tool_name)
+                if not all(
+                    (tool := self.registry.get_tool(name)) and tool.name in expanded_names
+                    for name in retry_names
+                ):
+                    raise ValueError("Công cụ không khả dụng sau khi mở rộng danh mục.")
             if intent.intent_type == IntentType.REPLY:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="knowledge.query",
                                             parameters={"query": text})

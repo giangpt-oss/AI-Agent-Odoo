@@ -559,7 +559,7 @@ async def handle_telegram_turn(
                 clean_text,
                 database=context.database,
             )
-            if messages and not (intent_res.tool_name or "").startswith("knowledge."):
+            if messages and not intent_res.steps and not (intent_res.tool_name or "").startswith("knowledge."):
                 conversation_history_store.append_turn(
                     context.tenant,
                     context.user_id,
@@ -614,6 +614,50 @@ async def handle_telegram_turn(
     )
 
 
+class WorkspaceReadPlanPayload(BaseModel):
+    user_id: int
+    telegram_user_id: int
+    chat_id: int
+    binding_id: str = Field(min_length=1)
+    link: dict[str, Any]
+    remaining_seconds: float = Field(gt=0, le=300)
+    steps: list[dict[str, Any]] = Field(min_length=1, max_length=8)
+
+
+@router.post("/workspace/read-plan", dependencies=[Depends(verify_gateway_secret)])
+async def run_workspace_read_plan(payload: WorkspaceReadPlanPayload):
+    from pydantic import ValidationError
+
+    from app.domain.intent_schema import IntentAnalysisResult
+    from app.services.unified_executor import unified_executor
+    from app.workspace.catalog import SERVICES
+
+    deadline = time.time() + payload.remaining_seconds
+    try:
+        intent = IntentAnalysisResult(intent_type="tool_plan", steps=payload.steps)
+    except ValidationError as exc:
+        raise HTTPException(422, "Kế hoạch đọc không hợp lệ.") from exc
+    reads = {f"workspace.{service}.read" for service in SERVICES}
+    if any(step.tool_name not in reads for step in intent.steps):
+        raise HTTPException(422, "Kế hoạch nền chỉ hỗ trợ đọc Google Workspace.")
+    identity = await gateway_client.resolve_identity(payload.telegram_user_id, payload.chat_id)
+    if (not identity or identity.get("user_id") != payload.user_id
+            or identity.get("telegram_binding_id") != payload.binding_id):
+        raise HTTPException(403, "Liên kết Telegram đã thay đổi.")
+    google_sub = payload.link.get("google_sub")
+    version = payload.link.get("link_version")
+    if not isinstance(google_sub, str) or not google_sub or type(version) is not int:
+        raise HTTPException(422, "Liên kết Google không hợp lệ.")
+    if not await gateway_client.drive_link_is_current(payload.user_id, google_sub, version, []):
+        raise HTTPException(403, "Liên kết Google đã thay đổi.")
+    try:
+        return await unified_executor._execute_workspace_plan(
+            intent, build_gateway_user_context(identity), payload.chat_id, deadline, background=True,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+
 class WorkspaceJobCompletedPayload(BaseModel):
     job_id: str
     user_id: int
@@ -641,13 +685,34 @@ async def workspace_job_completed_webhook(payload: WorkspaceJobCompletedPayload)
         if (not identity or identity.get("user_id") != payload.user_id
                 or identity.get("telegram_binding_id") != payload.telegram_binding_id):
             return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+        drive_search = payload.service == "drive" and payload.operation == "knowledge.search"
+        result = payload.result if isinstance(payload.result, dict) else {}
+        if (payload.service, payload.operation) == ("workspace", "plan.read") and payload.status == "completed":
+            if result.get("format") != "workspace_plan_v1" or result.get("status") == "link_changed":
+                return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+            for position, step in enumerate(result.get("steps", []), 1):
+                messages.append(f"Bước {position} · {step['tool']}\n" + "\n".join(step["messages"]))
+            return {"status": "accepted", "job_id": payload.job_id, "messages": messages}
+        if payload.status == "completed" and drive_search:
+            from app.knowledge.drive import INDEXED_DRIVE_FORMAT, DriveLinkChanged, answer_from_indexed_drive
+
+            if result.get("format") == INDEXED_DRIVE_FORMAT:
+                question = result.get("question")
+                try:
+                    indexed_messages = await answer_from_indexed_drive(
+                        question if isinstance(question, str) else "", payload.user_id, result,
+                    )
+                except DriveLinkChanged:
+                    return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+                except GatewayServiceError as exc:
+                    raise HTTPException(503, "Chưa xác minh được liên kết Google Drive") from exc
+                # The reply contains evidence tied to this Google link and must expire with it.
+                return {"status": "accepted", "job_id": payload.job_id, "messages": indexed_messages}
         msg_text = ""
         if payload.status == "completed":
-            if (payload.service == "drive" and payload.operation == "knowledge.search"
-                    and isinstance(payload.result, dict) and isinstance(payload.result.get("question"), str)):
+            if drive_search and isinstance(result.get("question"), str):
                 from app.knowledge.drive import answer_from_drive
-                msg_text = "\n\n".join(await answer_from_drive(payload.result["question"], None,
-                                                               documents=payload.result))
+                msg_text = "\n\n".join(await answer_from_drive(result["question"], None, documents=result))
             elif (isinstance(payload.result, dict) and payload.result.get("status") == "OK"
                     and payload.service in {"drive", "docs", "sheets", "slides", "calendar", "gmail"}):
                 from app.workspace.agent import format_result

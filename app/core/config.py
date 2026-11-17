@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     # Gateway Integration Settings
     GATEWAY_BASE_URL: str = "http://127.0.0.1:8080"
     WORKSPACE_BACKGROUND_READS: bool = False
+    DRIVE_INDEX_ENABLED: bool = False
     GATEWAY_TO_AGENT_SECRET: str = ""
     AGENT_TO_GATEWAY_SECRET: str = ""
 

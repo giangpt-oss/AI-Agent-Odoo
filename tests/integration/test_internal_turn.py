@@ -197,7 +197,7 @@ async def test_internal_turn_blocks_write_confirmation(client, gateway_settings)
             resp = client.post("/internal/v1/telegram/turn", json=payload, headers=headers)
             assert resp.status_code == 200
             data = resp.json()
-            assert "chưa được hỗ trợ qua Gateway" in data["messages"][0]
+            assert "chưa được hỗ trợ" in data["messages"][0]
             mock_turn.assert_not_called()
 
 

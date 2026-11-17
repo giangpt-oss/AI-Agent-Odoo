@@ -105,3 +105,38 @@ async def test_information_question_queues_drive_with_original_question(monkeypa
     assert queue.await_args.kwargs["body"] == {"question": question}
     assert queue.await_args.kwargs["deadline_seconds"] == 300
     assert queue.await_args.kwargs["wait_seconds"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, expected_text", [
+    ("no_evidence", "Chưa đủ bằng chứng"),
+    ("not_indexed", "Chưa có chỉ mục"),
+    ("connection_error", "lỗi kết nối hoặc quyền truy cập"),
+])
+async def test_indexed_drive_reports_search_states_without_reading_raw_files(monkeypatch, status, expected_text):
+    from app.core.config import get_settings
+    from app.knowledge import drive
+
+    context = GatewayUserContext(
+        user_id=1, tenant="example", database="test", odoo_uid=1, telegram_user_id=7,
+        chat_id=7, telegram_binding_id="binding", permissions={"workspace.drive.read"},
+    )
+    monkeypatch.setattr(get_settings(), "DRIVE_INDEX_ENABLED", True)
+    monkeypatch.setattr(get_settings(), "WORKSPACE_BACKGROUND_READS", False)
+    search = AsyncMock(return_value={"format": drive.INDEXED_DRIVE_FORMAT, "status": status, "partial": True})
+    legacy_read = AsyncMock()
+    synthesis = AsyncMock()
+    monkeypatch.setattr(drive.gateway_client, "drive_search", search)
+    monkeypatch.setattr(drive.gateway_client, "drive_knowledge", legacy_read)
+    monkeypatch.setattr(drive.rag_service, "answer_from_evidence", synthesis)
+
+    question = "PN22 còn bao nhiêu bộ?"
+    intent = await NaturalPipeline().analyze_input(question, context, {})
+    reply = await UnifiedExecutor().execute(intent, context, 7, 7, {}, 9999999999, {})
+    assert expected_text in reply[0]
+    if status == "no_evidence":
+        assert drive.PARTIAL_COVERAGE_MESSAGE in reply[0]
+    assert search.await_args.args[:3] == (context, question, None)
+    assert "pn22" in search.await_args.args[3]
+    legacy_read.assert_not_awaited()
+    synthesis.assert_not_awaited()
