@@ -73,24 +73,38 @@ async def execute_plan(steps, invoke, deadline, *, writes=(), task_timeout=TASK_
 
 
 ROUTES = {
-    "drive": r"drive|tài liệu|tệp",
-    "calendar": r"calendar|lịch|cuộc họp|sự kiện",
-    "gmail": r"gmail|e-?mail|thư",
-    "docs": r"docs|văn bản",
-    "sheets": r"sheets|bảng tính",
-    "slides": r"slides|slide|trình chiếu",
-    "odoo": r"odoo|đối tác|khách hàng|hóa đơn|tồn kho|sản phẩm|đơn hàng",
-    "reports": r"báo cáo",
-    "quotation": r"báo giá",
-    "crm": r"crm|cơ hội",
-    "tasks": r"công việc|việc cần làm",
+    "drive": r"drive|tài liệu|tệp|file",
+    "calendar": r"calendar|lịch|lich|cuộc họp|cuoc hop|sự kiện|su kien",
+    "gmail": r"gmail|e-?mail|mail|thư|thu",
+    "docs": r"docs|văn bản|van ban",
+    "sheets": r"sheets|bảng tính|bang tinh|excel",
+    "slides": r"slides|slide|trình chiếu|trinh chieu",
+    "odoo": r"odoo|đối tác|doi tac|khách hàng|khach hang|khách|hóa đơn|hoa don|tồn kho|ton kho|sản phẩm|san pham|đơn hàng|don hang",
+    "reports": r"báo cáo|bao cao",
+    "quotation": r"báo giá|bao gia",
+    "crm": r"crm|cơ hội|co hoi|lead",
+    "tasks": r"công việc|cong viec|việc cần làm|viec can lam|task",
+    "briefing": r"hôm nay có gì|hom nay co gi|tổng hợp ngày|briefing",
 }
 
 
-def select_tools(text, tools, *, expanded=False):
+def select_tools(
+    text,
+    tools,
+    *,
+    expanded=False,
+    normalized_text=None,
+    domains=None,
+    read_only=False,
+):
+    if read_only:
+        tools = [tool for tool in tools if getattr(tool, "action_type", "read") == "read"]
+    combined = f"{text or ''} {normalized_text or ''}".casefold()
     matched = {name for name, pattern in ROUTES.items()
-               if re.search(rf"(?<!\w)(?:{pattern})(?!\w)", text.casefold())}
-    words = set(re.findall(r"\w+", text.casefold()))
+               if re.search(rf"(?<!\w)(?:{pattern})(?!\w)", combined)}
+    if domains:
+        matched |= {str(d).casefold() for d in domains if d}
+    words = set(re.findall(r"\w+", combined))
 
     def priority(tool):
         parts = set(tool.name.split("."))

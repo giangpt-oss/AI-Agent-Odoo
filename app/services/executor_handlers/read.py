@@ -274,7 +274,13 @@ class ReadHandler:
                 if result.get("status") == "OK":
                     content = result.get("data", {})
                     if len(json.dumps(content, ensure_ascii=False)) <= 12000 and not (isinstance(content, dict) and "content_base64" in content):
-                        self.conversation_history_store.set_last_read_data(context.tenant, context.user_id, chat_id, context.telegram_binding_id, f"workspace.{service_name}", content, database=context.database)
+                        self.conversation_history_store.set_last_read_data(
+                            context.tenant, context.user_id, chat_id, context.telegram_binding_id,
+                            f"workspace.{service_name}", content,
+                            database=context.database,
+                            google_account_id=context.google_account_id,
+                            owner_key=context.owner_key,
+                        )
                 return format_result(service_name, result)
             except ValueError as exc:
                 return [f"⚠️ Yêu cầu Workspace chưa hợp lệ: {exc}"]
@@ -310,8 +316,7 @@ class ReadHandler:
             if not isinstance(tasks, list):
                 tasks = []
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "tasks", tasks, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "tasks", tasks, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             from app.api.v1.internal import format_task_list
             return [format_task_list(tasks)]
 
@@ -334,8 +339,7 @@ class ReadHandler:
 
             events = events_resp if isinstance(events_resp, list) else events_resp.get("events", [])
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "calendar", events, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "calendar", events, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_calendar_events(events, time_min, time_max)]
 
         if tool_name == "gmail.messages.unread":
@@ -348,8 +352,7 @@ class ReadHandler:
 
             msgs = msgs_resp if isinstance(msgs_resp, list) else msgs_resp.get("messages", [])
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "gmail", msgs, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "gmail", msgs, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_unread_emails(msgs)]
 
         if tool_name == "crm.leads.search":
@@ -363,8 +366,7 @@ class ReadHandler:
 
             leads = leads_resp if isinstance(leads_resp, list) else leads_resp.get("leads", [])
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "crm", leads, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "crm", leads, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_crm_leads(leads, query)]
 
         if tool_name == "odoo.partners.search":
@@ -391,13 +393,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.partners", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.partners", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.partners", "total_count": total_count, "query": query, "model": "res.partner", "entity_label": entity_label},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             if count_only:
                 return [count_message(res.get("total_count"), entity_label, query)]
             return ["Phạm vi: " + entity_label + ".\n" + self._format_odoo_partners(items, query, total_count=total_count, count_only=False)]
@@ -422,13 +422,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.products", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.products", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.products", "total_count": total_count, "query": query, "model": "product.product"},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_odoo_products(items, query, total_count=total_count, count_only=count_only)]
 
         if tool_name == "odoo.sales.search":
@@ -456,13 +454,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.sales", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.sales", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.sales", "total_count": total_count, "query": query, "model": "sale.order", "entity_label": entity_label},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             if count_only:
                 return [count_message(res.get("total_count"), entity_label, query)]
             return [document_rows(items, entity_label, res.get("total_count"))]
@@ -492,13 +488,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.purchases", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.purchases", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.purchases", "total_count": total_count, "query": query, "model": "purchase.order", "entity_label": entity_label},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             if count_only:
                 return [count_message(res.get("total_count"), entity_label, query)]
             return [document_rows(items, entity_label, res.get("total_count"))]
@@ -526,13 +520,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.inventory", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.inventory", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.inventory", "total_count": total_count, "query": query, "model": "stock.picking"},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_odoo_inventory(items, query, total_count=total_count, count_only=count_only)]
 
         if tool_name == "odoo.invoices.search":
@@ -558,13 +550,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.invoices", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.invoices", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.invoices", "total_count": total_count, "query": query, "model": "account.move"},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_odoo_invoices(items, query, total_count=total_count, count_only=count_only)]
 
         if tool_name == "odoo.employees.search":
@@ -587,13 +577,11 @@ class ReadHandler:
             items = res.get("items", [])
             total_count = res.get("total_count", len(items))
             self.conversation_history_store.set_last_read_data(
-                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.employees", items, database=context.database
-            )
+                context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo.employees", items, database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             self.conversation_history_store.set_last_read_data(
                 context.tenant, context.user_id, chat_id, context.telegram_binding_id, "odoo_last_count",
                 {"category": "odoo.employees", "total_count": total_count, "query": query, "model": "hr.employee"},
-                database=context.database
-            )
+                database=context.database, google_account_id=context.google_account_id, owner_key=context.owner_key)
             return [self._format_odoo_employees(items, query, total_count=total_count, count_only=count_only)]
 
         return [f"⚠️ Chưa có handler triển khai cho công cụ đọc `{tool_name}`."]

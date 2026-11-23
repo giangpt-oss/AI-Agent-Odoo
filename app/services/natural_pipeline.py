@@ -28,6 +28,8 @@ class NaturalPipeline:
 
     def __init__(self, tool_registry: Optional[ToolRegistry] = None) -> None:
         self.registry = tool_registry or global_tool_registry
+        from app.services.turn_router import TurnRouter
+        self.router = TurnRouter(self._call_router_llm)
 
     async def analyze_input(
         self,
@@ -38,11 +40,56 @@ class NaturalPipeline:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
         active = (session_context or {}).get("active_draft") or {}
+
+        # Chế độ 2 tầng thuần ngôn ngữ tự nhiên:
+        # - Xác nhận/Hủy CHỈ nhận từ nút bấm Telegram (Gateway gửi nội bộ /confirm <id> hoặc /cancel <id>).
+        # - Bỏ toàn bộ /lệnh nghiệp vụ và regex fast-path đoán ý định cũ.
+        if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
+            btn_match = re.fullmatch(r"/(confirm|cancel)\s+([a-zA-Z0-9_-]+)", clean_text, re.I)
+            if btn_match:
+                cmd, cid = btn_match.group(1).lower(), btn_match.group(2)
+                return IntentAnalysisResult(
+                    intent_type=IntentType.ACTION_CONFIRM if cmd == "confirm" else IntentType.ACTION_CANCEL,
+                    confirmation_id=cid,
+                    parameters={"confirmation_id": cid},
+                )
+            if re.search(r"\b(?:conf_|op_|c_)[a-zA-Z0-9_-]+\b", clean_text):
+                m_id = re.search(r"\b(?:conf_|op_|c_)[a-zA-Z0-9_-]+\b", clean_text)
+                if m_id:
+                    cid = m_id.group(0)
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.ACTION_STATUS,
+                        confirmation_id=cid,
+                        parameters={"confirmation_id": cid},
+                    )
+            if active.get("draft_type") == "quotation" and getattr(get_settings(), "ENABLE_QUOTATIONS", False):
+                explicit_workspace = re.search(
+                    r"\b(?:drive|gmail|calendar|docs|sheets|slides|mail|email)\b|"
+                    r"quy chế|nội quy|chính sách|sổ tay|tài liệu nội bộ|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ|"
+                    r"\b(?:lịch|lich|cuộc họp|cuoc hop)\b",
+                    lower,
+                )
+                quotation_target = re.search(r"\bbáo giá\b|\bs\d{3,}\b", lower)
+                if explicit_workspace and not quotation_target:
+                    topic_context = dict(session_context or {})
+                    topic_context.pop("active_draft", None)
+                    topic_context.pop("pending_clarification", None)
+                    routed = await self._route_two_stage(clean_text, context, topic_context)
+                    if routed is not None:
+                        return routed
+                    return await self._dispatch_with_llm(clean_text, context, topic_context)
+                return await self._dispatch_quote_turn(clean_text, context, session_context)
+            routed = await self._route_two_stage(clean_text, context, session_context)
+            if routed is not None:
+                return routed
+            return await self._dispatch_with_llm(clean_text, context, session_context)
+
         if (active.get("draft_type") == "quotation" and not clean_text.startswith("/")
                 and getattr(get_settings(), "ENABLE_QUOTATIONS", False)):
             explicit_workspace = re.search(
-                r"\b(?:drive|gmail|calendar|docs|sheets|slides)\b|"
-                r"quy chế|nội quy|chính sách|sổ tay|tài liệu nội bộ|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ",
+                r"\b(?:drive|gmail|calendar|docs|sheets|slides|mail|email)\b|"
+                r"quy chế|nội quy|chính sách|sổ tay|tài liệu nội bộ|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ|"
+                r"\b(?:lịch|lich|cuộc họp|cuoc hop)\b",
                 lower,
             )
             quotation_target = re.search(r"\bbáo giá\b|\bs\d{3,}\b", lower)
@@ -50,6 +97,10 @@ class NaturalPipeline:
                 topic_context = dict(session_context or {})
                 topic_context.pop("active_draft", None)
                 topic_context.pop("pending_clarification", None)
+                if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
+                    routed = await self._route_two_stage(clean_text, context, topic_context)
+                    if routed is not None:
+                        return routed
                 return await self._dispatch_with_llm(clean_text, context, topic_context)
         if lower.rstrip("?!.") in {"hôm nay tôi có gì", "hôm nay tôi cần làm gì", "hôm nay có gì"}:
             return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="briefing.today")
@@ -425,7 +476,7 @@ class NaturalPipeline:
         if active_quote and lower in {'xác nhận', 'đồng ý', 'ok xác nhận'}:
             from app.services.confirmation_service import confirmation_service
             quote_bare_confirmation = bool(confirmation_service.list_pending_confirmations(user_id=context.user_id, chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or 'default'))
-        if (not active_quote or explicit_confirmation or quote_bare_confirmation) and (lower in {"xác nhận", "đồng ý", "ok xác nhận"} or lower.startswith("xác nhận ") or lower.startswith("đồng ý ")):
+        if (not active_quote or explicit_confirmation or quote_bare_confirmation) and (lower in {"xác nhận", "đồng ý", "ok xác nhận"} or explicit_confirmation):
             words = lower.split()
             cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
             return IntentAnalysisResult(
@@ -488,11 +539,15 @@ class NaturalPipeline:
             if active_draft and active_draft.get("draft_type") == "email":
                 return await self._edit_draft_with_llm(active_draft, clean_text, context)
 
-        # 6. TOÀN BỘ CÂU TỰ NHIÊN CÒN LẠI ĐỀU CHUYỂN SANG LLM DISPATCHER
+        # 6. TOÀN BỘ CÂU TỰ NHIÊN CÒN LẠI ĐỀU CHUYỂN SANG LLM DISPATCHER (hoặc Two-Stage Router khi bật cờ)
         active = (session_context or {}).get('active_draft') or {}
         quote_request = re.match(r'^(?:(?:hãy|giúp tôi|tôi muốn)\s+)?(?:tạo|lập)(?:\s+cho tôi)?\s+(?:(?:một|1)\s+)?báo giá\b', lower)
         if get_settings().ENABLE_QUOTATIONS and (active.get('draft_type') == 'quotation' or quote_request):
             return await self._dispatch_quote_turn(clean_text, context, session_context)
+        if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
+            routed = await self._route_two_stage(clean_text, context, session_context)
+            if routed is not None:
+                return routed
         return await self._dispatch_with_llm(clean_text, context, session_context)
 
     async def _dispatch_quote_chatter(self, text, context, session_context):
@@ -584,11 +639,23 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             cleaned = raw.strip().removeprefix('```json').removeprefix('```').removesuffix('```').strip()
             turn = QuoteTurn.model_validate_json(cleaned)
             if turn.action == 'confirm':
+                if getattr(get_settings(), 'ENABLE_TWO_STAGE_ROUTER', False):
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.CLARIFY,
+                        clarification_prompt='Để đảm bảo an toàn, vui lòng bấm nút Xác nhận hoặc Từ chối trực tiếp trên bản xem trước.',
+                    )
                 if conf:
                     return IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=conf['confirmation_id'])
                 return IntentAnalysisResult(intent_type=IntentType.CLARIFY, clarification_prompt='Báo giá chưa có bản xem trước để xác nhận. Bạn muốn tôi kiểm tra và hiển thị bản xem trước không?')
             if turn.action == 'other':
-                return await self._dispatch_with_llm(text, context, session_context)
+                topic_context = dict(session_context or {})
+                topic_context.pop('active_draft', None)
+                topic_context.pop('pending_clarification', None)
+                if getattr(get_settings(), 'ENABLE_TWO_STAGE_ROUTER', False):
+                    routed = await self._route_two_stage(text, context, topic_context)
+                    if routed is not None:
+                        return routed
+                return await self._dispatch_with_llm(text, context, topic_context)
             return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=turn.model_dump(exclude_none=True))
         except Exception as exc:
             logger.warning('Quotation semantic extraction failed: %s code=%s', type(exc).__name__, getattr(exc, 'code', None))
@@ -742,78 +809,180 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 ),
             )
 
-    async def _call_gemini_raw(self, prompt: str, response_schema=None) -> str:
-        """Gọi mô hình với deadline hữu hạn, không tự thử lại HTTP."""
+    async def _call_router_llm(
+        self,
+        prompt: str,
+        response_schema=None,
+        *,
+        model_override: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+    ) -> str:
+        """Delegate Stage 1 router call to _call_gemini_raw while staying mock-compatible."""
+        is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
+        if is_mock_llm:
+            return await self._call_gemini_raw(prompt, response_schema=response_schema)
+        return await self._call_gemini_raw(
+            prompt,
+            response_schema=response_schema,
+            model_override=model_override,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def _call_gemini_raw(
+        self,
+        prompt: str,
+        response_schema=None,
+        *,
+        model_override: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+    ) -> str:
+        """Gọi mô hình qua llm_client (connection pooling + tự động failover 429/503/timeout)."""
+        from app.services.llm_client import generate_json
+
+        return await generate_json(
+            prompt,
+            response_schema=response_schema,
+            model_override=model_override,
+            timeout_seconds=timeout_seconds,
+            settings_override=get_settings(),
+        )
+
+    def _enforce_read_only(self, intent: IntentAnalysisResult) -> Optional[IntentAnalysisResult]:
+        """Ensure a read-only turn NEVER returns a write/draft intent or write tool."""
+        if intent.intent_type in (IntentType.PREPARE_WRITE, IntentType.DRAFT):
+            return None
+        if intent.tool_name:
+            tool = self.registry.get_tool(intent.tool_name)
+            if tool and getattr(tool, "action_type", "read") != "read":
+                return None
+        for step in intent.steps:
+            tool = self.registry.get_tool(step.tool_name)
+            if tool and getattr(tool, "action_type", "read") != "read":
+                return None
+        return intent
+
+    async def _route_two_stage(
+        self,
+        text: str,
+        context: GatewayUserContext,
+        session_context: Optional[dict[str, Any]] = None,
+    ) -> Optional[IntentAnalysisResult]:
+        """Stage 1 router -> dispatch to grounded handler or Stage 2 tool selection."""
+        from app.domain.route_schema import RouteMode
+        from app.services.turn_router import chitchat_reply, resolve_grounded_context
+
         settings = get_settings()
-        has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
-        has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
-        has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
-        if (getattr(settings, "DEFAULT_LLM_PROVIDER", None) == "groq" or not has_gemini) and (has_groq or has_openai):
-            api_key = getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY
-            model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "openai/gpt-oss-120b"
-            if "gemini" in model.lower():
-                model = "openai/gpt-oss-120b"
+        is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
+        has_llm_key = any(
+            isinstance(getattr(settings, k, None), str) and bool(getattr(settings, k).strip())
+            for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY")
+        )
+        if not has_llm_key and not is_mock_llm:
+            return None
 
-            def _sync_groq_call() -> str:
-                from openai import OpenAI
-                base_url = getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-                client = OpenAI(api_key=api_key, base_url=base_url, timeout=28.0)
-                content_prompt = prompt
-                if response_schema:
-                    content_prompt += (
-                        "\n\nTrả về duy nhất một JSON object tuân thủ JSON Schema sau. "
-                        "Chỉ sử dụng các trường và giá trị phù hợp với schema của yêu cầu này.\n"
-                        + json.dumps(response_schema, ensure_ascii=False)
-                    )
-                kwargs = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": content_prompt}],
-                    "temperature": 0.1,
-                }
-                if response_schema:
-                    kwargs["response_format"] = {"type": "json_object"}
-                resp = client.chat.completions.create(**kwargs)
-                return resp.choices[0].message.content or ""
+        deadline = (session_context or {}).get("_turn_deadline")
+        decision = await self.router.route(text, context, session_context, deadline=deadline)
+        if decision is None:
+            if isinstance(session_context, dict):
+                session_context["_route_meta"] = {"route_mode": None, "confidence": None, "fallback_used": True}
+            return None  # Single fallback to legacy flow with raw text
+        if isinstance(session_context, dict):
+            session_context["_route_meta"] = {
+                "route_mode": decision.mode.value,
+                "confidence": decision.confidence,
+                "fallback_used": False,
+            }
 
-            return await asyncio.wait_for(asyncio.to_thread(_sync_groq_call), timeout=28.0 if response_schema else 20.0)
-
-        api_key = settings.GEMINI_API_KEY
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY is not configured")
-
-        def _sync_call() -> str:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=28000, retry_options=types.HttpRetryOptions(attempts=1)))
-            model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite"
-            resp = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_json_schema=response_schema,
-                    max_output_tokens=900 if response_schema else None,
-                    thinking_config=types.ThinkingConfig(thinking_level='MINIMAL') if model.startswith('gemini-3') else None,
-                ),
+        threshold = float(getattr(settings, "ROUTER_CONFIDENCE_THRESHOLD", 0.6) or 0.6)
+        if decision.mode == RouteMode.CLARIFY or decision.confidence < threshold:
+            reason = decision.clarify_reason or "Tôi chưa chắc chắn bạn muốn thực hiện thao tác nào. Bạn nói rõ hơn giúp tôi nhé?"
+            return IntentAnalysisResult(
+                intent_type=IntentType.CLARIFY,
+                clarification_prompt=reason,
+                candidate_options=decision.clarify_options,
             )
-            return resp.text or ""
 
-        # HTTP giới hạn 28 giây; lớp async chặn thời gian chờ toàn lời gọi.
-        return await asyncio.wait_for(asyncio.to_thread(_sync_call), timeout=28.0 if response_schema else 20.0)
+        domain_hints = [d.value for d in decision.domains]
+
+        if decision.mode == RouteMode.CHITCHAT:
+            return IntentAnalysisResult(
+                intent_type=IntentType.REPLY,
+                reply_text=chitchat_reply(text),
+            )
+
+        if decision.mode == RouteMode.KNOWLEDGE:
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="knowledge.query",
+                parameters={"query": decision.normalized_text},
+            )
+
+        if decision.mode == RouteMode.CONTEXT:
+            outcome, payload = resolve_grounded_context(decision, text, context, session_context)
+            if outcome == "reply":
+                return IntentAnalysisResult(intent_type=IntentType.REPLY, reply_text=payload)
+            if outcome == "clarify":
+                prompt_msg, options = payload
+                return IntentAnalysisResult(
+                    intent_type=IntentType.CLARIFY,
+                    clarification_prompt=prompt_msg,
+                    candidate_options=options,
+                )
+            # outcome == "requery": fall through to strict read-only Stage 2
+            return await self._dispatch_with_llm(
+                text,
+                context,
+                session_context,
+                normalized_text=payload,
+                domains=domain_hints,
+                read_only=True,
+            )
+
+        if decision.mode == RouteMode.READ:
+            return await self._dispatch_with_llm(
+                text,
+                context,
+                session_context,
+                normalized_text=decision.normalized_text,
+                domains=domain_hints,
+                read_only=True,
+            )
+
+        if decision.mode == RouteMode.PREPARE_WRITE:
+            return await self._dispatch_with_llm(
+                text,
+                context,
+                session_context,
+                normalized_text=decision.normalized_text,
+                domains=domain_hints,
+                read_only=False,
+            )
+
+        return None
 
     async def _dispatch_with_llm(
         self,
         text: str,
         context: GatewayUserContext,
         session_context: Optional[dict[str, Any]] = None,
+        *,
+        normalized_text: Optional[str] = None,
+        domains: Optional[list[str]] = None,
+        read_only: bool = False,
     ) -> IntentAnalysisResult:
         available_tools = self.registry.list_tools(list(context.permissions))
+        if read_only:
+            available_tools = [t for t in available_tools if getattr(t, "action_type", "read") == "read"]
         from app.services.intent_prompt import INTENT_PROMPT, tool_catalog
         from app.services.workspace_tool_plan import select_tools
 
-        selected = select_tools(text, available_tools)
+        selected = select_tools(
+            text,
+            available_tools,
+            normalized_text=normalized_text,
+            domains=domains,
+            read_only=read_only,
+        )
         tools_summary = tool_catalog(selected)
 
         # Nạp ngữ cảnh hội thoại có cấu trúc: tối đa 20 messages, giới hạn 12.000 ký tự
@@ -844,6 +1013,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             pending_clarify = session_context.get("pending_clarification")
             if pending_clarify:
                 context_blocks.append(f"<pending_clarification>\n{json.dumps(pending_clarify, ensure_ascii=False)}\n</pending_clarification>")
+
+            replied_msg = session_context.get("reply_to_text")
+            if replied_msg:
+                context_blocks.append(f"<replied_message>\n{replied_msg}\n</replied_message>")
 
         context_str = "\n\n".join(context_blocks)
 
@@ -878,10 +1051,32 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
         has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
         has_llm_key = has_gemini or has_groq or has_openai
         if not has_llm_key and not is_mock_llm:
-            return self._offline_semantic_dispatch(text, context, session_context)
+            offline_res = self._offline_semantic_dispatch(text, context, session_context)
+            if read_only and self._enforce_read_only(offline_res) is None:
+                return IntentAnalysisResult(
+                    intent_type=IntentType.CLARIFY,
+                    clarification_prompt="Yêu cầu này có vẻ là tra cứu nhưng không khớp công cụ đọc phù hợp. Bạn muốn tôi tra cứu thông tin gì cụ thể?",
+                )
+            return offline_res
+
+        def _remaining_timeout() -> Optional[float]:
+            if is_mock_llm:
+                return None
+            dl = (session_context or {}).get("_turn_deadline")
+            if dl is None:
+                return None
+            return max(1.0, min(28.0, dl - time.time() - 0.5))
 
         try:
-            raw_json = await self._call_gemini_raw(user_prompt, response_schema=IntentAnalysisResult.model_json_schema())
+            call_timeout = _remaining_timeout()
+            if call_timeout is not None:
+                raw_json = await self._call_gemini_raw(
+                    user_prompt,
+                    response_schema=IntentAnalysisResult.model_json_schema(),
+                    timeout_seconds=call_timeout,
+                )
+            else:
+                raw_json = await self._call_gemini_raw(user_prompt, response_schema=IntentAnalysisResult.model_json_schema())
             cleaned = raw_json.strip()
             if cleaned.startswith("```json"):
                 cleaned = cleaned[7:]
@@ -915,16 +1110,32 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     reply_text="Công cụ cần thiết không khả dụng cho tài khoản hiện tại.",
                 )
             if canonical_names <= allowed_names and not canonical_names <= selected_names:
-                expanded = select_tools(text, available_tools, expanded=True)
+                expanded = select_tools(
+                    text,
+                    available_tools,
+                    expanded=True,
+                    normalized_text=normalized_text,
+                    domains=domains,
+                    read_only=read_only,
+                )
                 preferred = [tool for tool in available_tools if tool.name in canonical_names]
                 expanded = (preferred + [tool for tool in expanded if tool.name not in canonical_names])[:12]
                 expanded_names = {tool.name for tool in expanded}
                 if not canonical_names <= expanded_names:
                     raise ValueError("Các công cụ yêu cầu vượt giới hạn định tuyến.")
-                raw_retry = await self._call_gemini_raw(
-                    user_prompt.replace(tools_summary, tool_catalog(expanded), 1),
-                    response_schema=IntentAnalysisResult.model_json_schema(),
-                )
+                retry_timeout = _remaining_timeout()
+                retry_prompt = user_prompt.replace(tools_summary, tool_catalog(expanded), 1)
+                if retry_timeout is not None:
+                    raw_retry = await self._call_gemini_raw(
+                        retry_prompt,
+                        response_schema=IntentAnalysisResult.model_json_schema(),
+                        timeout_seconds=retry_timeout,
+                    )
+                else:
+                    raw_retry = await self._call_gemini_raw(
+                        retry_prompt,
+                        response_schema=IntentAnalysisResult.model_json_schema(),
+                    )
                 intent = IntentAnalysisResult.model_validate_json(raw_retry.strip().removeprefix("```json").removesuffix("```").strip())
                 retry_names = [step.tool_name for step in intent.steps]
                 if intent.tool_name:
@@ -934,6 +1145,12 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     for name in retry_names
                 ):
                     raise ValueError("Công cụ không khả dụng sau khi mở rộng danh mục.")
+            if read_only and self._enforce_read_only(intent) is None:
+                logger.warning("read_only_guard blocked non-read intent=%s tool=%s", intent.intent_type, intent.tool_name)
+                return IntentAnalysisResult(
+                    intent_type=IntentType.CLARIFY,
+                    clarification_prompt="Yêu cầu của bạn có vẻ là tra cứu thông tin, chưa rõ bạn có muốn thực hiện thao tác thay đổi dữ liệu hay không. Bạn xác nhận rõ giúp tôi nhé?",
+                )
             if intent.intent_type == IntentType.REPLY:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="knowledge.query",
                                             parameters={"query": text})
@@ -944,7 +1161,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             try:
                 offline_res = self._offline_semantic_dispatch(text, context, session_context)
                 if offline_res.tool_name != "knowledge.query":
-                    return offline_res
+                    if not read_only or self._enforce_read_only(offline_res) is not None:
+                        return offline_res
             except Exception:
                 pass
             from app.services.error_handler import classify_exception

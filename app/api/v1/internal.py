@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from app.core.config import get_settings
 from app.domain.gateway_context import GatewayUserContext, build_gateway_user_context
 from app.providers.tasks.local import LocalTaskProvider
-from app.services.confirmation_service import ConfirmationPreview
+from app.services.confirmation_service import ConfirmationPreview, OptionButtonsMessage
 from app.services.conversation_history_store import conversation_history_store
+from app.services.llm_client import last_llm_metrics
+from app.services.turn_metrics import turn_metrics_store
 from app.services.gateway_client import (
     GatewayContractIncompatibleError,
     GatewayServiceError,
@@ -36,6 +38,7 @@ class TelegramTurnRequest(BaseModel):
     text: str
     telegram_binding_id: Optional[str] = None
     received_at: Optional[str] = None
+    reply_to_text: Optional[str] = None
 
 
 class AttachmentDescriptor(BaseModel):
@@ -49,6 +52,7 @@ class TelegramTurnResponse(BaseModel):
     messages: List[str]
     attachments: List[AttachmentDescriptor] = Field(default_factory=list)
     confirmation_buttons: dict[int, str] = Field(default_factory=dict)
+    option_buttons: dict[int, List[str]] = Field(default_factory=dict)
 
 
 def verify_gateway_secret(
@@ -521,10 +525,32 @@ async def handle_telegram_turn(
                 session_ctx["last_read"].pop("knowledge.query")
                 session_ctx["history"] = []
             session_ctx['_turn_deadline'] = turn_deadline
+            if req.reply_to_text and req.reply_to_text.strip():
+                session_ctx["reply_to_text"] = req.reply_to_text.strip()[:600]
             classification_started = time.perf_counter()
+            last_llm_metrics.set(None)
             intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
+            classification_ms = (time.perf_counter() - classification_started) * 1000
+            route_meta = session_ctx.get("_route_meta") or {}
+            llm_m = last_llm_metrics.get()
+            turn_metrics_store.record(
+                request_id=req.request_id,
+                user_id=context.user_id,
+                raw_text=clean_text,
+                intent_type=intent_res.intent_type.value,
+                tool_name=intent_res.tool_name,
+                latency_ms=classification_ms,
+                route_mode=route_meta.get("route_mode"),
+                confidence=route_meta.get("confidence"),
+                llm_provider=llm_m.provider if llm_m else "",
+                llm_model=llm_m.model if llm_m else "",
+                prompt_tokens=llm_m.prompt_tokens if llm_m else 0,
+                output_tokens=llm_m.output_tokens if llm_m else 0,
+                failover_used=bool(llm_m.failover_used) if llm_m else False,
+                fallback_used=bool(route_meta.get("fallback_used", False)),
+            )
             logger.info("request_id=%s classification_ms=%.3f tool=%s", req.request_id,
-                        (time.perf_counter() - classification_started) * 1000,
+                        classification_ms,
                         intent_res.tool_name)
             knowledge_turn = (intent_res.tool_name or "").startswith("knowledge.")
             if intent_res.tool_name == "knowledge.query":
@@ -548,6 +574,17 @@ async def handle_telegram_turn(
                 )
             finally:
                 trace_request_id.reset(trace_token)
+
+            # Xóa pending_clarification cũ sau khi người dùng đã giải quyết xong (không còn ở trạng thái CLARIFY)
+            from app.domain.intent_schema import IntentType as _IntentType
+            if session_ctx.get("pending_clarification") and intent_res.intent_type != _IntentType.CLARIFY:
+                conversation_history_store.clear_pending_clarification(
+                    tenant=context.tenant,
+                    user_id=context.user_id,
+                    chat_id=req.chat_id,
+                    binding_id=context.telegram_binding_id,
+                    database=context.database,
+                )
 
             # Lưu lịch sử phiên hội thoại
             conversation_history_store.append_turn(
@@ -611,6 +648,8 @@ async def handle_telegram_turn(
         messages=messages,
         confirmation_buttons={index: message.confirmation_id for index, message in enumerate(messages)
                               if isinstance(message, ConfirmationPreview)},
+        option_buttons={index: message.options for index, message in enumerate(messages)
+                        if isinstance(message, OptionButtonsMessage) and message.options},
     )
 
 

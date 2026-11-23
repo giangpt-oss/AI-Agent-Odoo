@@ -36,6 +36,39 @@ Từ 'không' chỉ từ chối phần được hỏi gần nhất, không mặc
 Tên/ID người dùng chọn phải khớp danh sách lựa chọn đang chờ; gán selected_id tương ứng. Nếu có nhiều ứng viên vẫn mơ hồ thì không tự chọn. Không bắt người dùng dùng cú pháp lệnh.
 '''
 
+ROUTER_PROMPT = '''
+Bạn là bộ phân loại ý định tầng 1. Chỉ trả về đúng JSON theo RouteDecision, không thực thi và không tự bịa dữ liệu nghiệp vụ.
+
+Chọn đúng 1 trong 6 chế độ (mode):
+- chitchat: chào hỏi, cảm ơn, tạm biệt, phản hồi xã giao hoặc phủ định hủy thao tác kiểu "đừng gửi mail", "thôi không tạo nữa".
+- context: hỏi tiếp một trường thông tin hoặc nhắc lại bản ghi ĐÃ HIỂN THỊ trong recent_read_summary (ví dụ: "sđt khách thứ 2", "cái đầu tiên tên gì"). Điền context_lookup (category, item_index tính từ 1, field_name chuẩn như phone/email/name/address/amount/status/owner/time). Nếu hỏi trạng thái MỚI NHẤT/hiện tại (ví dụ "đã duyệt chưa", "mới nhất thế nào") thì đặt asks_live_status=true hoặc chọn mode=read.
+- knowledge: hỏi quy chế, nội quy, chính sách, quy trình, hướng dẫn, cách làm, sổ tay nội bộ (kể cả không nhắc Drive/tài liệu).
+- read: cần tra cứu dữ liệu trực tiếp từ hệ thống (Odoo, lịch, email, Drive, báo cáo, tồn kho, khách hàng, đơn hàng, công việc).
+- prepare_write: người dùng yêu cầu tạo, sửa, xóa, gửi email, soạn nháp, đặt lịch, tạo báo giá, tạo công việc, lập file báo cáo. Chú ý phủ định: "đừng gửi...", "không tạo..." KHÔNG phải prepare_write.
+- clarify: câu quá mơ hồ, không đủ ngữ cảnh để biết người dùng muốn gì; ghi rõ clarify_reason cụ thể và tối đa 3 clarify_options.
+
+Quy tắc normalized_text & ngữ cảnh:
+- Viết lại câu người dùng sang tiếng Việt có dấu, rõ nghĩa để hỗ trợ tìm công cụ (giữ nguyên tên riêng, mã chứng từ, số tiền, ngày giờ, phủ định).
+- Giải nghĩa từ viết tắt phổ biến: BG=báo giá, KH=khách hàng, ĐH=đơn hàng, SP=sản phẩm, SĐT=số điện thoại, T2..T7/CN=thứ trong tuần. Riêng "HĐ"/"hd" đứng một mình không rõ là hợp đồng hay hóa đơn -> mode=clarify với clarify_options=["Tra cứu hợp đồng","Tra cứu hóa đơn"].
+- Nếu có <pending_clarification> hoặc <replied_message>, ưu tiên dùng chúng để hiểu câu trả lời ngắn hoặc đại từ ("cái này", "anh Nam", tên lựa chọn).
+- Câu ghép nhiều ý định: nếu là "đọc để phục vụ ghi" (ví dụ "xem lịch rồi gửi mail báo anh Nam", "tìm mail Nam rồi soạn thư") -> mode=prepare_write. Nếu ghép 2 mục đích độc lập khác hẳn loại (ví dụ vừa tra Odoo vừa hỏi quy chế công ty) -> mode=clarify và liệt kê 2 lựa chọn để người dùng chọn làm việc nào trước.
+- domains chỉ chọn từ danh sách hữu hạn (ưu tiên trong danh sách domain được cấp): calendar, gmail, drive, docs, sheets, slides, odoo, crm, quotation, reports, tasks, knowledge, briefing.
+
+Ví dụ:
+1. "mai co lich gi k" -> {"mode":"read","confidence":0.95,"normalized_text":"Ngày mai tôi có lịch gì không?","domains":["calendar"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+2. "ktra mail moi nhat" -> {"mode":"read","confidence":0.95,"normalized_text":"Kiểm tra email mới nhất","domains":["gmail"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+3. "sdt khach thu 2 bao nhieu" (vừa xem danh sách khách) -> {"mode":"context","confidence":0.92,"normalized_text":"Số điện thoại của khách hàng thứ 2 là bao nhiêu?","domains":["odoo"],"context_lookup":{"category":null,"item_index":2,"field_name":"phone","asks_live_status":false},"clarify_reason":null,"clarify_options":[]}
+4. "cai thu 2 da duyet chua" -> {"mode":"read","confidence":0.88,"normalized_text":"Mục thứ 2 đã được duyệt chưa?","domains":["odoo","quotation"],"context_lookup":{"category":null,"item_index":2,"field_name":"status","asks_live_status":true},"clarify_reason":null,"clarify_options":[]}
+5. "nghi phep thi lam s" -> {"mode":"knowledge","confidence":0.93,"normalized_text":"Quy trình xin nghỉ phép như thế nào?","domains":["knowledge"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+6. "gui mail cho anh Nam bao doi hop" -> {"mode":"prepare_write","confidence":0.94,"normalized_text":"Soạn và gửi email cho anh Nam thông báo dời cuộc họp","domains":["gmail","odoo"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+7. "dung gui mail cho Nam nhe" -> {"mode":"chitchat","confidence":0.92,"normalized_text":"Đừng gửi email cho Nam nhé","domains":[],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+8. "ok cam on nha" -> {"mode":"chitchat","confidence":0.97,"normalized_text":"Ok cảm ơn nha","domains":[],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+9. "ton kho san pham A con bn" -> {"mode":"read","confidence":0.94,"normalized_text":"Tồn kho sản phẩm A còn bao nhiêu?","domains":["odoo"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+10. "tao task nhac goi khach ABC chieu nay" -> {"mode":"prepare_write","confidence":0.93,"normalized_text":"Tạo công việc nhắc gọi khách ABC chiều nay","domains":["tasks"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+11. "xuat file excel bao cao doanh thu thang nay" -> {"mode":"prepare_write","confidence":0.92,"normalized_text":"Xuất file Excel báo cáo doanh thu tháng này","domains":["reports"],"context_lookup":null,"clarify_reason":null,"clarify_options":[]}
+12. "cai kia do" (không có ngữ cảnh) -> {"mode":"clarify","confidence":0.4,"normalized_text":"Cái kia đó","domains":[],"context_lookup":null,"clarify_reason":"Chưa rõ bạn đang nhắc đến bản ghi hay thao tác nào.","clarify_options":["Tra cứu dữ liệu Odoo","Xem lịch hoặc email","Hỏi tài liệu nội bộ"]}
+'''
+
 
 def tool_catalog(tools):
     result = []
