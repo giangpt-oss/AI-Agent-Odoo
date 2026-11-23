@@ -6,6 +6,77 @@ README này hướng dẫn riêng dự án agent. Có thể cài dependencies v�
 
 > **Trạng thái:** đang phát triển. Một số luồng ghi và xử lý retry còn lỗi đã biết; chưa nghiệm thu toàn bộ bằng tài khoản thật. Xem phần giới hạn cuối README.
 
+## Lệnh phát triển
+
+Chạy từ thư mục Agent sau khi cài `.venv` và thiết lập `.env` theo hướng dẫn bên dưới. Khi cả hai chạy bằng Compose, đặt `GATEWAY_BASE_URL=http://gateway:8000` ở Agent và `AI_AGENT_BASE_URL=http://ai-agent:8000` ở Gateway. Chạy `./scripts/dev.ps1 up` ở Gateway trước để tạo mạng chung `auth_gateway_net`, rồi khởi động Agent.
+
+| Lệnh PowerShell | Tác dụng |
+|---|---|
+| `./scripts/dev.ps1 doctor` | Kiểm tra Python, pytest, Docker daemon, cấu hình Compose và mạng dùng chung. |
+| `./scripts/dev.ps1 up` | Build và khởi động Agent, PostgreSQL và Redis, rồi đợi healthcheck. Agent lắng nghe ở cổng `8000`. |
+| `./scripts/dev.ps1 test unit` | Chạy các nhóm test trong tiến trình, bao gồm đánh giá, ngoài nhóm tích hợp, E2E và contract. |
+| `./scripts/dev.ps1 test integration` | Chạy `tests/integration` và hai bài E2E mô phỏng dịch vụ trong `tests`. |
+| `./scripts/dev.ps1 test contract` | Chạy `tests/contract` để kiểm tra giao diện giữa các thành phần. |
+| `./scripts/dev.ps1 test all` | Chạy toàn bộ thư mục `tests`. Đây là mặc định của `test`. |
+| `./scripts/dev.ps1 down` | Dừng các service Compose của Agent và giữ các volume cùng mạng dùng chung. |
+
+`test` dùng bản sao mã nguồn tạm, Python trong `.venv` và môi trường con riêng để tách cấu hình và database chạy thật. Script trả về mã thoát của pytest. Phần [Lưu trữ và Docker](#lưu-trữ-và-docker) có lệnh tạo mạng khi chạy Agent độc lập.
+
+[tests/contract/workspace-v1.json](tests/contract/workspace-v1.json) là bản sao nguyên tệp fixture cùng phiên bản từ Gateway. [tests/contract/workspace_peer.py](tests/contract/workspace_peer.py) là tiến trình Agent cho bài kiểm thử ghép cặp. Xem `tests/contract/README.md` của Gateway để thiết lập môi trường chạy bài kiểm thử này.
+
+## Điểm vào mã nguồn
+
+| Công việc | Tệp |
+|---|---|
+| Khởi tạo ứng dụng, nhận turn/callback và kiểm tra danh tính | [app/main.py](app/main.py), [app/api/v1/internal.py](app/api/v1/internal.py) |
+| Sửa phân loại ý định, phân giải tham chiếu và điều phối | [app/services/natural_pipeline.py](app/services/natural_pipeline.py), [app/services/unified_executor.py](app/services/unified_executor.py) |
+| Sửa luồng đọc, tạo preview hoặc thực thi xác nhận | [read.py](app/services/executor_handlers/read.py), [prepare_write.py](app/services/executor_handlers/prepare_write.py), [confirmation.py](app/services/executor_handlers/confirmation.py) |
+| Thêm operation Workspace | Khai báo method/scope/schema ở `app/workspace/catalog.json` trong Gateway. Trong Agent, xem [app/workspace/catalog.json](app/workspace/catalog.json) và [app/workspace/agent.py](app/workspace/agent.py) để kiểm tra catalog, định tuyến và định dạng kết quả. |
+| Sửa truy xuất và trả lời theo tài liệu Drive | [app/knowledge/drive.py](app/knowledge/drive.py) điều phối truy vấn và tổng hợp bằng chứng. Tầng tìm kiếm, xếp hạng và lọc quyền nằm ở `app/workspace/drive_retriever.py` và `app/workspace/drive_permissions.py` của Gateway. |
+| Sửa xác nhận draft, kiểm tra phiên bản và lease | [app/services/executor_handlers/confirmation.py](app/services/executor_handlers/confirmation.py), [app/services/draft_manager.py](app/services/draft_manager.py), [app/services/confirmation_service.py](app/services/confirmation_service.py) |
+| Đổi HTTP client và đối chiếu turn | [app/services/gateway_client.py](app/services/gateway_client.py), [app/services/turn_ledger.py](app/services/turn_ledger.py) |
+
+### Đọc dữ liệu
+
+```mermaid
+flowchart TD
+    T[Turn Telegram từ Gateway] --> I[Resolve danh tính và binding]
+    I --> L[Kiểm tra turn ledger]
+    L --> P[Phân loại ý định và chọn công cụ]
+    P --> H[Handler đọc]
+    H --> Local[Task và trạng thái cục bộ]
+    H --> Remote[Gateway API hoặc Workspace job]
+    Local --> M[Định dạng kết quả]
+    Remote --> M
+    M --> R[Trả về Gateway để giao lên Telegram]
+```
+
+### Ghi dữ liệu
+
+```mermaid
+flowchart TD
+    T[Turn yêu cầu ghi] --> P[Kiểm tra quyền và tạo preview]
+    P --> S[Lưu dữ liệu xác nhận và operation ID khi cần]
+    S --> U[Trả preview cho người dùng]
+    U --> C[Turn xác nhận]
+    C --> V[Kiểm tra binding, quyền và phiên bản dữ liệu]
+    V --> L[Nhận lease xác nhận]
+    L --> E[Ghi cục bộ hoặc gửi action/job tới Gateway]
+    E --> R[Lưu kết quả hoặc đối soát theo operation ID]
+```
+
+### Đối chiếu log với Gateway
+
+1. Tìm `request_id=tg-<update_id>` ở log turn của Agent và `TIMING_AI` của Gateway. Các dòng `stage` trong Agent chỉ ra giai đoạn đã ghi nhận thời lượng.
+2. HTTP client chuyển ngữ cảnh tương quan qua `X-Request-ID` khi ngữ cảnh turn đã được thiết lập. Tìm `req_id` ở `TELEMETRY` của Gateway, rồi tìm `job_id` trong log callback của Agent nếu có job bất đồng bộ.
+3. Dùng `operation_id` từ bản xác nhận để theo dõi thực thi hoặc đối soát qua các turn và lần thử lại. Khi chia sẻ log, dùng các mã tương quan và mã trạng thái.
+
+```powershell
+docker compose logs --since 10m ai-agent | Select-String -SimpleMatch 'tg-12345'
+# Chạy ở repo Gateway
+docker compose logs --since 10m gateway | Select-String -SimpleMatch 'tg-12345'
+```
+
 ## Kiến trúc
 
 ```mermaid
@@ -211,21 +282,14 @@ Compose đã được cấu hình gắn volume bền vững `agent_sqlite_data` 
 ## Kiểm thử và kết quả xác minh
 
 ```powershell
-# Chạy toàn bộ test suite của Agent trong môi trường cô lập (391 passed, 1 skipped, 0 failed):
-.\.venv\Scripts\python.exe -B -X utf8 -m pytest -q --disable-warnings --tb=short
+# Chạy toàn bộ test suite của Agent trong môi trường cô lập.
+./scripts/dev.ps1 test all
 
 # (Tùy chọn) Chạy riêng integration test kiểm tra endpoint turn nội bộ:
 .\.venv\Scripts\python.exe -m pytest tests/integration/test_internal_turn.py -v
 ```
 
-### Kết quả xác minh và phạm vi đã kiểm chứng
-
-- **391 test đạt, 1 test skipped**: Bao gồm unit test cho identity context contract v2, dispatcher định tuyến lệnh/preview, xác thực token xác nhận nguyên tử, turn ledger idempotency, bộ định dạng kết quả, NaturalPipeline, 98 ca hội thoại tự nhiên, và các bộ test hồi quy khắt khe cho execution hardening, task revision conflict, email draft CAS và lease recovery.
-- **Giải thích test bị bỏ qua (1 skipped)**: Test `tests/test_security.py::test_traversal_via_symlink` bị bỏ qua có chủ đích khi chạy trên môi trường Windows không bật quyền Administrator hoặc Developer Mode (`pytest.skip("Cannot create symlinks on this Windows setup")`). Đây là cơ chế bảo vệ tiêu chuẩn khi hệ điều hành hạn chế quyền tạo symbolic link, không ảnh hưởng đến logic nghiệp vụ hay an toàn của ứng dụng.
-- **Git diff**: Kiểm tra `git diff --check` đạt chuẩn, không có lỗi khoảng trắng hay định dạng thừa.
-
-> **Lưu ý quan trọng về phạm vi kiểm thử:**
-> Bộ 391 test tự động được thực hiện trong môi trường kiểm thử cô lập (giả lập Gateway response, SQLite tạm thời, không gọi ra API bên ngoài hoặc LLM thật). Kiểm thử tự động chứng minh sự ổn định của contract API, logic nghiệp vụ nội bộ và cơ chế bảo vệ dữ liệu, nhưng **không thay thế việc nghiệm thu thực tế bằng tài khoản thật**. Người dùng cần chạy thử nghiệm trên bot Telegram thật kết nối với Gateway theo checklist dưới đây.
+Bộ kiểm thử bao phủ identity v2, định tuyến lệnh, preview và xác nhận, turn ledger, pipeline ngôn ngữ tự nhiên, phiên bản task, email draft và phục hồi lease. Các test mô phỏng Gateway và LLM với SQLite tạm. Test `tests/test_security.py::test_traversal_via_symlink` tự bỏ qua trên Windows nếu thiếu quyền tạo symlink. Checklist bên dưới dành cho nghiệm thu trên tài khoản thật.
 
 ### Trạng thái các cải tiến cốt lõi đã hoàn tất
 

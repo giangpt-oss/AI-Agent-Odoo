@@ -66,9 +66,32 @@ async def test_workspace_read_uses_gateway_and_checks_kind(monkeypatch):
     monkeypatch.setattr(gateway_client, "workspace_query", query, raising=False)
     result = await unified_executor.execute(IntentAnalysisResult(intent_type="read", tool_name="workspace.drive.read", parameters={"method": "files.list"}), context(), 7, 7, {}, time.time() + 18, {})
     assert "Report" in " ".join(result)
+    assert "drive#fileList" not in " ".join(result)
     assert query.await_count == 1
     result = await unified_executor.execute(IntentAnalysisResult(intent_type="read", tool_name="workspace.drive.read", parameters={"method": "files.create"}), context(), 7, 7, {}, time.time() + 18, {})
     assert query.await_count == 1
+
+
+def test_workspace_drive_empty_files_friendly_format():
+    from app.workspace.agent import format_result
+    res = format_result("drive", {"status": "OK", "data": {"files": []}})
+    assert "Không tìm thấy tệp" in res[0]
+    assert "drive#fileList" not in res[0]
+
+
+def test_workspace_drive_files_list_friendly_format():
+    from app.workspace.agent import format_result
+    res = format_result("drive", {"status": "OK", "data": {"files": [{"id": "123", "name": "Quy_che.txt", "mimeType": "text/plain"}]}})
+    assert "Quy_che.txt" in res[0]
+    assert "Văn bản" in res[0]
+    assert "drive#fileList" not in res[0]
+
+
+def test_workspace_drive_q_name_normalization():
+    from app.services.unified_executor import _normalize_workspace_params
+    params = {"method": "files.list", "parameters": {"q": "name = 'Hopita' and trashed = false"}}
+    norm = _normalize_workspace_params("drive", params)
+    assert "(name = 'Hopita' or name contains 'Hopita')" in norm["parameters"]["q"]
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,8 @@
 import logging
+from contextlib import asynccontextmanager
+from functools import partial
+from importlib.util import find_spec
+from types import SimpleNamespace
 from typing import Any
 import httpx
 from app.core.config import get_settings
@@ -24,6 +28,27 @@ class GatewayClient:
         settings = get_settings()
         self.base_url = (base_url or settings.GATEWAY_BASE_URL).rstrip("/")
         self.secret = secret or settings.AGENT_TO_GATEWAY_SECRET
+        self._pool = None
+
+    def start(self):
+        if self._pool is None:
+            self._pool = httpx.AsyncClient(http2=find_spec("h2") is not None,
+                                           limits=httpx.Limits(max_keepalive_connections=20))
+
+    async def close(self):
+        if self._pool is not None:
+            pool, self._pool = self._pool, None
+            await pool.aclose()
+
+    @asynccontextmanager
+    async def _client(self, timeout):
+        if self._pool is None:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                yield client
+            return
+        limits = httpx.Timeout(timeout, connect=min(3.0, timeout), pool=min(2.0, timeout))
+        yield SimpleNamespace(get=partial(self._pool.get, timeout=limits),
+                              post=partial(self._pool.post, timeout=limits))
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -46,7 +71,7 @@ class GatewayClient:
             "contract_version": contract_version,
         }
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     data = resp.json()
@@ -75,7 +100,7 @@ class GatewayClient:
         """Lấy trạng thái kết nối Google, Telegram, Odoo của người dùng."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/connections"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -86,8 +111,11 @@ class GatewayClient:
 
     async def _workspace_request(self, user_id: int, service: str, arguments: dict[str, Any], endpoint: str, timeout: float = 10.0) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(f"{self.base_url}/internal/v1/users/{user_id}/workspace/{endpoint}", json={"service": service, **arguments}, headers=self._headers())
+            headers = self._headers()
+            if endpoint == "query":
+                headers["X-Workspace-Budget-Ms"] = str(max(1, min(30000, int(timeout * 1000))))
+            async with self._client(timeout) as client:
+                response = await client.post(f"{self.base_url}/internal/v1/users/{user_id}/workspace/{endpoint}", json={"service": service, **arguments}, headers=headers)
             if response.status_code == 200:
                 return response.json()
             return {"status": "PERMISSION_DENIED" if response.status_code == 403 else "SERVICE_ERROR", "message": response.text[:1000]}
@@ -101,7 +129,7 @@ class GatewayClient:
         payload = {"telegram_user_id": context.telegram_user_id, "chat_id": context.chat_id,
                    "telegram_binding_id": context.telegram_binding_id, "terms": terms, "file_id": file_id}
         try:
-            async with httpx.AsyncClient(timeout=28.0) as client:
+            async with self._client(28.0) as client:
                 url = f"{self.base_url}/internal/v1/users/{context.user_id}/workspace/drive-knowledge"
                 response = await client.post(url, json=payload, headers=self._headers())
                 if response.status_code == 403:
@@ -110,6 +138,45 @@ class GatewayClient:
                 return response.json()
         except (httpx.HTTPError, ValueError):
             return {"status": "SERVICE_ERROR"}
+
+    async def drive_search(
+        self, context, query: str, file_id: str | None, terms: list[str],
+    ) -> dict[str, Any]:
+        payload = {
+            "query": query,
+            "file_id": file_id,
+            "terms": terms,
+            "telegram_user_id": context.telegram_user_id,
+            "chat_id": context.chat_id,
+            "telegram_binding_id": context.telegram_binding_id,
+        }
+        try:
+            async with self._client(28.0) as client:
+                url = f"{self.base_url}/internal/v1/users/{context.user_id}/workspace/drive/search"
+                response = await client.post(url, json=payload, headers=self._headers())
+                response.raise_for_status()
+                data = response.json()
+                if isinstance(data, dict):
+                    return data
+        except (httpx.HTTPError, ValueError):
+            pass
+        return {"status": "connection_error"}
+
+    async def drive_link_is_current(
+        self, user_id: int, google_sub: str, link_version: int, verification: list[dict[str, Any]],
+    ) -> bool:
+        payload = {"google_sub": google_sub, "link_version": link_version, "verification": verification}
+        try:
+            async with self._client(5.0) as client:
+                url = f"{self.base_url}/internal/v1/users/{user_id}/workspace/drive/link-check"
+                response = await client.post(url, json=payload, headers=self._headers())
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise GatewayServiceError("Không xác minh được liên kết Google Drive.") from exc
+        if not isinstance(data, dict) or type(data.get("valid")) is not bool:
+            raise GatewayServiceError("Gateway trả kết quả xác minh Google Drive không hợp lệ.")
+        return data["valid"]
 
     async def workspace_prepare(self, user_id: int, service: str, arguments: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
         return await self._workspace_request(user_id, service, arguments, "preview", timeout)
@@ -149,7 +216,7 @@ class GatewayClient:
             "telegram_binding_id": telegram_binding_id,
         }
         try:
-            async with httpx.AsyncClient(timeout=wait_seconds + 3.0) as client:
+            async with self._client(wait_seconds + 3.0) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code in (200, 202):
                     return resp.json()
@@ -160,7 +227,7 @@ class GatewayClient:
     async def get_workspace_job(self, user_id: int, job_id: str) -> dict[str, Any]:
         url = f"{self.base_url}/internal/v1/users/{user_id}/workspace/jobs/{job_id}"
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with self._client(5.0) as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -173,7 +240,7 @@ class GatewayClient:
         url = f"{self.base_url}/internal/v1/users/{user_id}/calendar/events"
         params = {"time_min": time_min, "time_max": time_max}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, params=params, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -189,7 +256,7 @@ class GatewayClient:
         """Lấy số lượng thư chưa đọc và tối đa 5 thư gần nhất qua Gmail."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/gmail/unread"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -210,7 +277,7 @@ class GatewayClient:
         if search_term:
             params["search_term"] = search_term
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, params=params, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -226,7 +293,7 @@ class GatewayClient:
         """Lấy chi tiết một sự kiện lịch Google qua Gateway."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/calendar/events/{event_id}"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -238,7 +305,7 @@ class GatewayClient:
         """Lấy chi tiết một cơ hội CRM qua Gateway."""
         url = f"{self.base_url}/internal/v1/users/{user_id}/crm/leads/{lead_id}"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -268,7 +335,7 @@ class GatewayClient:
             "arguments": arguments,
         }
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with self._client(timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     data = resp.json()
@@ -314,7 +381,7 @@ class GatewayClient:
             "telegram_binding_id": telegram_binding_id,
         }
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with self._client(timeout) as client:
                 resp = await client.get(url, params=params, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -331,7 +398,7 @@ class GatewayClient:
         """Lấy danh mục catalog models và fields được phép truy vấn từ Gateway."""
         url = f"{self.base_url}/internal/v1/odoo/catalog"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(10.0) as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()
@@ -363,7 +430,7 @@ class GatewayClient:
             "count_only": count_only,
         }
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with self._client(15.0) as client:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 if resp.status_code == 200:
                     return resp.json()

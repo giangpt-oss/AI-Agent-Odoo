@@ -334,8 +334,8 @@ async def test_gemini_client_reads_settings_and_validates_schema_locally(monkeyp
         'Create a fictional quotation.', response_schema=QuoteTurn.model_json_schema())
     assert QuoteTurn.model_validate_json(response).action == 'start'
     assert observed['key'] == 'fixture-only'
-    assert 'customer_query' in observed['call']['contents']
-    assert observed['call']['config'].response_json_schema is None
+    assert observed['call']['contents'] == 'Create a fictional quotation.'
+    assert 'customer_query' in observed['call']['config'].response_json_schema['properties']
     assert observed['call']['config'].response_mime_type == 'application/json'
 
 
@@ -982,7 +982,7 @@ def test_general_action_preview_keeps_reference_without_command_templates(quote_
         action='calendar.create', arguments={}, preview_text='Cuộc họp ngày mai')
     assert cid in preview and 'Cuộc họp ngày mai' in preview
     assert '/confirm' not in preview and '/cancel' not in preview
-    assert 'đồng ý' in preview and 'từ chối' in preview
+    assert 'Xác nhận' in preview and 'Từ chối' in preview
 
 
 @pytest.mark.asyncio

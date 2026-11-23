@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from app.core.config import get_settings
 from app.domain.gateway_context import GatewayUserContext, build_gateway_user_context
 from app.providers.tasks.local import LocalTaskProvider
-from app.services.confirmation_service import ConfirmationPreview
+from app.services.confirmation_service import ConfirmationPreview, OptionButtonsMessage
 from app.services.conversation_history_store import conversation_history_store
+from app.services.llm_client import last_llm_metrics
+from app.services.turn_metrics import turn_metrics_store
 from app.services.gateway_client import (
     GatewayContractIncompatibleError,
     GatewayServiceError,
@@ -36,6 +38,7 @@ class TelegramTurnRequest(BaseModel):
     text: str
     telegram_binding_id: Optional[str] = None
     received_at: Optional[str] = None
+    reply_to_text: Optional[str] = None
 
 
 class AttachmentDescriptor(BaseModel):
@@ -49,6 +52,7 @@ class TelegramTurnResponse(BaseModel):
     messages: List[str]
     attachments: List[AttachmentDescriptor] = Field(default_factory=list)
     confirmation_buttons: dict[int, str] = Field(default_factory=dict)
+    option_buttons: dict[int, List[str]] = Field(default_factory=dict)
 
 
 def verify_gateway_secret(
@@ -527,6 +531,8 @@ async def handle_telegram_turn(
                 session_ctx["last_read"].pop("knowledge.query")
                 session_ctx["history"] = []
             session_ctx['_turn_deadline'] = turn_deadline
+            if req.reply_to_text and req.reply_to_text.strip():
+                session_ctx["reply_to_text"] = req.reply_to_text.strip()[:600]
             if get_settings().ENABLE_QUOTATIONS:
                 from app.business.quote_saved_interaction import handle as handle_saved_quote
                 quote_messages = await handle_saved_quote(clean_text, context, session_ctx,
@@ -541,9 +547,29 @@ async def handle_telegram_turn(
                         context.telegram_binding_id, 'assistant', quote_messages[0], database=context.database)
                     return quote_messages
             classification_started = time.perf_counter()
+            last_llm_metrics.set(None)
             intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
+            classification_ms = (time.perf_counter() - classification_started) * 1000
+            route_meta = session_ctx.get("_route_meta") or {}
+            llm_m = last_llm_metrics.get()
+            turn_metrics_store.record(
+                request_id=req.request_id,
+                user_id=context.user_id,
+                raw_text=clean_text,
+                intent_type=intent_res.intent_type.value,
+                tool_name=intent_res.tool_name,
+                latency_ms=classification_ms,
+                route_mode=route_meta.get("route_mode"),
+                confidence=route_meta.get("confidence"),
+                llm_provider=llm_m.provider if llm_m else "",
+                llm_model=llm_m.model if llm_m else "",
+                prompt_tokens=llm_m.prompt_tokens if llm_m else 0,
+                output_tokens=llm_m.output_tokens if llm_m else 0,
+                failover_used=bool(llm_m.failover_used) if llm_m else False,
+                fallback_used=bool(route_meta.get("fallback_used", False)),
+            )
             logger.info("request_id=%s classification_ms=%.3f tool=%s", req.request_id,
-                        (time.perf_counter() - classification_started) * 1000,
+                        classification_ms,
                         intent_res.tool_name)
             knowledge_turn = (intent_res.tool_name or "").startswith("knowledge.")
             if intent_res.tool_name == "knowledge.query":
@@ -568,6 +594,17 @@ async def handle_telegram_turn(
             finally:
                 trace_request_id.reset(trace_token)
 
+            # Xóa pending_clarification cũ sau khi người dùng đã giải quyết xong (không còn ở trạng thái CLARIFY)
+            from app.domain.intent_schema import IntentType as _IntentType
+            if session_ctx.get("pending_clarification") and intent_res.intent_type != _IntentType.CLARIFY:
+                conversation_history_store.clear_pending_clarification(
+                    tenant=context.tenant,
+                    user_id=context.user_id,
+                    chat_id=req.chat_id,
+                    binding_id=context.telegram_binding_id,
+                    database=context.database,
+                )
+
             # Lưu lịch sử phiên hội thoại
             conversation_history_store.append_turn(
                 context.tenant,
@@ -578,7 +615,7 @@ async def handle_telegram_turn(
                 clean_text,
                 database=context.database,
             )
-            if messages and not (intent_res.tool_name or "").startswith("knowledge."):
+            if messages and not intent_res.steps and not (intent_res.tool_name or "").startswith("knowledge."):
                 conversation_history_store.append_turn(
                     context.tenant,
                     context.user_id,
@@ -630,7 +667,53 @@ async def handle_telegram_turn(
         messages=messages,
         confirmation_buttons={index: message.confirmation_id for index, message in enumerate(messages)
                               if isinstance(message, ConfirmationPreview)},
+        option_buttons={index: message.options for index, message in enumerate(messages)
+                        if isinstance(message, OptionButtonsMessage) and message.options},
     )
+
+
+class WorkspaceReadPlanPayload(BaseModel):
+    user_id: int
+    telegram_user_id: int
+    chat_id: int
+    binding_id: str = Field(min_length=1)
+    link: dict[str, Any]
+    remaining_seconds: float = Field(gt=0, le=300)
+    steps: list[dict[str, Any]] = Field(min_length=1, max_length=8)
+
+
+@router.post("/workspace/read-plan", dependencies=[Depends(verify_gateway_secret)])
+async def run_workspace_read_plan(payload: WorkspaceReadPlanPayload):
+    from pydantic import ValidationError
+
+    from app.domain.intent_schema import IntentAnalysisResult
+    from app.services.unified_executor import unified_executor
+    from app.workspace.catalog import SERVICES
+
+    deadline = time.time() + payload.remaining_seconds
+    try:
+        intent = IntentAnalysisResult(intent_type="tool_plan", steps=payload.steps)
+    except ValidationError as exc:
+        raise HTTPException(422, "Kế hoạch đọc không hợp lệ.") from exc
+    reads = {f"workspace.{service}.read" for service in SERVICES}
+    if any(step.tool_name not in reads for step in intent.steps):
+        raise HTTPException(422, "Kế hoạch nền chỉ hỗ trợ đọc Google Workspace.")
+    identity = await gateway_client.resolve_identity(payload.telegram_user_id, payload.chat_id)
+    if (not identity or identity.get("user_id") != payload.user_id
+            or identity.get("telegram_binding_id") != payload.binding_id):
+        raise HTTPException(403, "Liên kết Telegram đã thay đổi.")
+    google_sub = payload.link.get("google_sub")
+    version = payload.link.get("link_version")
+    if not isinstance(google_sub, str) or not google_sub or type(version) is not int:
+        raise HTTPException(422, "Liên kết Google không hợp lệ.")
+    if not await gateway_client.drive_link_is_current(payload.user_id, google_sub, version, []):
+        raise HTTPException(403, "Liên kết Google đã thay đổi.")
+    try:
+        return await unified_executor._execute_workspace_plan(
+            intent, build_gateway_user_context(identity), payload.chat_id, deadline, background=True,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
 
 class WorkspaceJobCompletedPayload(BaseModel):
@@ -660,9 +743,35 @@ async def workspace_job_completed_webhook(payload: WorkspaceJobCompletedPayload)
         if (not identity or identity.get("user_id") != payload.user_id
                 or identity.get("telegram_binding_id") != payload.telegram_binding_id):
             return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+        drive_search = payload.service == "drive" and payload.operation == "knowledge.search"
+        result = payload.result if isinstance(payload.result, dict) else {}
+        if (payload.service, payload.operation) == ("workspace", "plan.read") and payload.status == "completed":
+            if result.get("format") != "workspace_plan_v1" or result.get("status") == "link_changed":
+                return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+            for position, step in enumerate(result.get("steps", []), 1):
+                messages.append(f"Bước {position} · {step['tool']}\n" + "\n".join(step["messages"]))
+            return {"status": "accepted", "job_id": payload.job_id, "messages": messages}
+        if payload.status == "completed" and drive_search:
+            from app.knowledge.drive import INDEXED_DRIVE_FORMAT, DriveLinkChanged, answer_from_indexed_drive
+
+            if result.get("format") == INDEXED_DRIVE_FORMAT:
+                question = result.get("question")
+                try:
+                    indexed_messages = await answer_from_indexed_drive(
+                        question if isinstance(question, str) else "", payload.user_id, result,
+                    )
+                except DriveLinkChanged:
+                    return {"status": "withheld", "job_id": payload.job_id, "messages": []}
+                except GatewayServiceError as exc:
+                    raise HTTPException(503, "Chưa xác minh được liên kết Google Drive") from exc
+                # The reply contains evidence tied to this Google link and must expire with it.
+                return {"status": "accepted", "job_id": payload.job_id, "messages": indexed_messages}
         msg_text = ""
         if payload.status == "completed":
-            if (isinstance(payload.result, dict) and payload.result.get("status") == "OK"
+            if drive_search and isinstance(result.get("question"), str):
+                from app.knowledge.drive import answer_from_drive
+                msg_text = "\n\n".join(await answer_from_drive(result["question"], None, documents=result))
+            elif (isinstance(payload.result, dict) and payload.result.get("status") == "OK"
                     and payload.service in {"drive", "docs", "sheets", "slides", "calendar", "gmail"}):
                 from app.workspace.agent import format_result
 
@@ -690,7 +799,7 @@ async def workspace_job_completed_webhook(payload: WorkspaceJobCompletedPayload)
                 database=identity.get("database"),
                 role="assistant",
                 content=msg_text,
-                event_id=f"workspace:{payload.job_id}",
+                event_id=f"workspace:{payload.job_id}" + (":unknown_result" if payload.status == "unknown_result" else ""),
             )
         except Exception as exc:
             logger.warning("Could not append callback turn to history: %s", exc)

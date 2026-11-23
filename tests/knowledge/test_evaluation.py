@@ -1,21 +1,27 @@
-import pytest
 import asyncio
+import shutil
+
+import pytest
+
+from app.domain.gateway_context import GatewayUserContext
+from app.knowledge.indexing import indexing_service
 from app.knowledge.rag import rag_service
 from app.knowledge.retrieval import search_service
-from app.knowledge.indexing import indexing_service
-from app.knowledge.models import KnowledgeSource, IndexState
-from app.knowledge.store import metadata_store
-from app.providers.vectorstore.chroma import default_vector_store
 from app.services.file_service import file_service
-import os
-from unittest.mock import MagicMock
+
+
+def knowledge_workspace(tenant):
+    return GatewayUserContext(
+        user_id=1, tenant=tenant, database="fixture", odoo_uid=1,
+        telegram_binding_id="fixture-binding",
+    ).knowledge_workspace
 
 @pytest.fixture(scope="session")
 def setup_test_knowledge_base():
     # Setup test workspace
-    ws_id = "test_workspace"
-    test_dir = file_service.workspace_root / "test_kb"
-    test_dir.mkdir(exist_ok=True)
+    ws_id = knowledge_workspace("fixture-tenant")
+    test_dir = file_service.workspace_root / "knowledge_docs" / ws_id
+    test_dir.mkdir(parents=True, exist_ok=True)
     
     # 1. Normal document
     doc1 = test_dir / "Q3_Report.txt"
@@ -38,16 +44,12 @@ def setup_test_knowledge_base():
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    loop.run_until_complete(indexing_service.index_file(str(doc1), ws_id, "test_user"))
-    loop.run_until_complete(indexing_service.index_file(str(doc2), ws_id, "test_user"))
-    loop.run_until_complete(indexing_service.index_file(str(doc3), ws_id, "test_user"))
-    
-    yield ws_id
-    
-    # Teardown
-    import shutil
-    shutil.rmtree(test_dir)
-    # Note: Chroma collections persist, but we can clear them if needed
+    try:
+        for document in (doc1, doc2, doc3):
+            assert loop.run_until_complete(indexing_service.index_file(str(document), ws_id, "test_user"))
+        yield ws_id
+    finally:
+        shutil.rmtree(test_dir)
 
 @pytest.mark.asyncio
 async def test_exact_lookup_and_citation(setup_test_knowledge_base):
@@ -103,5 +105,5 @@ async def test_prompt_injection_isolation(setup_test_knowledge_base):
 
 @pytest.mark.asyncio
 async def test_workspace_isolation(setup_test_knowledge_base):
-    results = await search_service.search("doanh thu", "another_workspace")
+    results = await search_service.search("doanh thu", knowledge_workspace("another-tenant"))
     assert results == []

@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "groq"] = "gemini"
+    SAMBANOVA_API_KEY: str | None = None
+    SAMBANOVA_BASE_URL: str = "https://api.sambanova.ai/v1"
+    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "groq", "sambanova"] = "gemini"
     DEFAULT_LLM_MODEL: str = "gemini-3.5-flash-lite"
     RAG_TOP_K_DENSE: int = 20
     RAG_TOP_K_SPARSE: int = 20
@@ -41,6 +43,10 @@ class Settings(BaseSettings):
     RAG_CHUNK_CHARS: int = 3000
     RAG_CHUNK_OVERLAP: int = 200
     INTENT_LLM_MODEL: str | None = None
+    ENABLE_TWO_STAGE_ROUTER: bool = False
+    ROUTER_LLM_MODEL: str | None = None
+    ROUTER_CONFIDENCE_THRESHOLD: float = 0.6
+    ROUTER_TIMEOUT_SECONDS: float = 12.0
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = ""
@@ -71,8 +77,9 @@ class Settings(BaseSettings):
     INTEGRATION_MODE: Literal["direct", "gateway"] = "direct"
 
     # Gateway Integration Settings
-    GATEWAY_BASE_URL: str = "http://localhost:8080"
+    GATEWAY_BASE_URL: str = "http://127.0.0.1:8080"
     WORKSPACE_BACKGROUND_READS: bool = False
+    DRIVE_INDEX_ENABLED: bool = False
     GATEWAY_TO_AGENT_SECRET: str = ""
     AGENT_TO_GATEWAY_SECRET: str = ""
 

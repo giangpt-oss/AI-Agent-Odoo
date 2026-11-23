@@ -1,4 +1,5 @@
 from enum import Enum
+from graphlib import CycleError, TopologicalSorter
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
@@ -13,6 +14,32 @@ class IntentType(str, Enum):
     ACTION_CONFIRM = "action_confirm"
     ACTION_CANCEL = "action_cancel"
     ACTION_STATUS = "action_status"
+    TOOL_PLAN = "tool_plan"
+
+
+class ToolPlanStep(BaseModel, extra="forbid"):
+    id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
+    tool_name: str = Field(min_length=1, max_length=100)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list, max_length=7)
+
+
+def visit_step_parameters(value, resolve):
+    if isinstance(value, list):
+        return [visit_step_parameters(item, resolve) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if "$step" in value:
+        source, path = value["$step"], value.get("path")
+        if (set(value) != {"$step", "path"} or not isinstance(source, str)
+                or not isinstance(path, list) or not 1 <= len(path) <= 8
+                or any(
+                    not (isinstance(key, str) and key or type(key) is int and key >= 0)
+                    for key in path
+                )):
+            raise ValueError("Tham chiếu kết quả không hợp lệ.")
+        return resolve(source, path)
+    return {key: visit_step_parameters(item, resolve) for key, item in value.items()}
 
 
 class DraftPayload(BaseModel):
@@ -53,6 +80,7 @@ class IntentAnalysisResult(BaseModel):
     candidate_options: list[str] = Field(default_factory=list)
     draft: Optional[DraftPayload] = None
     confirmation_id: Optional[str] = None
+    steps: list[ToolPlanStep] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="before")
     @classmethod
@@ -98,6 +126,29 @@ class IntentAnalysisResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_intent_consistency(self) -> "IntentAnalysisResult":
+        if self.intent_type == IntentType.TOOL_PLAN:
+            if not self.steps or self.tool_name or self.parameters:
+                raise ValueError("Kế hoạch cần danh sách bước riêng.")
+            graph = {step.id: step.depends_on for step in self.steps}
+            if len(graph) != len(self.steps):
+                raise ValueError("ID bước bị trùng.")
+            for step in self.steps:
+                dependencies = set(step.depends_on)
+                if not dependencies <= graph.keys():
+                    raise ValueError("Bước phụ thuộc không tồn tại.")
+
+                def validate_reference(source, path):
+                    if source not in dependencies:
+                        raise ValueError("Tham chiếu phải thuộc bước phụ thuộc trực tiếp.")
+
+                visit_step_parameters(step.parameters, validate_reference)
+            try:
+                TopologicalSorter(graph).prepare()
+            except CycleError as exc:
+                raise ValueError("Kế hoạch có phụ thuộc vòng.") from exc
+        elif self.steps:
+            raise ValueError("Danh sách bước chỉ hợp lệ với tool_plan.")
+
         if self.intent_type in (IntentType.READ, IntentType.PREPARE_WRITE):
             if not self.tool_name or not self.tool_name.strip():
                 raise ValueError(f"tool_name bắt buộc phải có khi intent_type là {self.intent_type.value}")

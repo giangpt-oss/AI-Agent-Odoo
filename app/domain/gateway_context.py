@@ -45,6 +45,9 @@ class GatewayUserContext:
     manager_name: Optional[str] = None
     permissions: Set[str] = field(default_factory=set)
     authorization_checked_at: Optional[str] = None
+    google_account_id: Optional[int] = None
+    google_account_email: Optional[str] = None
+    google_selection_version: Optional[int] = None
 
     @property
     def owner_key(self) -> str:
@@ -113,4 +116,7 @@ def build_gateway_user_context(raw: dict[str, Any]) -> GatewayUserContext:
         manager_name=raw.get("manager_name"),
         permissions=perms,
         authorization_checked_at=raw.get("authorization_checked_at"),
+        google_account_id=raw.get("google_account_id"),
+        google_account_email=raw.get("google_account_email") or raw.get("google_email"),
+        google_selection_version=raw.get("google_selection_version"),
     )
