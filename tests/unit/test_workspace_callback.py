@@ -3,13 +3,21 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.main import app
+from app.main import create_application
+
+
+CALLBACK_SECRET = "workspace-callback-gateway-fixture-secret"
 
 
 @pytest.fixture
 def client_with_agent_secret():
-    client = TestClient(app)
-    return client
+    settings = Settings(
+        _env_file=None,
+        INTEGRATION_MODE="gateway",
+        GATEWAY_TO_AGENT_SECRET=CALLBACK_SECRET,
+        AGENT_TO_GATEWAY_SECRET="workspace-callback-agent-fixture-secret",
+    )
+    return TestClient(create_application(settings))
 
 
 def test_workspace_job_completed_webhook_auth_failure(client_with_agent_secret):
@@ -22,9 +30,6 @@ def test_workspace_job_completed_webhook_auth_failure(client_with_agent_secret):
 
 
 def test_workspace_job_completed_webhook_success(client_with_agent_secret):
-    settings = app.state.settings if hasattr(app.state, "settings") and app.state.settings else None
-    secret = getattr(settings, "GATEWAY_TO_AGENT_SECRET", None) or "hopita_gw_to_agent_secret_key_32chars_min_1234"
-    
     payload = {
         "job_id": "job_success_123",
         "user_id": 1,
@@ -46,7 +51,7 @@ def test_workspace_job_completed_webhook_success(client_with_agent_secret):
         resp = client_with_agent_secret.post(
             "/internal/v1/workspace/job-completed",
             json=payload,
-            headers={"Authorization": f"Bearer {secret}"},
+            headers={"Authorization": f"Bearer {CALLBACK_SECRET}"},
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "accepted"
@@ -73,7 +78,6 @@ def test_drive_background_callback_answers_from_saved_evidence(client_with_agent
     monkeypatch.setattr(drive.rag_service, "answer_from_evidence", generate)
     store = ConversationHistoryStore(str(tmp_path / "history.db"))
     monkeypatch.setattr(internal, "conversation_history_store", store)
-    secret = getattr(getattr(app.state, "settings", None), "GATEWAY_TO_AGENT_SECRET", None) or "hopita_gw_to_agent_secret_key_32chars_min_1234"
     payload = {"job_id": "drive-bg", "user_id": 1, "request_id": "drive-turn", "status": "completed",
                "service": "drive", "operation": "knowledge.search", "telegram_chat_id": 7,
                "telegram_user_id": 7, "telegram_binding_id": "bound-drive",
@@ -83,7 +87,7 @@ def test_drive_background_callback_answers_from_saved_evidence(client_with_agent
                ]}}
     for _ in range(2):
         response = client_with_agent_secret.post("/internal/v1/workspace/job-completed", json=payload,
-                                                headers={"Authorization": f"Bearer {secret}"})
+                                                headers={"Authorization": f"Bearer {CALLBACK_SECRET}"})
         assert response.status_code == 200
         assert "https://drive.google.com/open?id=fixture" in response.json()["messages"][0]
     assert len(store.get_session("test", 1, 7, "bound-drive", "test")["history"]) == 1
@@ -99,7 +103,6 @@ def test_indexed_drive_callback_guards_synthesis_and_delivery(
     client_with_agent_secret, monkeypatch, link_checks, expected,
 ):
     from app.api.v1 import internal
-    from app.core.config import get_settings
     from app.knowledge import drive
 
     identity = {"user_id": 1, "telegram_binding_id": "bound-drive", "tenant": "test", "database": "test"}
@@ -131,7 +134,7 @@ def test_indexed_drive_callback_guards_synthesis_and_delivery(
         payload["result"].pop("verification")
     response = client_with_agent_secret.post(
         "/internal/v1/workspace/job-completed", json=payload,
-        headers={"Authorization": f"Bearer {get_settings().GATEWAY_TO_AGENT_SECRET}"},
+        headers={"Authorization": f"Bearer {CALLBACK_SECRET}"},
     )
     assert response.status_code == 200
     data = response.json()

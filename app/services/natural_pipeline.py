@@ -37,9 +37,22 @@ class NaturalPipeline:
     ) -> IntentAnalysisResult:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
+        active = (session_context or {}).get("active_draft") or {}
+        if (active.get("draft_type") == "quotation" and not clean_text.startswith("/")
+                and getattr(get_settings(), "ENABLE_QUOTATIONS", False)):
+            explicit_workspace = re.search(
+                r"\b(?:drive|gmail|calendar|docs|sheets|slides)\b|"
+                r"quy chế|nội quy|chính sách|sổ tay|tài liệu nội bộ|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ",
+                lower,
+            )
+            quotation_target = re.search(r"\bbáo giá\b|\bs\d{3,}\b", lower)
+            if explicit_workspace and not quotation_target:
+                topic_context = dict(session_context or {})
+                topic_context.pop("active_draft", None)
+                topic_context.pop("pending_clarification", None)
+                return await self._dispatch_with_llm(clean_text, context, topic_context)
         if lower.rstrip("?!.") in {"hôm nay tôi có gì", "hôm nay tôi cần làm gì", "hôm nay có gì"}:
             return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="briefing.today")
-        active = (session_context or {}).get('active_draft') or {}
         from app.business.operations import looks_like_quote_chatter
         if getattr(get_settings(), 'ENABLE_QUOTATIONS', False) and looks_like_quote_chatter(clean_text, active):
             return await self._dispatch_quote_chatter(clean_text, context, session_context)
@@ -748,14 +761,9 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 content_prompt = prompt
                 if response_schema:
                     content_prompt += (
-                        "\n\nBẮT BUỘC trả về duy nhất 1 JSON object với các trường chuẩn:\n"
-                        "- intent_type: 'reply' | 'read' | 'draft' | 'prepare_write' | 'clarify' | 'unsupported' | 'tool_plan'\n"
-                        "- steps: danh sách bước cho 'tool_plan' theo hướng dẫn của yêu cầu\n"
-                        "- tool_name: string (BẮT BUỘC cho 'read' và 'prepare_write', lấy đúng tên công cụ được cấp)\n"
-                        "- parameters: dict các tham số của công cụ\n"
-                        "- reply_text: string (bắt buộc khi intent_type='reply')\n"
-                        "- clarification_prompt: string (bắt buộc khi intent_type='clarify')\n"
-                        "Ví dụ prepare_write: {\"intent_type\": \"prepare_write\", \"tool_name\": \"tasks.personal.create\", \"parameters\": {\"title\": \"...\"}}"
+                        "\n\nTrả về duy nhất một JSON object tuân thủ JSON Schema sau. "
+                        "Chỉ sử dụng các trường và giá trị phù hợp với schema của yêu cầu này.\n"
+                        + json.dumps(response_schema, ensure_ascii=False)
                     )
                 kwargs = {
                     "model": model,

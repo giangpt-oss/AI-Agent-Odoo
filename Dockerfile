@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Cài đặt global (không dùng --user) để site-packages đúng chỗ
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ==========================================
 # STAGE 2: Runtime
@@ -29,9 +30,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Tạo user không có đặc quyền root (Non-root user)
 RUN addgroup --system appgroup && adduser --system --group appuser
 
-# Copy python dependencies từ builder stage
-COPY --from=builder /root/.local /home/appuser/.local
-ENV PATH=/home/appuser/.local/bin:$PATH
+# Copy python dependencies từ builder stage (site-packages global)
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Tạo user không có đặc quyền root (Non-root user)
+RUN addgroup --system appgroup && adduser --system --group appuser
+
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
@@ -39,7 +44,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 COPY app ./app
 
 # Chuyển quyền cho appuser
-RUN chown -R appuser:appgroup /app
+RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 USER appuser
 
 EXPOSE 8000

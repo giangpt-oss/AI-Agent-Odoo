@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "groq"] = "gemini"
+    SAMBANOVA_API_KEY: str | None = None
+    SAMBANOVA_BASE_URL: str = "https://api.sambanova.ai/v1"
+    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "groq", "sambanova"] = "gemini"
     DEFAULT_LLM_MODEL: str = "gemini-3.5-flash-lite"
     RAG_TOP_K_DENSE: int = 20
     RAG_TOP_K_SPARSE: int = 20

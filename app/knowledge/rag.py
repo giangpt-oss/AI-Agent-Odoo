@@ -15,6 +15,7 @@ DEFAULT_MODELS = {
     "gemini": "gemini-3.5-flash-lite",
     "groq": "openai/gpt-oss-120b",
     "openai": "gpt-4o-mini",
+    "sambanova": "samba-1.5",
 }
 GENERATION_TIMEOUT = 15.0
 USAGE_FIELDS = ("prompt_token_count", "candidates_token_count", "total_token_count")
@@ -55,6 +56,8 @@ async def _chat_completion(settings, provider, key, model, system_instruction, p
     base_url = "https://api.openai.com/v1"
     if provider == "groq":
         base_url = getattr(settings, "GROQ_BASE_URL", None) or "https://api.groq.com/openai/v1"
+    elif provider == "sambanova":
+        base_url = getattr(settings, "SAMBANOVA_BASE_URL", None) or "https://api.sambanova.ai/v1"
     try:
         async with asyncio.timeout(GENERATION_TIMEOUT), AsyncOpenAI(
             api_key=key, base_url=base_url, timeout=GENERATION_TIMEOUT, max_retries=0,
