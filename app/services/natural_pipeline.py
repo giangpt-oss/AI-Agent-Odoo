@@ -59,7 +59,8 @@ class NaturalPipeline:
 
         # Chế độ 2 tầng thuần ngôn ngữ tự nhiên:
         # - Xác nhận/Hủy CHỈ nhận từ nút bấm Telegram (Gateway gửi nội bộ /confirm <id> hoặc /cancel <id>).
-        # - Bỏ toàn bộ /lệnh nghiệp vụ và regex fast-path đoán ý định cũ.
+        # - Giữ trọn bộ luồng nghiệp vụ báo giá (chatter, approval flow, quote_local retry_pdf/chọn bảng giá/nháp),
+        #   nhưng vẫn cho phép tách chủ đề mượt sang Workspace/Tài liệu và bỏ toàn bộ /lệnh nghiệp vụ + regex chung cũ.
         if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
             btn_match = re.fullmatch(r"/(confirm|cancel)\s+([a-zA-Z0-9_-]+)", clean_text, re.I)
             if btn_match:
@@ -94,10 +95,51 @@ class NaturalPipeline:
                     if routed is not None:
                         return routed
                     return await self._dispatch_with_llm(clean_text, context, topic_context)
-                return await self._dispatch_quote_turn(clean_text, context, session_context)
+
+            # 1. Quote chatter (ghi chú, mail, lịch họp gắn trên báo giá)
+            from app.business.operations import looks_like_quote_chatter
+            if getattr(get_settings(), "ENABLE_QUOTATIONS", False) and looks_like_quote_chatter(clean_text, active):
+                return await self._dispatch_quote_chatter(clean_text, context, session_context)
+
+            # 2. Luồng duyệt nội bộ & chuyển đơn bán (ENABLE_QUOTATION_APPROVAL_FLOW)
+            if getattr(get_settings(), "ENABLE_QUOTATION_APPROVAL_FLOW", False):
+                from app.business.operations import interpret_quotation_flow, needs_customer_acceptance_clarification
+                if needs_customer_acceptance_clarification(clean_text):
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.CLARIFY,
+                        clarification_prompt='Khách hàng đã thực sự chấp thuận báo giá chưa? Tôi cần xác định rõ trước khi chuẩn bị chuyển thành đơn bán; chưa thực hiện thay đổi trên Odoo.',
+                    )
+                flow = interpret_quotation_flow(clean_text)
+                implicit = interpret_quotation_flow(clean_text, default_name='S00000')
+                if implicit and implicit['action'] == 'request_approval':
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.REPLY,
+                        reply_text='Hãy gửi lại PDF của báo giá và bấm “Xác nhận gửi duyệt” trên đúng bản PDF đó.',
+                    )
+                if flow:
+                    return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.quotation_flow', parameters=flow)
+
+            # 3. Bộ phân tích báo giá cục bộ (retry_pdf, chọn bảng giá/sản phẩm, khởi tạo & fallback khi LLM rớt)
+            if getattr(get_settings(), "ENABLE_QUOTATIONS", False):
+                from app.business.quote_local import interpret as interpret_quote_local
+                local = interpret_quote_local(clean_text, active, session_context)
+                if local:
+                    if local.get("action") == "confirm":
+                        return IntentAnalysisResult(
+                            intent_type=IntentType.CLARIFY,
+                            clarification_prompt="Để đảm bảo an toàn, vui lòng bấm nút Xác nhận hoặc Từ chối trực tiếp trên bản xem trước.",
+                        )
+                    return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="sales.quotation.collect", parameters=local)
+
+                if active.get("draft_type") == "quotation":
+                    return await self._dispatch_quote_turn(clean_text, context, session_context)
+
             routed = await self._route_two_stage(clean_text, context, session_context)
             if routed is not None:
                 return routed
+            from app.business.quote_fallback import plain as quote_plain
+            if getattr(get_settings(), "ENABLE_QUOTATIONS", False) and re.search(r"\bbao gia\b", quote_plain(clean_text)):
+                return await self._dispatch_quote_turn(clean_text, context, session_context)
             return await self._dispatch_with_llm(clean_text, context, session_context)
 
         if (active.get("draft_type") == "quotation" and not clean_text.startswith("/")
@@ -1077,6 +1119,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             )
 
         if decision.mode == RouteMode.PREPARE_WRITE:
+            if getattr(settings, "ENABLE_QUOTATIONS", False) and "quotation" in domain_hints:
+                return await self._dispatch_quote_turn(text, context, session_context)
             return await self._dispatch_with_llm(
                 text,
                 context,
@@ -1224,6 +1268,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 else:
                     raise
             intent = IntentAnalysisResult.model_validate(data)
+            # Chuẩn hóa tên tool nếu LLM tự thêm tiền tố 'odoo.' (vd: odoo.sales.quotation.collect -> sales.quotation.collect)
+            if intent.tool_name and not self.registry.get_tool(intent.tool_name) and intent.tool_name.startswith("odoo."):
+                stripped = intent.tool_name[5:]
+                if self.registry.get_tool(stripped):
+                    intent.tool_name = stripped
+            for step in intent.steps:
+                if step.tool_name and not self.registry.get_tool(step.tool_name) and step.tool_name.startswith("odoo."):
+                    stripped = step.tool_name[5:]
+                    if self.registry.get_tool(stripped):
+                        step.tool_name = stripped
             names = [step.tool_name for step in intent.steps]
             if intent.tool_name:
                 names.append(intent.tool_name)
