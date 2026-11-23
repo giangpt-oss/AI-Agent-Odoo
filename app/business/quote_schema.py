@@ -1,6 +1,7 @@
+from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class QuoteLineFacts(BaseModel):
@@ -20,13 +21,21 @@ class QuoteLineFacts(BaseModel):
 
 class QuoteTurn(QuoteLineFacts):
     """Semantic interpretation only; IDs, persistence and validation are application-owned."""
-    action: Literal['start', 'update', 'preview', 'status', 'show', 'confirm', 'cancel', 'finish_lines', 'explain', 'other'] = 'update'
+    action: Literal['start', 'update', 'preview', 'status', 'show', 'confirm', 'cancel', 'finish_lines', 'explain', 'retry_pdf', 'lookup', 'help', 'decline', 'other', 'discard_price_candidate', 'restore_product_candidate'] = 'update'
     customer_query: str | None = Field(default=None, max_length=200)
     pricelist_query: str | None = Field(default=None, max_length=200)
+    payment_term_query: str | None = Field(default=None, max_length=200)
     selected_id: int | None = Field(default=None, gt=0, strict=True)
     line_updates: list[QuoteLineFacts] | None = Field(default=None, max_length=100)
     use_customer_addresses: bool | None = None
     validity_date: str | None = None
+
+    @field_validator('validity_date')
+    @classmethod
+    def valid_expiry(cls, value):
+        if value is not None:
+            date.fromisoformat(value)
+        return value
     delivery_date: str | None = None
     quotation_name: str | None = Field(default=None, min_length=1, max_length=100)
     custom_fields: dict[str, str | int | float | bool] | None = None

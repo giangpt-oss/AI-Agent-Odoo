@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from app.business.quote_local import interpret
+from app.business.quote_local import interpret, requests_new_quote
 
 
 @pytest.mark.parametrize(('text', 'expected'), [
@@ -24,9 +24,26 @@ def test_clear_natural_facts_without_model(text, expected):
 
 
 def test_no_guesses_or_accidental_starts():
-    for text in ['cách tạo báo giá', 'đừng tạo báo giá', 'không', 'bao tay hay khẩu trang', 'giá khoảng 200 nghìn', 'số lượng 1 và 2', 'hết hạn 31/2/2026']:
+    for text in ['cách tạo báo giá', 'đừng tạo báo giá', 'không', '30 ngày', 'bao tay hay khẩu trang', 'giá khoảng 200 nghìn', 'số lượng 1 và 2', 'hết hạn 31/2/2026']:
         assert interpret(text, {'draft_type': 'quotation'}) is None
     assert interpret('1', {}) is None
+
+
+@pytest.mark.parametrize('text', [
+    'Tạo giúp mình một báo giá', 'Lên báo giá cho An Phát',
+    'Lập giúp em báo giá', 'Soạn cho mình báo giá',
+    'Tao giup minh mot bao gia',
+])
+def test_natural_creation_intent(text):
+    assert requests_new_quote(text)
+
+
+@pytest.mark.parametrize('text', [
+    'Tìm báo giá của An Phát', 'Cách tạo báo giá thế nào?',
+    'Đừng tạo báo giá', 'Không muốn lập báo giá',
+])
+def test_non_creation_intent(text):
+    assert not requests_new_quote(text)
 
 
 def test_selection_scoped_and_quantity_unambiguous():

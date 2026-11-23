@@ -38,6 +38,8 @@ def looks_like_quote_chatter(text, active):
 
 
 def allowed_action(settings, action=None):
+    if action == 'business.sales.request_approval':
+        return False
     return getattr(settings, 'ENABLE_BUSINESS_ACTIONS', False) or (getattr(settings, 'ENABLE_QUOTATIONS', False) and (action is None or action in CHATTER_ACTIONS)) or (
         getattr(settings, 'ENABLE_QUOTATION_APPROVAL_FLOW', False) and (action is None or action in QUOTE_FLOW_ACTIONS))
 
@@ -99,7 +101,7 @@ def register(registry, tool_type):
             'options': {'type': 'object'}, 'company_id': {'type': 'integer'}}),
         ('business.quotation_flow', 'read', 'Xin duyệt/duyệt/từ chối/gửi báo giá theo số Odoo. Chỉ chuẩn bị bản xem trước, mọi thực thi phải xác nhận riêng. Không gọi để tạo báo giá mới.', {
             'quotation_name': {'type': 'string'},
-            'action': {'enum': ['request_approval', 'grant_approval', 'reject_approval', 'send', 'confirm']},
+            'action': {'enum': ['grant_approval', 'reject_approval', 'send', 'confirm']},
             'options': {'type': 'object'}, 'company_id': {'type': 'integer'}}),
         ('business.capabilities', 'read', 'Xem thao tác Odoo được hỗ trợ và giới hạn quyền hiện tại', {}),
         ('business.lookup', 'read', 'Tra cứu bản ghi thật cho thao tác trong năm phân hệ; không đoán ID', {
@@ -171,6 +173,8 @@ async def read(tool, params, context):
     if tool in ('business.quotation_flow', 'business.quotation_chatter'):
         name = str(params.get('quotation_name') or '').upper().strip()
         action = 'business.sales.' + str(params.get('action') or '')
+        if action == 'business.sales.request_approval':
+            return ['Hãy gửi lại PDF của báo giá và bấm “Xác nhận gửi duyệt” trên đúng bản PDF đó.']
         permitted = QUOTE_FLOW_ACTIONS if tool == 'business.quotation_flow' else CHATTER_ACTIONS
         if action not in permitted or not name or len(name) > 100 or not allowed_action(get_settings(), action):
             return ['Bạn muốn xử lý bước nào và báo giá có số nào trên Odoo?']

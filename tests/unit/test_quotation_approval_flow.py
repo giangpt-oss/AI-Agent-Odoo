@@ -47,7 +47,7 @@ def test_ambiguous_or_future_decision_never_implies_acceptance(text):
 
 def test_flow_flag_does_not_enable_unrelated_business_writes():
     settings = SimpleNamespace(ENABLE_BUSINESS_ACTIONS=False, ENABLE_QUOTATION_APPROVAL_FLOW=True)
-    assert allowed_action(settings, 'business.sales.request_approval')
+    assert not allowed_action(settings, 'business.sales.request_approval')
     assert not allowed_action(settings, 'business.sales.delete')
     assert not allowed_action(settings, 'business.purchases.confirm')
 
@@ -60,7 +60,7 @@ def test_tool_catalog_does_not_advertise_disabled_writes(monkeypatch):
     registered = {}
     register(SimpleNamespace(register=lambda tool: registered.update({tool.name: tool})), SimpleNamespace)
     actions = registered['business.draft'].parameter_schema['properties']['business_action']['enum']
-    assert set(actions) == QUOTE_FLOW_ACTIONS
+    assert set(actions) == QUOTE_FLOW_ACTIONS - {'business.sales.request_approval'}
 
 
 @pytest.mark.asyncio
@@ -74,11 +74,26 @@ async def test_uncertain_acceptance_is_clarified_before_model_or_tools(monkeypat
     assert not result.tool_name
 
 
+@pytest.mark.asyncio
+async def test_verbal_request_cannot_send_approval_without_pdf_button(monkeypatch):
+    from app.services import natural_pipeline as module
+    from app.domain.intent_schema import IntentType
+
+    monkeypatch.setattr(module, 'get_settings', lambda: SimpleNamespace(
+        ENABLE_QUOTATIONS=True, ENABLE_QUOTATION_APPROVAL_FLOW=True,
+        ENABLE_REPORTING=False))
+    result = await module.NaturalPipeline().analyze_input(
+        'Xin duyệt báo giá S00086', None, {})
+    assert result.intent_type == IntentType.REPLY
+    assert 'Xác nhận gửi duyệt' in result.reply_text
+    assert result.tool_name is None
+
+
 def test_quote_status_separates_native_state_and_internal_approval():
     text = result_message({'name': 'S00086', 'state': 'draft',
-        'approval': {'status': 'pending', 'approvers': ['Nguyễn Tiến Phương']}})
+        'approval': {'status': 'pending', 'approvers': ['Người Duyệt A']}})
     assert 'Báo giá nháp' in text and 'Chờ cấp trên duyệt' in text
-    assert 'Nguyễn Tiến Phương' in text
+    assert 'Người Duyệt A' in text
     assert 'khách chấp thuận' in text
 
 
@@ -87,7 +102,7 @@ def test_flow_confirmation_is_plain_text_and_has_long_enough_execution_lease(tmp
     from app.services.confirmation_service import ConfirmationService
     service = ConfirmationService(tmp_path / 'confirmations.db')
     cid, message = service.create_confirmation(user_id=1, chat_id=7, telegram_binding_id='binding',
-        action='business.sales.request_approval', arguments={'prepared_id': 'example'},
+        action='business.sales.grant_approval', arguments={'prepared_id': 'example'},
         preview_text='Xin duyệt báo giá S00086', owner_key='owner', telegram_user_id=99)
     assert '**' not in message and '_(' not in message
     assert '5 phút' in message

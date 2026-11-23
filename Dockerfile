@@ -31,6 +31,7 @@ RUN addgroup --system appgroup && adduser --system --group appuser
 
 # Copy python dependencies từ builder stage
 COPY --from=builder /root/.local /home/appuser/.local
+ENV PYTHONUSERBASE=/home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

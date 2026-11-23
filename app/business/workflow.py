@@ -346,7 +346,7 @@ async def resume_quote(context, draft, confirmation):
 async def prepare(context, status_only=False) -> list[str]:
     from datetime import UTC, datetime
 
-    from app.business.quote_collector import state_prompt
+    from app.business.quote_collector import ask_pricelist, state_prompt
     from app.business.quote_status import legacy_address_error, status_for
     from app.core.config import get_settings
 
@@ -377,8 +377,16 @@ async def prepare(context, status_only=False) -> list[str]:
     if not context.has_permission('sales.create'):
         return ['Tài khoản chưa có quyền tạo báo giá trên Odoo.']
     payload = draft['quotation_data']
-    if not payload.get('partner_id') or not payload.get('pricelist_id') or draft.get('quotation_hints', {}).get('pricelist_lookup_pending') or not payload.get('lines') or any(not line.get('product_id') for line in payload['lines']):
+    if draft.get('quotation_hints', {}).get('unclassified_product_candidate'):
         return [state_prompt(draft)]
+    if payload.get('partner_id') and not payload.get('pricelist_id') and not draft.get('quotation_hints', {}).get('pricelist_query'):
+        return [await ask_pricelist(context, draft)]
+    if not payload.get('partner_id') or not payload.get('pricelist_id') or not payload.get('validity_date') or not payload.get('payment_term_id') or draft.get('quotation_hints', {}).get('pricelist_lookup_pending') or not payload.get('lines') or any(not line.get('product_id') or not line.get('quantity') for line in payload['lines']):
+        return [state_prompt(draft)]
+    from app.business.quote_optional import ensure as ensure_optional
+    optional_prompt = await ensure_optional(context, draft)
+    if optional_prompt is not None:
+        return [optional_prompt]
     if len(json.dumps(payload, ensure_ascii=False)) > 150000:
         return ['Nháp báo giá quá dài. Hãy giảm số dòng hoặc rút ngắn ghi chú.']
     _, preview = quote_confirmation(context, draft)

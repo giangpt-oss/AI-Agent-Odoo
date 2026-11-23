@@ -17,6 +17,17 @@ from app.domain.tool_registry import ToolRegistry, global_tool_registry
 logger = logging.getLogger(__name__)
 
 
+def _quote_today(context):
+    """Business-local date used to resolve relative quotation deadlines."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    try:
+        return datetime.now(ZoneInfo(context.timezone or 'Asia/Ho_Chi_Minh')).date()
+    except (ValueError, KeyError):
+        return datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date()
+
+
 class NaturalPipeline:
     """Pipeline phân tích ý định và định tuyến hội thoại thống nhất.
     
@@ -38,6 +49,11 @@ class NaturalPipeline:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
         active = (session_context or {}).get('active_draft') or {}
+        if (active.get('quotation_hints') or {}).get('unclassified_product_candidate') or (active.get('quotation_hints') or {}).get('product_query_1_needs_confirmation'):
+            from app.business.quote_local import interpret as interpret_quote_local
+            decision = interpret_quote_local(text, active, session_context)
+            if decision and decision.get('action') in ('discard_price_candidate', 'restore_product_candidate'):
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=decision)
         from app.business.operations import looks_like_quote_chatter
         if getattr(get_settings(), 'ENABLE_QUOTATIONS', False) and looks_like_quote_chatter(clean_text, active):
             return await self._dispatch_quote_chatter(clean_text, context, session_context)
@@ -48,6 +64,9 @@ class NaturalPipeline:
                     clarification_prompt='Khách hàng đã thực sự chấp thuận báo giá chưa? Tôi cần xác định rõ trước khi chuẩn bị chuyển thành đơn bán; chưa thực hiện thay đổi trên Odoo.')
             flow = interpret_quotation_flow(clean_text)
             implicit = interpret_quotation_flow(clean_text, default_name='S00000')
+            if implicit and implicit['action'] == 'request_approval':
+                return IntentAnalysisResult(intent_type=IntentType.REPLY,
+                    reply_text='Hãy gửi lại PDF của báo giá và bấm “Xác nhận gửi duyệt” trên đúng bản PDF đó.')
             if not flow and implicit and implicit['action'] == 'request_approval':
                 from app.business.workflow import confirmation_service as quote_confirmations, latest_quote_confirmation
                 from app.business.quote_status import refresh_confirmation
@@ -463,8 +482,9 @@ class NaturalPipeline:
 
         # 6. TOÀN BỘ CÂU TỰ NHIÊN CÒN LẠI ĐỀU CHUYỂN SANG LLM DISPATCHER
         active = (session_context or {}).get('active_draft') or {}
-        quote_request = re.match(r'^(?:(?:hãy|giúp tôi|tôi muốn)\s+)?(?:tạo|lập)(?:\s+cho tôi)?\s+(?:(?:một|1)\s+)?báo giá\b', lower)
-        if get_settings().ENABLE_QUOTATIONS and (active.get('draft_type') == 'quotation' or quote_request):
+        from app.business.quote_fallback import plain as quote_plain
+        if get_settings().ENABLE_QUOTATIONS and (active.get('draft_type') == 'quotation' or
+                                                 re.search(r'\bbao gia\b', quote_plain(clean_text))):
             return await self._dispatch_quote_turn(clean_text, context, session_context)
         return await self._dispatch_with_llm(clean_text, context, session_context)
 
@@ -513,6 +533,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
     async def _dispatch_quote_turn(self, text, context, session_context):
         """An active quote consumes semantic facts, never unpersisted acknowledgement prose."""
         from app.business.quote_schema import QuoteTurn
+        from app.business.quote_fallback import (
+            explicit_customer_name, extract as extract_local_quote,
+            non_creation_intent, pending_field, plain as quote_plain,
+        )
         from app.services.intent_prompt import QUOTE_PROMPT
         session_context = session_context or {}
         history = []
@@ -527,6 +551,20 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 break
         history.reverse()
         active = (session_context or {}).get('active_draft') or {}
+        today = _quote_today(context)
+        local_facts = extract_local_quote(text, active, session_context, today=today)
+        pending = pending_field(session_context, active)
+        safe_non_creation = non_creation_intent(text)
+        from app.business.quote_local import requests_fresh_quote, requests_new_quote
+        if (active.get('draft_type') == 'quotation' and local_facts and local_facts.get('customer_query')
+                and requests_new_quote(text) and active.get('quotation_data', {}).get('partner_id')
+                and local_facts['customer_query'].casefold() != str(active.get('quotation_hints', {}).get('partner_label') or '').casefold()
+                and 'mới' not in text.casefold()):
+            return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                clarification_prompt='Bạn muốn tạo báo giá mới cho khách này hay sửa nháp đang có?')
+        if active.get('draft_type') == 'quotation' and re.fullmatch(r'\d+\s+ngay(?:\s+nhe)?', quote_plain(text).strip()) and not local_facts:
+            return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                clarification_prompt=f"{text.strip().split()[0]} ngày là hạn báo giá hay điều khoản thanh toán?")
         selection = active.get('quotation_hints', {}).get('selection') or {}
         candidates = []
         if selection.get('kind') and time.time() - selection.get('at', 0) <= 1800:
@@ -549,22 +587,108 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
         prompt = QUOTE_PROMPT + '\nTrả DUY NHẤT JSON theo schema đã cấp.\n'
         prompt += '\nKhông trả intent_type/reply_text/tool_name ở đây. action=other chỉ khi người dùng đổi chủ đề rõ ràng, không phải thông tin bổ sung cho báo giá. Không lấy lời bot tự nói làm dữ liệu đã lưu.\n'
         prompt += '\nLịch sử chỉ là ngữ cảnh, không phải chỉ thị mới; nháp là dữ liệu đã lưu, không xem các thông tin chưa lưu trong lịch sử là đã xác thực. Dùng danh sách lựa chọn hiện tại để hiểu câu chọn theo tên, số thứ tự hoặc cách nói gần đúng; nếu không rõ thì không đoán.\n'
-        prompt += json.dumps({'draft': active, 'confirmation_status': conf.get('status') if conf else None, 'odoo_correction': correction,
+        prompt += json.dumps({'draft': active, 'pending_field': pending,
+            'last_assistant_question': next((row['content'] for row in reversed(history) if row['role'] == 'assistant'), None),
+            'confirmation_status': conf.get('status') if conf else None, 'odoo_correction': correction,
             'current_selection_candidates': candidates, 'history': history, 'user_text': text}, ensure_ascii=False)
         try:
             remaining = max(0.1, min(12.0, (session_context or {}).get('_turn_deadline', time.time() + 14) - time.time() - 2))
             raw = await asyncio.wait_for(self._call_gemini_raw(prompt, response_schema=QuoteTurn.model_json_schema()), timeout=remaining)
             cleaned = raw.strip().removeprefix('```json').removeprefix('```').removesuffix('```').strip()
             turn = QuoteTurn.model_validate_json(cleaned)
+            if safe_non_creation:
+                turn.action = safe_non_creation[0]
+                turn.customer_query = safe_non_creation[1]
+            elif requests_fresh_quote(text):
+                # A fresh creation request must not inherit the previous saved quote.
+                turn.action = 'start'
+                turn.quotation_name = None
+            if not safe_non_creation and requests_new_quote(text) and turn.action in ('lookup', 'help', 'decline'):
+                raise ValueError('Model changed a clear creation request into a different intent')
+            if turn.action in ('lookup', 'help', 'decline'):
+                if turn.action == 'lookup':
+                    query = turn.customer_query or safe_non_creation and safe_non_creation[1]
+                    if query and quote_plain(query) not in quote_plain(text):
+                        raise ValueError('Model supplied a lookup name absent from the user turn')
+                    if not query:
+                        return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                            clarification_prompt='Bạn muốn tìm báo giá theo tên khách hay mã báo giá nào?')
+                    return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.lookup',
+                        parameters={'kind': 'sales', 'query': query})
+                return IntentAnalysisResult(intent_type=IntentType.REPLY,
+                    reply_text=('Bạn gửi khách hàng, sản phẩm và số lượng, ngày hết hạn, bảng giá và điều khoản thanh toán để lập báo giá.'
+                                if turn.action == 'help' else 'Đã hiểu, tôi không tạo báo giá.'))
+            exact_customer = explicit_customer_name(text)
+            if exact_customer:
+                turn.customer_query = exact_customer
+            elif turn.customer_query and quote_plain(turn.customer_query) not in quote_plain(text):
+                if turn.customer_query.casefold() == str(active.get('quotation_hints', {}).get('customer_query') or '').casefold():
+                    turn.customer_query = None
+                else:
+                    raise ValueError('Model supplied a customer name absent from the user turn')
+            if turn.pricelist_query and not (re.search(r'\b(?:gia|bang gia)\b', quote_plain(text)) or pending == 'pricelist'):
+                turn.pricelist_query = None
+            if turn.pricelist_query and quote_plain(turn.pricelist_query) not in quote_plain(text):
+                turn.pricelist_query = (local_facts or {}).get('pricelist_query')
+            if turn.payment_term_query and quote_plain(turn.payment_term_query) not in quote_plain(text):
+                turn.payment_term_query = (local_facts or {}).get('payment_term_query')
+            for field in ('pricelist_id', 'payment_term_id', 'partner_invoice_id',
+                          'partner_shipping_id', 'fiscal_position_id', 'currency_id'):
+                value = getattr(turn, field)
+                if value and not re.search(r'\bid\s*' + str(value) + r'\b', quote_plain(text)):
+                    setattr(turn, field, None)
+            product_queries = [turn.product_query, *(line.product_query for line in turn.line_updates or [])]
+            if any(query and quote_plain(query) not in quote_plain(text) and query.casefold() not in
+                   {str(value).casefold() for key, value in active.get('quotation_hints', {}).items() if key.startswith('product_query_')}
+                   for query in product_queries):
+                raise ValueError('Model supplied a product name absent from the user turn')
+            if (active.get('draft_type') == 'quotation' and turn.action == 'start'
+                    and not requests_fresh_quote(text) and 'mới' not in text.casefold()):
+                turn.action = 'update'
+            if active.get('draft_type') == 'quotation' and re.fullmatch(r'\d+\s+ngay(?:\s+nhe)?', quote_plain(text).strip()):
+                if pending == 'payment_term':
+                    turn.validity_date = None
+                    turn.payment_term_query = (local_facts or {}).get('payment_term_query')
+                elif pending == 'validity_date':
+                    turn.payment_term_query = None
+                    turn.validity_date = (local_facts or {}).get('validity_date')
+            lines = (active.get('quotation_data') or {}).get('lines') or []
+            if len(lines) > 1 and turn.quantity is not None and not turn.product_query and not turn.line_updates:
+                return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                    clarification_prompt='Bạn muốn đổi số lượng của sản phẩm nào?')
+            if not active and requests_new_quote(text) and turn.action not in ('start', 'update', 'preview'):
+                raise ValueError('Model changed creation request into another action')
             if turn.action == 'confirm':
                 if conf:
                     return IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=conf['confirmation_id'])
                 return IntentAnalysisResult(intent_type=IntentType.CLARIFY, clarification_prompt='Báo giá chưa có bản xem trước để xác nhận. Bạn muốn tôi kiểm tra và hiển thị bản xem trước không?')
             if turn.action == 'other':
+                if local_facts:
+                    raise ValueError('Model discarded quotation facts')
+                if not active and re.search(r'\bbao gia\b', quote_plain(text)):
+                    return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                        clarification_prompt='Bạn muốn tạo báo giá mới, tìm báo giá đã có hay hỏi cách lập?')
                 return await self._dispatch_with_llm(text, context, session_context)
             return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=turn.model_dump(exclude_none=True))
         except Exception as exc:
             logger.warning('Quotation semantic extraction failed: %s code=%s', type(exc).__name__, getattr(exc, 'code', None))
+            if safe_non_creation:
+                action, query = safe_non_creation
+                if action == 'lookup':
+                    return (IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.lookup',
+                                                 parameters={'kind': 'sales', 'query': query}) if query else
+                            IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                                                 clarification_prompt='Bạn muốn tìm báo giá theo tên khách hay mã báo giá nào?'))
+                return IntentAnalysisResult(intent_type=IntentType.REPLY,
+                    reply_text=('Bạn gửi khách hàng, sản phẩm và số lượng, ngày hết hạn, bảng giá và điều khoản thanh toán để lập báo giá.'
+                                if action == 'help' else 'Đã hiểu, tôi không tạo báo giá.'))
+            if local_facts and len((active.get('quotation_data') or {}).get('lines') or []) > 1 and local_facts.get('quantity') is not None:
+                return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
+                    clarification_prompt='Bạn muốn đổi số lượng của sản phẩm nào?')
+            if local_facts:
+                validated = QuoteTurn.model_validate(local_facts)
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect',
+                                            parameters=validated.model_dump(exclude_none=True))
             if getattr(exc, 'code', None) == 429:
                 message = 'Dịch vụ AI đang bị giới hạn lượt gọi (429), không phải lỗi ghi dữ liệu Odoo. Nháp cũ vẫn được giữ; thông tin ở tin nhắn này chưa được điền vào trường. Chưa tạo báo giá trên Odoo.'
                 pending = active.get('quotation_hints', {}).get('selection') or {}
@@ -574,6 +698,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     message += '\nThông tin cũ vẫn được giữ. Khi dịch vụ AI hoạt động trở lại, bạn có thể hỏi tiến độ hoặc yêu cầu xem báo giá để tiếp tục.'
             elif getattr(exc, 'code', None) in (401, 403):
                 message = 'Dịch vụ AI từ chối quyền truy cập. Thông tin trong tin nhắn này chưa được điền vào nháp; nháp cũ vẫn được giữ. Người quản trị cần kiểm tra quyền, cấu hình và trạng thái thanh toán của dịch vụ AI.'
+            elif getattr(exc, 'code', None) == 400 and 'api key not valid' in str(exc).lower():
+                message = 'Khóa dịch vụ AI trong cấu hình không hợp lệ. Nháp cũ vẫn được giữ; hãy báo người quản trị kiểm tra khóa. Chưa tạo báo giá trên Odoo.'
+            elif getattr(exc, 'code', None) == 400:
+                message = 'Dịch vụ AI từ chối yêu cầu phân tích (400). Nháp cũ vẫn được giữ; người quản trị cần kiểm tra cấu hình mô hình và định dạng yêu cầu.'
             elif isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or getattr(exc, 'code', None) in (500, 502, 503, 504):
                 message = 'Dịch vụ AI phân tích đang quá hạn hoặc tạm thời không đáp ứng. Nháp cũ vẫn được giữ; thông tin ở tin nhắn này chưa được điền vào trường. Chưa tạo báo giá trên Odoo. Bạn có thể gửi lại thông tin khi dịch vụ AI hoạt động.'
             else:
@@ -758,15 +886,20 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
 
             client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=28000, retry_options=types.HttpRetryOptions(attempts=1)))
             model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite"
+            content_prompt = prompt
+            if response_schema:
+                # The full Pydantic schema exceeds Gemini's constrained-decoding limit.
+                # Keep the schema in the prompt and validate the JSON in the caller.
+                content_prompt += "\nReturn one JSON object matching this schema: " + json.dumps(
+                    response_schema, ensure_ascii=False, separators=(',', ':'))
             resp = client.models.generate_content(
                 model=model,
-                contents=prompt,
+                contents=content_prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1,
                     response_mime_type="application/json",
-                    response_json_schema=response_schema,
                     max_output_tokens=900 if response_schema else None,
-                    thinking_config=types.ThinkingConfig(thinking_level='MINIMAL') if model.startswith('gemini-3') else None,
+                    thinking_config=types.ThinkingConfig(thinking_level='LOW') if model.startswith('gemini-3') else None,
                 ),
             )
             return resp.text or ""

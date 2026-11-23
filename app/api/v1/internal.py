@@ -468,6 +468,12 @@ async def handle_telegram_turn(
                 turn_budget = 60.0
                 turn_deadline = turn_start_time + turn_budget
                 turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
+        if (req.text.startswith(('/quote_edit ', '/quote_approve ', '/quote_grant ', '/quote_feedback '))
+                or (session_ctx.get('pending_clarification') or {}).get('kind') in
+                ('saved_quote_edit', 'quote_approval_feedback')):
+            turn_budget = 110.0
+            turn_deadline = turn_start_time + turn_budget
+            turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
 
         # 3. Claim turn lease trong SQLite để tuần tự hóa các turn cùng session
         lease_token = conversation_history_store.claim_turn_lease(
@@ -476,7 +482,7 @@ async def handle_telegram_turn(
             chat_id=req.chat_id,
             binding_id=context.telegram_binding_id,
             database=context.database,
-            lease_seconds=65.0,
+            lease_seconds=125.0 if turn_budget > 60.0 else 65.0,
         )
         if not lease_token:
             raise HTTPException(
@@ -521,6 +527,19 @@ async def handle_telegram_turn(
                 session_ctx["last_read"].pop("knowledge.query")
                 session_ctx["history"] = []
             session_ctx['_turn_deadline'] = turn_deadline
+            if get_settings().ENABLE_QUOTATIONS:
+                from app.business.quote_saved_interaction import handle as handle_saved_quote
+                quote_messages = await handle_saved_quote(clean_text, context, session_ctx,
+                    conversation_history_store, natural_pipeline)
+                if quote_messages is None:
+                    from app.business.quote_optional import handle as handle_optional_quote
+                    quote_messages = await handle_optional_quote(clean_text, context, session_ctx)
+                if quote_messages is not None:
+                    conversation_history_store.append_turn(context.tenant, context.user_id, req.chat_id,
+                        context.telegram_binding_id, 'user', clean_text, database=context.database)
+                    conversation_history_store.append_turn(context.tenant, context.user_id, req.chat_id,
+                        context.telegram_binding_id, 'assistant', quote_messages[0], database=context.database)
+                    return quote_messages
             classification_started = time.perf_counter()
             intent_res = await natural_pipeline.analyze_input(clean_text, context, session_ctx)
             logger.info("request_id=%s classification_ms=%.3f tool=%s", req.request_id,

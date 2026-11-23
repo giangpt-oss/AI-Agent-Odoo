@@ -5,7 +5,36 @@ preview and confirmation remain in their existing application boundaries.
 """
 import re
 import time
+import unicodedata
 from datetime import date
+
+
+def _plain(text):
+    """Normalize Vietnamese intent words without changing the facts sent to the extractor."""
+    text = unicodedata.normalize('NFD', text.casefold().replace('đ', 'd'))
+    return re.sub(r'\s+', ' ', ''.join(c for c in text if unicodedata.category(c) != 'Mn')).strip()
+
+
+def requests_new_quote(text):
+    """Recognize a positive creation request; leave search, help and negation alone."""
+    plain = _plain(text)
+    if not re.search(r'\bbao gia\b', plain):
+        return False
+    if re.search(r'\b(?:dung|khong|chua|khoan|thoi|cam)\s+(?:\w+\s+){0,3}(?:tao|lap|len|soan)\b', plain):
+        return False
+    if re.search(r'\b(?:cach|lam sao|huong dan|the nao|quy trinh)\b|\?', plain):
+        return False
+    if re.search(r'\b(?:tim|tra cuu|liet ke|xem|kiem tra)\s+(?:\w+\s+){0,3}bao gia\b', plain):
+        return False
+    return bool(re.search(r'\b(?:tao|lap|len|soan)\b(?:\s+\w+){0,7}\s+bao gia\b', plain)
+                or re.search(r'\bbao gia\b(?:\s+\w+){0,4}\s+(?:tao|lap|len|soan)\b', plain))
+
+
+def requests_fresh_quote(text):
+    """Distinguish a new request from assent to create the draft in progress."""
+    plain = _plain(text)
+    return requests_new_quote(text) and not re.search(
+        r'^(?:dung roi|ok|dong y|xac nhan|chot)\b|\b(?:bao gia nay|ban nay)\b', plain)
 
 
 def asks_delivery_or_approval_status(text):
@@ -46,10 +75,40 @@ def structured_quote(text, draft):
     return {'action': 'update', 'customer_query': customer, 'pricelist_query': pricelist, 'line_updates': lines}
 
 
+def _pricelist_reply(text, draft):
+    """Keep the user's exact label while a quotation is waiting for a price list."""
+    if draft.get('draft_type') != 'quotation':
+        return None
+    data = draft.get('quotation_data') or {}
+    hints = draft.get('quotation_hints') or {}
+    selection = hints.get('selection') or {}
+    explicit = re.fullmatch(
+        r'\s*(?:(?:đổi|sửa|chọn|lấy|dùng|áp dụng)\s+)?(?:bảng giá|bang gia)\s*(?:(?:là|sang|thành)\s*|[:：]\s*)?(.+?)\s*',
+        text, re.I)
+    waiting = (bool(data.get('partner_id')) and not data.get('pricelist_id')
+               and selection.get('kind') in (None, 'pricelists')) or bool(hints.get('pricelist_lookup_pending'))
+    if not explicit and not waiting:
+        return None
+    candidate = (explicit[1] if explicit else text).strip()
+    candidate = re.sub(r'\s+(?:đấy|ấy|nhé|ạ|đi)$', '', candidate, flags=re.I).strip(' .,!')
+    normalized = _plain(candidate)
+    if not candidate or len(candidate) > 150:
+        return None
+    if not explicit and (re.search(r'\d', normalized) and not re.search(r'\b(?:vnd|usd|eur)\b', normalized)
+                         or re.search(r'\b(?:khach hang|san pham|so luong|thanh toan|het han|hieu luc|bao gia)\b', normalized)):
+        return None
+    return candidate
+
+
 def interpret(text, draft, session=None):
     text = text.strip().rstrip('.!?').strip()
     lower = text.casefold()
     names = re.findall(r'\bS\d{3,}\b', text, re.I)
+    if re.fullmatch(r'(?:gửi|lấy|xuất|tải)(?: lại)? (?:file )?pdf(?: báo giá)?\s+S\d{3,}', lower, re.I):
+        return {'action': 'retry_pdf', 'quotation_name': names[0].upper()}
+    if draft.get('draft_type') == 'quotation' and re.fullmatch(
+            r'(?:gửi|lấy|xuất|tải)(?: lại)? (?:file )?pdf(?: báo giá)?(?: này)?', lower):
+        return {'action': 'retry_pdf'}
     if asks_delivery_or_approval_status(text):
         if len(names) == 1:
             return {'action': 'status', 'quotation_name': names[0].upper()}
@@ -59,9 +118,15 @@ def interpret(text, draft, session=None):
         if re.search(r'trạng thái|tiến độ|đến đâu|xem|kiểm tra|thế nào|xong chưa|báo giá', lower) or text.upper() == names[0].upper():
             return {'action': 'status', 'quotation_name': names[0].upper()}
     if re.fullmatch(r'(?:hãy |giúp tôi |tôi muốn )?(?:tạo|lập)(?: cho tôi)? (?:một |1 )?báo giá(?: mới)?(?: đi)?', lower):
-        return {'action': 'start'} if draft.get('draft_type') != 'quotation' or 'mới' in lower else {'action': 'preview'}
+        return {'action': 'start'}
     if draft.get('draft_type') != 'quotation':
         return None
+    hints = draft.get('quotation_hints') or {}
+    if hints.get('unclassified_product_candidate') or hints.get('product_query_1_needs_confirmation'):
+        if re.fullmatch(r'(?:đúng|đúng rồi|có|phải|chính xác)(?:[, ]+(?:chỉ là )?bảng giá)?', lower):
+            return {'action': 'discard_price_candidate'}
+        if re.fullmatch(r'(?:không|không phải)(?:[, ]+(?:đó là )?sản phẩm)?', lower):
+            return {'action': 'restore_product_candidate'}
     structured = structured_quote(text, draft)
     if structured:
         return structured
@@ -71,11 +136,20 @@ def interpret(text, draft, session=None):
     selection = draft.get('quotation_hints', {}).get('selection') or {}
     if selection and time.time() - selection.get('at', 0) <= 1800:
         candidate = (session.get('last_read') or {}).get('business_candidates_' + selection.get('kind', '')) or {}
+        numbered = re.fullmatch(r'(?:(?:chọn|lấy)\s+)?(?:số\s*)?(\d+)', lower)
+        if numbered:
+            rows = [row for row in candidate.get('data', {}).get('items', []) if row.get('id') in selection.get('ids', [])]
+            number = int(numbered[1])
+            if 1 <= number <= len(rows):
+                return {'action': 'update', 'selected_id': rows[number - 1]['id']}
         requested = re.sub(r'^(?:chọn|lấy)\s+', '', text, flags=re.I).casefold()
         matches = [row['id'] for row in candidate.get('data', {}).get('items', [])
                    if row.get('id') in selection.get('ids', []) and requested == str(row.get('display_name') or row.get('name', '')).casefold()]
         if len(matches) == 1:
             return {'action': 'update', 'selected_id': matches[0]}
+    price = _pricelist_reply(text, draft)
+    if price is not None:
+        return {'action': 'update', 'pricelist_query': price}
     if re.fullmatch(r'(?:tôi )?(?:xác nhận|đồng ý)(?: tạo| thực hiện)?(?: báo giá)?(?: theo bản vừa xem| theo bản xem trước| này)?', lower):
         return {'action': 'confirm'}
     if re.fullmatch(r'(?:cho |tôi muốn |cho tôi )?(?:xem trước|xem bản|xem lại|xem)(?: bản)?(?: nháp)? báo giá(?: trước| này| trước khi tạo trên odoo)?', lower):
@@ -110,7 +184,7 @@ def interpret(text, draft, session=None):
     match = re.fullmatch(r'đơn giá(?: là|:)?\s+(\d+(?:\.\d{3})*|\d+)(?: đồng| đ| vnd)?', lower)
     if match:
         return {'action': 'update', 'price_unit': float(match[1].replace('.', '')), 'price_confirmed': True}
-    match = re.fullmatch(r'(?:giao sau |thời gian giao hàng(?: là)? |nhập(?: là)? )?(\d+) ngày', lower)
+    match = re.fullmatch(r'(?:giao sau |thời gian giao hàng(?: là)? |nhập(?: là)? )(\d+) ngày', lower)
     if match:
         return {'action': 'update', 'customer_lead': float(match[1])}
     match = re.fullmatch(r'(?:ngày )?hết hạn(?: báo giá)?(?: là| ngày|:)?\s+(\d{1,2})/(\d{1,2})/(\d{4})', lower)

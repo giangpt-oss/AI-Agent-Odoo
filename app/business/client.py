@@ -14,7 +14,8 @@ def scope(context) -> dict[str, Any]:
 async def request(context, method: str, path: str, payload=None) -> dict[str, Any]:
     url = f"{gateway_client.base_url}/internal/v1/users/{context.user_id}/{path}"
     try:
-        async with httpx.AsyncClient(timeout=45.0 if path.startswith('business/') else 12.0) as client:
+        slow = path.startswith('business/') or path.startswith('quotations/pdf-') or path.startswith('quotations/approval-')
+        async with httpx.AsyncClient(timeout=90.0 if slow else 12.0) as client:
             kwargs = {"headers": gateway_client._headers()}
             if method == "GET":
                 kwargs["params"] = {**scope(context), **(payload or {})}
