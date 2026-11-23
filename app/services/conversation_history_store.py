@@ -211,6 +211,18 @@ class ConversationHistoryStore:
             pending = json.loads(row["pending_confirmation_json"] or "{}")
             clarification = json.loads(row["pending_clarification_json"] or "{}") if "pending_clarification_json" in row.keys() else {}
 
+            # Tự động làm mới lịch sử + last_read nếu phiên không hoạt động quá 4 giờ và không có nháp/xác nhận đang chờ
+            updated_at = row["updated_at"] if "updated_at" in row.keys() else None
+            if (
+                updated_at
+                and (time.time() - float(updated_at)) > 4 * 3600
+                and not draft
+                and not pending
+            ):
+                history = []
+                last_read = {}
+                clarification = {}
+
             return {
                 "history": history,
                 "last_read": last_read,
@@ -271,13 +283,38 @@ class ConversationHistoryStore:
         category: str,
         records: list[dict[str, Any]],
         database: Optional[str] = None,
+        *,
+        google_account_id: Optional[int] = None,
+        owner_key: Optional[str] = None,
     ) -> None:
         key = self._build_key(tenant, user_id, chat_id, database, binding_id)
         curr_session = self.get_session(tenant, user_id, chat_id, binding_id, database)
         last_read = curr_session["last_read"]
-        last_read[category] = records
-
         now = time.time()
+        stamped_records = records
+        if isinstance(records, list):
+            stamped_records = []
+            for item in records:
+                if isinstance(item, dict):
+                    rec = dict(item)
+                    rec.setdefault("_fetched_at", now)
+                    if google_account_id is not None:
+                        rec.setdefault("_google_account_id", google_account_id)
+                    if owner_key:
+                        rec.setdefault("_owner_key", owner_key)
+                    stamped_records.append(rec)
+                else:
+                    stamped_records.append(item)
+        elif isinstance(records, dict):
+            rec = dict(records)
+            rec.setdefault("_fetched_at", now)
+            if google_account_id is not None:
+                rec.setdefault("_google_account_id", google_account_id)
+            if owner_key:
+                rec.setdefault("_owner_key", owner_key)
+            stamped_records = rec
+        last_read[category] = stamped_records
+
         with self._get_connection() as conn:
             conn.execute(
                 """

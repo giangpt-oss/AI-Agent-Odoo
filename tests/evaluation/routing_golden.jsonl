@@ -1,0 +1,86 @@
+{"id":"slang_01","group":"diacritic_slang","text":"mai co lich gi k","expected_intent":"read","expected_domains":["calendar"]}
+{"id":"slang_02","group":"diacritic_slang","text":"ktra mail moi nhat dum","expected_intent":"read","expected_domains":["gmail"]}
+{"id":"slang_03","group":"diacritic_slang","text":"tuan nay co cuoc hop nao k","expected_intent":"read","expected_domains":["calendar"]}
+{"id":"slang_04","group":"diacritic_slang","text":"tim file hop dong tren drive","expected_intent":"read","expected_domains":["drive"]}
+{"id":"slang_05","group":"diacritic_slang","text":"ton kho san pham A con bn","expected_intent":"read","expected_domains":["odoo"]}
+{"id":"slang_06","group":"diacritic_slang","text":"xem ds khach hang cty minh","expected_intent":"read","expected_domains":["odoo"]}
+{"id":"slang_07","group":"diacritic_slang","text":"bao nhieu don ban thang nay","expected_intent":"read","expected_domains":["odoo","reports"]}
+{"id":"slang_08","group":"diacritic_slang","text":"check thu gmail cua anh Hung","expected_intent":"read","expected_domains":["gmail"]}
+{"id":"slang_09","group":"diacritic_slang","text":"co task nao den han hom nay k","expected_intent":"read","expected_domains":["tasks"]}
+{"id":"slang_10","group":"diacritic_slang","text":"hom nay t co viec gi","expected_intent":"read","expected_domains":["briefing","calendar","tasks"]}
+{"id":"slang_11","group":"diacritic_slang","text":"co hoi crm nao dang mo k","expected_intent":"read","expected_domains":["crm"]}
+{"id":"slang_12","group":"diacritic_slang","text":"tim sdt cong ty Hoa Phat","expected_intent":"read","expected_domains":["odoo"]}
+{"id":"slang_13","group":"diacritic_slang","text":"xem lich hop chieu t5","expected_intent":"read","expected_domains":["calendar"]}
+{"id":"slang_14","group":"diacritic_slang","text":"doc mail hoa don dien thang 10","expected_intent":"read","expected_domains":["gmail"]}
+{"id":"slang_15","group":"diacritic_slang","text":"file bao gia quy 3 nam dau tren drive","expected_intent":"read","expected_domains":["drive"]}
+{"id":"slang_16","group":"diacritic_slang","text":"thong ke doanh thu thang truoc","expected_intent":"read","expected_domains":["reports","odoo"]}
+{"id":"know_01","group":"knowledge","text":"nghi phep thi lam s","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_02","group":"knowledge","text":"quy trinh thanh toan cong tac phi nhu nao","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_03","group":"knowledge","text":"noi quy di lam muon bi phat sao","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_04","group":"knowledge","text":"chinh sach thuong tet cua cong ty la gi","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_05","group":"knowledge","text":"muon xin nghi om can giay to gi","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_06","group":"knowledge","text":"huong dan lap de nghi tam ung","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_07","group":"knowledge","text":"so tay nhan vien quy dinh trang phuc the nao","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_08","group":"knowledge","text":"quy che bao mat thong tin khach hang","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_09","group":"knowledge","text":"cach quyet toan chi phi tiep khach","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"know_10","group":"knowledge","text":"thu tuc onboarding nhan vien moi gom gi","expected_intent":"read","expected_tool":"knowledge.query"}
+{"id":"write_01","group":"write_and_negation","text":"gui mail cho anh Nam bao doi hop sang 3h","expected_intent":"prepare_write_or_draft","expected_domains":["gmail","odoo"]}
+{"id":"neg_01","group":"write_and_negation","text":"dung gui mail cho anh Nam nhe","expected_intent":"reply","forbid_write":true}
+{"id":"write_02","group":"write_and_negation","text":"tao task nhac goi khach ABC chieu nay","expected_intent":"prepare_write","expected_domains":["tasks"]}
+{"id":"neg_02","group":"write_and_negation","text":"thoi dung tao task goi khach ABC nua","expected_intent":"reply","forbid_write":true}
+{"id":"write_03","group":"write_and_negation","text":"dat lich hop voi chi Lan 9h sang mai","expected_intent":"prepare_write","expected_domains":["calendar"]}
+{"id":"neg_03","group":"write_and_negation","text":"khong can dat lich hop voi chi Lan dau","expected_intent":"reply","forbid_write":true}
+{"id":"write_04","group":"write_and_negation","text":"soan email chuc mung sinh nhat khach Minh","expected_intent":"prepare_write_or_draft","expected_domains":["gmail"]}
+{"id":"neg_04","group":"write_and_negation","text":"chua can soan email cho khach Minh","expected_intent":"reply","forbid_write":true}
+{"id":"write_05","group":"write_and_negation","text":"xuat file excel bao cao doanh thu thang nay","expected_intent":"prepare_write_or_read","expected_domains":["reports"]}
+{"id":"neg_05","group":"write_and_negation","text":"thoi khong xuat bao cao nua","expected_intent":"reply","forbid_write":true}
+{"id":"write_06","group":"write_and_negation","text":"tao co hoi crm moi cho cong ty Tan Phat 500 trieu","expected_intent":"prepare_write","expected_domains":["crm"]}
+{"id":"neg_06","group":"write_and_negation","text":"dung tao co hoi crm cho Tan Phat","expected_intent":"reply","forbid_write":true}
+{"id":"write_07","group":"write_and_negation","text":"lap bao gia cho khach hang Viettel","expected_intent":"read_or_write","expected_domains":["quotation"]}
+{"id":"neg_07","group":"write_and_negation","text":"thoi dung lap bao gia nua","expected_intent":"reply","forbid_write":true}
+{"id":"write_08","group":"write_and_negation","text":"len lich goi dien cho anh Tuan 14h hom nay","expected_intent":"prepare_write","expected_domains":["calendar","tasks"]}
+{"id":"neg_08","group":"write_and_negation","text":"dung xoa su kien hop giao ban","expected_intent":"reply","forbid_write":true}
+{"id":"chat_01","group":"chitchat","text":"ok cam on nha","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_02","group":"chitchat","text":"thanks bot nhieu","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_03","group":"chitchat","text":"ok de minh xem lai","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_04","group":"chitchat","text":"chao buoi sang","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_05","group":"chitchat","text":"cam on ban nhieu nha","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_06","group":"chitchat","text":"tuyet voi, cam on","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_07","group":"chitchat","text":"bye bye hen gap lai","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"chat_08","group":"chitchat","text":"uhm minh hieu roi","expected_intent":"reply","forbid_tool":"knowledge.query"}
+{"id":"ctx_01","group":"context_followup","text":"sdt khach thu 2 bao nhieu","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"Cong ty Alpha","phone":"0901111111"},{"id":2,"name":"Cong ty Beta","phone":"0902222222"}]}},"expected_intent":"reply","expected_substring":"0902222222","forbid_write":true}
+{"id":"ctx_02","group":"context_followup","text":"email cua khach dau tien la gi","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"Cong ty Alpha","email":"alpha@corp.vn"},{"id":2,"name":"Cong ty Beta","email":"beta@corp.vn"}]}},"expected_intent":"reply","expected_substring":"alpha@corp.vn","forbid_write":true}
+{"id":"ctx_03","group":"context_followup","text":"cai thu 2 la gi vay","session_context":{"last_read":{"workspace.calendar":[{"id":"e1","summary":"Hop sang","start":"09:00"},{"id":"e2","summary":"Hop khach hang","start":"14:00"}]}},"expected_intent":"reply","expected_substring":"Hop khach hang","forbid_write":true}
+{"id":"ctx_04","group":"context_followup","text":"dia chi khach thu 1 o dau","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"Cong ty Alpha","contact_address":"123 Le Loi, Q1"}]}},"expected_intent":"reply","expected_substring":"123 Le Loi","forbid_write":true}
+{"id":"ctx_05","group":"context_followup","text":"sdt khach thu 2 bao nhieu","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"Cong ty Alpha"},{"id":2,"name":"Cong ty Beta","email":"beta@corp.vn"}]}},"expected_intent":"read","forbid_write":true,"note":"missing field -> requery"}
+{"id":"ctx_06","group":"context_followup","text":"cai thu 2 la gi","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"A"},{"id":2,"name":"B"}],"workspace.gmail":[{"id":"m1","subject":"M1"},{"id":"m2","subject":"M2"}]}},"expected_intent":"clarify","forbid_write":true,"note":"ambiguous 2 lists"}
+{"id":"ctx_07","group":"context_followup","text":"don S00010 da duyet chua","session_context":{"last_read":{"odoo.quotations":[{"id":10,"name":"S00010","state":"draft"}]}},"expected_intent":"read","forbid_write":true,"note":"live status must re-read"}
+{"id":"ctx_08","group":"context_followup","text":"trang thai moi nhat cua muc dau tien","session_context":{"last_read":{"odoo.quotations":[{"id":10,"name":"S00010","state":"draft"}]}},"expected_intent":"read","forbid_write":true,"note":"live status must re-read"}
+{"id":"ctx_09","group":"context_followup","text":"tieu de mail dau tien","session_context":{"last_read":{"workspace.gmail":[{"id":"m1","subject":"Secret from account 99","google_account_id":99}]}},"expected_intent":"read","forbid_substring":"Secret from account 99","forbid_write":true,"note":"cross-account isolation"}
+{"id":"ctx_10","group":"context_followup","text":"muc so 5 ten gi","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"A"},{"id":2,"name":"B"}]}},"expected_intent":"clarify","forbid_write":true,"note":"out of range index"}
+{"id":"ctx_11","group":"context_followup","text":"ai phu trach khach thu 2","session_context":{"last_read":{"odoo.partners":[{"id":1,"name":"Alpha","user_id":[1,"An"]},{"id":2,"name":"Beta","user_id":[2,"Binh"]}]}},"expected_intent":"reply","expected_substring":"Binh","forbid_write":true}
+{"id":"ctx_12","group":"context_followup","text":"gia tri co hoi thu 1 bao nhieu","session_context":{"last_read":{"crm":[{"id":5,"name":"Deal X","expected_revenue":120000000}]}},"expected_intent":"reply","expected_substring":"120000000","forbid_write":true}
+{"id":"draft_01","group":"draft_and_confirm","text":"mai co lich gi k","session_context":{"active_draft":{"draft_type":"quotation","draft_id":"q1","version":1}},"expected_intent":"read","expected_domains":["calendar"],"forbid_write":true}
+{"id":"draft_02","group":"draft_and_confirm","text":"check mail moi giup toi","session_context":{"active_draft":{"draft_type":"quotation","draft_id":"q1","version":1}},"expected_intent":"read","expected_domains":["gmail"],"forbid_write":true}
+{"id":"draft_03","group":"draft_and_confirm","text":"quy che nghi phep the nao","session_context":{"active_draft":{"draft_type":"quotation","draft_id":"q1","version":1}},"expected_intent":"read","expected_tool":"knowledge.query","forbid_write":true}
+{"id":"draft_04","group":"draft_and_confirm","text":"dong y, sua so luong thanh 3","session_context":{"active_draft":{"draft_type":"quotation","draft_id":"q1","version":1}},"forbid_intent":"action_confirm"}
+{"id":"draft_05","group":"draft_and_confirm","text":"ok, sua so luong thanh 3","session_context":{"active_draft":{"draft_type":"quotation","draft_id":"q1","version":1}},"forbid_intent":"action_confirm"}
+{"id":"draft_06","group":"draft_and_confirm","text":"xac nhan conf_abc12345","session_context":{},"expected_intent":"action_confirm"}
+{"id":"draft_07","group":"draft_and_confirm","text":"huy conf_abc12345","session_context":{},"expected_intent":"action_cancel"}
+{"id":"draft_08","group":"draft_and_confirm","text":"kiem tra trang thai conf_abc12345","session_context":{},"expected_intent":"action_status"}
+{"id":"unclear_01","group":"ambiguous_unclear","text":"cai kia do","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_02","group":"ambiguous_unclear","text":"xu ly gium cai nay","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_03","group":"ambiguous_unclear","text":"lam gium toi cai hom qua","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_04","group":"ambiguous_unclear","text":"xem lai cai do xem","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_05","group":"ambiguous_unclear","text":"gui di","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_06","group":"ambiguous_unclear","text":"tao cai moi","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_07","group":"ambiguous_unclear","text":"sua lai chut","expected_intent":"clarify","forbid_write":true}
+{"id":"unclear_08","group":"ambiguous_unclear","text":"cai nay sao roi","expected_intent":"clarify","forbid_write":true}
+{"id":"read_safe_01","group":"read_vs_write_safety","text":"co may email chua doc","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_02","group":"read_vs_write_safety","text":"lich hop tuan sau co gi","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_03","group":"read_vs_write_safety","text":"danh sach don hang cho duyet","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_04","group":"read_vs_write_safety","text":"khach hang Minh Tuan con no bao nhieu","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_05","group":"read_vs_write_safety","text":"toi dang dung tai khoan google nao","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_06","group":"read_vs_write_safety","text":"co file bao cao nao tren drive k","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_07","group":"read_vs_write_safety","text":"xem thong tin lien he anh Nam","expected_intent":"read","forbid_write":true}
+{"id":"read_safe_08","group":"read_vs_write_safety","text":"hom nay co bao nhieu task chua xong","expected_intent":"read","forbid_write":true}

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     RAG_CHUNK_CHARS: int = 3000
     RAG_CHUNK_OVERLAP: int = 200
     INTENT_LLM_MODEL: str | None = None
+    ENABLE_TWO_STAGE_ROUTER: bool = False
+    ROUTER_LLM_MODEL: str | None = None
+    ROUTER_CONFIDENCE_THRESHOLD: float = 0.6
+    ROUTER_TIMEOUT_SECONDS: float = 12.0
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = ""

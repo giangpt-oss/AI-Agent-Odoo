@@ -10,7 +10,7 @@ from app.providers.gateway_calendar import GatewayCalendarProvider
 from app.providers.gateway_crm import GatewayCRMProvider
 from app.providers.gateway_gmail import GatewayGmailProvider
 from app.providers.tasks.local import LocalTaskProvider
-from app.services.confirmation_service import ConfirmationService, confirmation_service
+from app.services.confirmation_service import ConfirmationService, OptionButtonsMessage, confirmation_service
 from app.services.conversation_history_store import ConversationHistoryStore, conversation_history_store
 from app.services.executor_handlers.confirmation import ConfirmationHandler
 from app.services.executor_handlers.prepare_write import PrepareWriteHandler
@@ -86,6 +86,8 @@ class UnifiedExecutor(ReadHandler, PrepareWriteHandler, ConfirmationHandler):
                 },
                 database=context.database,
             )
+            if intent.candidate_options:
+                return [OptionButtonsMessage(clarify_text, intent.candidate_options)]
             return [clarify_text]
 
         # 3. UNSUPPORTED Intent

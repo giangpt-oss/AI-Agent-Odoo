@@ -18,6 +18,15 @@ class ConfirmationPreview(str):
         return preview
 
 
+class OptionButtonsMessage(str):
+    """Message carrying quick-reply inline buttons for CLARIFY / disambiguation choices."""
+
+    def __new__(cls, text: str, options: list[str]):
+        msg = super().__new__(cls, text)
+        msg.options = [str(opt).strip()[:60] for opt in options if str(opt).strip()][:4]
+        return msg
+
+
 class ConfirmationService:
     """Quản lý bản xem trước (preview) và xác nhận hành động ghi (/confirm <id>).
     
@@ -289,9 +298,8 @@ class ConfirmationService:
 
         instruction = (
             f"\n\n⚠️ **Hành động cần bạn xác nhận:**\n"
-            f"Bạn có thể đồng ý thực hiện hoặc từ chối. Mã tham chiếu: {conf_id}.\n"
-            f"Nếu có nhiều thao tác đang chờ, hãy cho biết mã của thao tác bạn chọn.\n"
-            f"_(Mã có hiệu lực trong vòng 5 phút)_"
+            f"Vui lòng bấm nút **Xác nhận** để thực hiện hoặc **Từ chối** để hủy yêu cầu.\n"
+            f"_(Mã tham chiếu: {conf_id} · Hiệu lực trong vòng 5 phút)_"
         )
         if action == 'sales.quotation.create':
             instruction = '\n\nChọn Xác nhận để tạo báo giá theo nội dung trên hoặc Từ chối để hủy yêu cầu. Bản xác nhận có hiệu lực 5 phút.'
