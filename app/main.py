@@ -50,17 +50,20 @@ async def lifespan(app: FastAPI):
 
     # 4. Khởi động background reconciliation task (chu kỳ 30s)
     reconciliation_task = asyncio.create_task(_background_lease_reconciliation_loop())
-    
-    yield
-    
-    print(f"[*] Shutting down {settings.APP_NAME}...")
-    reconciliation_task.cancel()
+    from app.services.gateway_client import gateway_client
+    gateway_client.start()
     try:
-        await reconciliation_task
-    except asyncio.CancelledError:
-        pass
-    scheduler_service.stop()
-    indexing_service.stop_worker()
+        yield
+    finally:
+        print(f"[*] Shutting down {settings.APP_NAME}...")
+        reconciliation_task.cancel()
+        try:
+            await reconciliation_task
+        except asyncio.CancelledError:
+            pass
+        scheduler_service.stop()
+        indexing_service.stop_worker()
+        await gateway_client.close()
 
 
 

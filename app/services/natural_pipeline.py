@@ -37,7 +37,22 @@ class NaturalPipeline:
     ) -> IntentAnalysisResult:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
-        active = (session_context or {}).get('active_draft') or {}
+        active = (session_context or {}).get("active_draft") or {}
+        if (active.get("draft_type") == "quotation" and not clean_text.startswith("/")
+                and getattr(get_settings(), "ENABLE_QUOTATIONS", False)):
+            explicit_workspace = re.search(
+                r"\b(?:drive|gmail|calendar|docs|sheets|slides)\b|"
+                r"quy chế|nội quy|chính sách|sổ tay|tài liệu nội bộ|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ",
+                lower,
+            )
+            quotation_target = re.search(r"\bbáo giá\b|\bs\d{3,}\b", lower)
+            if explicit_workspace and not quotation_target:
+                topic_context = dict(session_context or {})
+                topic_context.pop("active_draft", None)
+                topic_context.pop("pending_clarification", None)
+                return await self._dispatch_with_llm(clean_text, context, topic_context)
+        if lower.rstrip("?!.") in {"hôm nay tôi có gì", "hôm nay tôi cần làm gì", "hôm nay có gì"}:
+            return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="briefing.today")
         from app.business.operations import looks_like_quote_chatter
         if getattr(get_settings(), 'ENABLE_QUOTATIONS', False) and looks_like_quote_chatter(clean_text, active):
             return await self._dispatch_quote_chatter(clean_text, context, session_context)
@@ -318,6 +333,18 @@ class NaturalPipeline:
                 intent_type=IntentType.PREPARE_WRITE,
                 tool_name="knowledge.documents.index",
                 parameters={},
+            )
+
+        # Fast-path: Trạng thái kết nối & Hồ sơ cá nhân (0 LLM call)
+        if any(w in lower for w in ["trạng thái kết nối", "kiểm tra kết nối", "tình trạng kết nối", "kết nối dịch vụ", "kết nối của tôi", "kết nối odoo", "kết nối google"]) or lower == "kết nối":
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="connections.status",
+            )
+        if any(w in lower for w in ["tôi là ai", "hồ sơ của tôi", "thông tin tài khoản", "whoami", "hồ sơ cá nhân", "hồ sơ"]):
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="identity.whoami",
             )
 
         # 2. Fast-path: Lời chào THUẦN TÚY (Chỉ áp dụng khi TOÀN CÂU là lời chào/menu, không kèm nội dung khác)
@@ -678,7 +705,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             settings = get_settings()
             # Nếu đang có API key hoặc mock/test LLM mà bị lỗi -> giữ nguyên draft/version, báo không chỉnh sửa được
             is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
-            has_llm_key = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+            has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
+            has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
+            has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
+            has_llm_key = has_gemini or has_groq or has_openai
             if has_llm_key or is_mock_llm:
                 return IntentAnalysisResult(
                     intent_type=IntentType.REPLY,
@@ -715,7 +745,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
     async def _call_gemini_raw(self, prompt: str, response_schema=None) -> str:
         """Gọi mô hình với deadline hữu hạn, không tự thử lại HTTP."""
         settings = get_settings()
-        if (settings.DEFAULT_LLM_PROVIDER == "groq" or not settings.GEMINI_API_KEY) and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY):
+        has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
+        has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
+        has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
+        if (getattr(settings, "DEFAULT_LLM_PROVIDER", None) == "groq" or not has_gemini) and (has_groq or has_openai):
             api_key = getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY
             model = settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "openai/gpt-oss-120b"
             if "gemini" in model.lower():
@@ -728,13 +761,9 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 content_prompt = prompt
                 if response_schema:
                     content_prompt += (
-                        "\n\nBẮT BUỘC trả về duy nhất 1 JSON object với các trường chuẩn:\n"
-                        "- intent_type: 'reply' | 'read' | 'draft' | 'prepare_write' | 'clarify' | 'unsupported'\n"
-                        "- tool_name: string (BẮT BUỘC cho 'read' và 'prepare_write', lấy đúng tên công cụ được cấp)\n"
-                        "- parameters: dict các tham số của công cụ\n"
-                        "- reply_text: string (bắt buộc khi intent_type='reply')\n"
-                        "- clarification_prompt: string (bắt buộc khi intent_type='clarify')\n"
-                        "Ví dụ prepare_write: {\"intent_type\": \"prepare_write\", \"tool_name\": \"tasks.personal.create\", \"parameters\": {\"title\": \"...\"}}"
+                        "\n\nTrả về duy nhất một JSON object tuân thủ JSON Schema sau. "
+                        "Chỉ sử dụng các trường và giá trị phù hợp với schema của yêu cầu này.\n"
+                        + json.dumps(response_schema, ensure_ascii=False)
                     )
                 kwargs = {
                     "model": model,
@@ -782,7 +811,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
     ) -> IntentAnalysisResult:
         available_tools = self.registry.list_tools(list(context.permissions))
         from app.services.intent_prompt import INTENT_PROMPT, tool_catalog
-        tools_summary = tool_catalog(available_tools)
+        from app.services.workspace_tool_plan import select_tools
+
+        selected = select_tools(text, available_tools)
+        tools_summary = tool_catalog(selected)
 
         # Nạp ngữ cảnh hội thoại có cấu trúc: tối đa 20 messages, giới hạn 12.000 ký tự
         context_blocks = []
@@ -841,7 +873,10 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
 
         settings = get_settings()
         is_mock_llm = hasattr(self._call_gemini_raw, "assert_called") or hasattr(self._call_gemini_raw, "return_value")
-        has_llm_key = bool(settings.GEMINI_API_KEY or (settings.DEFAULT_LLM_PROVIDER == "groq" and (getattr(settings, "GROQ_API_KEY", None) or settings.OPENAI_API_KEY)) or settings.OPENAI_API_KEY)
+        has_gemini = isinstance(getattr(settings, "GEMINI_API_KEY", None), str) and bool(settings.GEMINI_API_KEY.strip())
+        has_groq = isinstance(getattr(settings, "GROQ_API_KEY", None), str) and bool(settings.GROQ_API_KEY.strip())
+        has_openai = isinstance(getattr(settings, "OPENAI_API_KEY", None), str) and bool(settings.OPENAI_API_KEY.strip())
+        has_llm_key = has_gemini or has_groq or has_openai
         if not has_llm_key and not is_mock_llm:
             return self._offline_semantic_dispatch(text, context, session_context)
 
@@ -866,6 +901,39 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 else:
                     raise
             intent = IntentAnalysisResult.model_validate(data)
+            names = [step.tool_name for step in intent.steps]
+            if intent.tool_name:
+                names.append(intent.tool_name)
+            selected_names = {tool.name for tool in selected}
+            allowed_names = {tool.name for tool in available_tools}
+            canonical_names = {
+                tool.name if (tool := self.registry.get_tool(name)) else name for name in names
+            }
+            if intent.steps and not canonical_names <= allowed_names:
+                return IntentAnalysisResult(
+                    intent_type=IntentType.UNSUPPORTED,
+                    reply_text="Công cụ cần thiết không khả dụng cho tài khoản hiện tại.",
+                )
+            if canonical_names <= allowed_names and not canonical_names <= selected_names:
+                expanded = select_tools(text, available_tools, expanded=True)
+                preferred = [tool for tool in available_tools if tool.name in canonical_names]
+                expanded = (preferred + [tool for tool in expanded if tool.name not in canonical_names])[:12]
+                expanded_names = {tool.name for tool in expanded}
+                if not canonical_names <= expanded_names:
+                    raise ValueError("Các công cụ yêu cầu vượt giới hạn định tuyến.")
+                raw_retry = await self._call_gemini_raw(
+                    user_prompt.replace(tools_summary, tool_catalog(expanded), 1),
+                    response_schema=IntentAnalysisResult.model_json_schema(),
+                )
+                intent = IntentAnalysisResult.model_validate_json(raw_retry.strip().removeprefix("```json").removesuffix("```").strip())
+                retry_names = [step.tool_name for step in intent.steps]
+                if intent.tool_name:
+                    retry_names.append(intent.tool_name)
+                if not all(
+                    (tool := self.registry.get_tool(name)) and tool.name in expanded_names
+                    for name in retry_names
+                ):
+                    raise ValueError("Công cụ không khả dụng sau khi mở rộng danh mục.")
             if intent.intent_type == IntentType.REPLY:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="knowledge.query",
                                             parameters={"query": text})
@@ -875,7 +943,8 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             logger.error("LLM dispatch error: %s", e)
             try:
                 offline_res = self._offline_semantic_dispatch(text, context, session_context)
-                return offline_res
+                if offline_res.tool_name != "knowledge.query":
+                    return offline_res
             except Exception:
                 pass
             from app.services.error_handler import classify_exception
@@ -1042,8 +1111,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
 
         # Câu hỏi thông tin mặc định tra cứu Drive. Chỉ chuyển sang dữ liệu trực tiếp
         # khi người dùng chỉ rõ nguồn hoặc yêu cầu mở/xem một danh sách cụ thể.
+        is_business_term = any(w in lower for w in [
+            "đối tác", "khách hàng", "nhà cung cấp", "liên hệ", "contact",
+            "sản phẩm", "tồn kho", "mặt hàng", "hàng hóa", "giá bán", "sku",
+            "đơn bán", "đơn hàng", "báo giá", "đơn mua", "đơn mua hàng", "nhập hàng",
+            "phiếu kho", "điều chuyển kho", "phiếu nhập", "phiếu xuất",
+            "hóa đơn", "công nợ", "chứng từ", "nhân viên", "danh bạ", "nhân sự", "đồng nghiệp",
+            "cơ hội", "crm", "lead", "lịch họp", "lịch của tôi", "email", "thư chưa đọc"
+        ])
         explicit_source = re.search(r"\b(?:odoo|gmail|google calendar)\b", lower)
-        if is_question and not explicit_source and not lower.startswith(("xem ", "liệt kê ", "kiểm tra ", "danh sách ")):
+        if is_question and not explicit_source and not is_business_term and not lower.startswith(("xem ", "liệt kê ", "kiểm tra ", "danh sách ")):
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="knowledge.query",

@@ -31,7 +31,7 @@ def mock_user_context():
 
 @pytest.mark.asyncio
 async def test_explanation_intent_does_not_trigger_write(mock_user_context):
-    """Câu hỏi hướng dẫn/giải thích ('Cách tạo công việc?') phải trả lời REPLY, TUYỆT ĐỐI không tạo preview."""
+    """Câu hỏi hướng dẫn được tra cứu trong Drive với quyền đọc."""
     pipeline = NaturalPipeline()
     explanation_queries = [
         "Cách tạo công việc?",
@@ -43,11 +43,9 @@ async def test_explanation_intent_does_not_trigger_write(mock_user_context):
 
     for q in explanation_queries:
         res = await pipeline.analyze_input(q, mock_user_context)
-        assert res.intent_type == IntentType.REPLY, f"Query '{q}' bị gán nhầm thành intent {res.intent_type}"
-        assert res.intent_type != IntentType.PREPARE_WRITE
-        assert res.tool_name != "tasks.personal.create"
-        reply = (res.reply_text or "").lower()
-        assert "tạo công việc" in reply or "task" in reply
+        assert res.intent_type == IntentType.READ, f"Query '{q}' bị gán nhầm thành intent {res.intent_type}"
+        assert res.tool_name == "knowledge.query"
+        assert res.parameters == {"query": q}
 
 
 @pytest.mark.asyncio
@@ -91,8 +89,8 @@ async def test_vague_input_triggers_clarify(mock_user_context):
 
 
 @pytest.mark.asyncio
-async def test_contextual_follow_up_with_history(mock_user_context):
-    """Câu hỏi nối tiếp ('Công việc vừa tạo có hạn khi nào?') tra cứu từ session_context."""
+async def test_unsourced_follow_up_uses_knowledge_read_with_history(mock_user_context):
+    """Câu hỏi không chỉ định nguồn dùng đường đọc thông tin mặc định."""
     pipeline = NaturalPipeline()
     sess_ctx = {
         "last_read": {
@@ -101,13 +99,11 @@ async def test_contextual_follow_up_with_history(mock_user_context):
             "due_at": "2026-10-31T17:00:00",
         }
     }
-    res = await pipeline.analyze_input(
-        "Công việc vừa tạo có hạn khi nào?",
-        mock_user_context,
-        session_context=sess_ctx,
-    )
-    assert res.intent_type == IntentType.REPLY
-    assert "task_1001" in (res.reply_text or "") or "2026-10-31" in (res.reply_text or "")
+    question = "Công việc vừa tạo có hạn khi nào?"
+    res = await pipeline.analyze_input(question, mock_user_context, session_context=sess_ctx)
+    assert res.intent_type == IntentType.READ
+    assert res.tool_name == "knowledge.query"
+    assert res.parameters == {"query": question}
 
 
 @pytest.mark.asyncio

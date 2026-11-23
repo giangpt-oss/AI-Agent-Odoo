@@ -32,8 +32,8 @@ ERROR_MESSAGES: dict[ErrorCode, str] = {
         "Thông tin đã lưu được giữ nguyên. Bạn có thể thử lại khi dịch vụ hoạt động."
     ),
     ErrorCode.LLM_ERROR: (
-        "Chưa phân tích được yêu cầu do lỗi phản hồi từ dịch vụ AI. "
-        "Thông tin đã lưu được giữ nguyên; tôi chưa tự thực hiện yêu cầu này."
+        "Chưa phân tích được yêu cầu do lỗi phản hồi từ dịch vụ AI (không thể xử lý lúc này). "
+        "Thông tin đã lưu được giữ nguyên; tôi chưa tự thực hiện yêu cầu này. Vui lòng thử lại sau."
     ),
     ErrorCode.RATE_LIMIT: (
         "🚦 Hệ thống đang nhận được quá nhiều yêu cầu cùng lúc (Rate limit). "
