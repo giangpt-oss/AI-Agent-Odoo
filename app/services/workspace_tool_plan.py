@@ -112,6 +112,33 @@ def select_tools(
 
     ordered = sorted(tools, key=priority, reverse=True)
     limit = 12 if expanded or len(matched) >= 3 else 6
+
+    # Khi khớp nhiều domain, phân bổ cân bằng giữa các domain để tránh 1 dịch vụ (vd calendar + workspace.calendar) chiếm hết slot
+    if len(matched) >= 2 and len(ordered) > limit:
+        per_domain_cap = max(2, limit // len(matched))
+        picked = []
+        picked_names = set()
+        for dom in sorted(matched):
+            dom_count = 0
+            for tool in ordered:
+                if tool.name in picked_names:
+                    continue
+                if dom in tool.name.split("."):
+                    picked.append(tool)
+                    picked_names.add(tool.name)
+                    dom_count += 1
+                    if dom_count >= per_domain_cap or len(picked) >= limit:
+                        break
+            if len(picked) >= limit:
+                break
+        for tool in ordered:
+            if len(picked) >= limit:
+                break
+            if tool.name not in picked_names:
+                picked.append(tool)
+                picked_names.add(tool.name)
+        return picked[:limit]
+
     return ordered[:limit]
 
 

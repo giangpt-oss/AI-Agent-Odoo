@@ -205,3 +205,72 @@ async def test_turn_router_ambiguous_hd_abbreviation_forces_clarify():
     assert res is not None
     assert res.mode == RouteMode.CLARIFY
     assert res.clarify_options == ["Tra cứu hợp đồng", "Tra cứu hóa đơn"]
+
+
+@pytest.mark.asyncio
+async def test_tasks_done_and_calendar_update_resolve_by_title_without_id():
+    from app.services.confirmation_service import ConfirmationPreview
+
+    executor = UnifiedExecutor()
+    ctx = GatewayUserContext(
+        user_id=7, tenant="t", database="d", odoo_uid=1, telegram_binding_id="b1",
+        permissions={"tasks.write", "calendar.write"},
+    )
+    fake_session = {
+        "last_read": {
+            "tasks": [
+                {"id": "tsk_1", "title": "Gọi khách ABC"},
+                {"id": "tsk_2", "title": "Gửi báo cáo tuần"},
+            ],
+            "calendar": [
+                {"id": "ev_1", "summary": "Họp giao ban sáng", "start": "2026-11-25T09:00:00+07:00", "end": "2026-11-25T10:00:00+07:00"},
+                {"id": "ev_2", "summary": "Họp đối tác X", "start": "2026-11-25T14:00:00+07:00", "end": "2026-11-25T15:00:00+07:00"},
+            ],
+        }
+    }
+    task_intent = IntentAnalysisResult(
+        intent_type=IntentType.PREPARE_WRITE,
+        tool_name="tasks.personal.done",
+        parameters={"title": "goi khach abc"},
+    )
+    cal_intent = IntentAnalysisResult(
+        intent_type=IntentType.PREPARE_WRITE,
+        tool_name="calendar.events.update",
+        parameters={"summary": "giao ban", "start_time": "2026-11-25T15:00:00+07:00"},
+    )
+    with patch.object(executor.conversation_history_store, "get_session", return_value=fake_session), \
+         patch.object(executor.local_tasks, "get_task", AsyncMock(return_value={"id": "tsk_1", "title": "Gọi khách ABC"})), \
+         patch.object(executor.calendar_provider.client, "get_calendar_event", AsyncMock(return_value=None)), \
+         patch.object(executor.confirmation_service, "create_confirmation", return_value=("c_11223344", ConfirmationPreview("ok", "c_11223344"))) as mock_conf:
+        task_msgs = await executor.execute(task_intent, ctx, 100, 100, {}, time.time() + 10, {})
+        cal_msgs = await executor.execute(cal_intent, ctx, 100, 100, {}, time.time() + 10, {})
+
+    assert isinstance(task_msgs[0], ConfirmationPreview)
+    assert isinstance(cal_msgs[0], ConfirmationPreview)
+    assert mock_conf.call_args_list[0].kwargs["arguments"]["task_id"] == "tsk_1"
+    assert mock_conf.call_args_list[1].kwargs["arguments"]["event_id"] == "ev_1"
+
+
+def test_select_tools_balances_multi_domain_slots():
+    from app.services.workspace_tool_plan import select_tools
+
+    tools = [
+        SimpleNamespace(name="calendar.events.list", action_type="read", description="", parameter_schema={}),
+        SimpleNamespace(name="calendar.events.create", action_type="write", description="", parameter_schema={}),
+        SimpleNamespace(name="calendar.events.update", action_type="write", description="", parameter_schema={}),
+        SimpleNamespace(name="workspace.calendar.read", action_type="read", description="", parameter_schema={}),
+        SimpleNamespace(name="workspace.calendar.write", action_type="write", description="", parameter_schema={}),
+        SimpleNamespace(name="workspace.gmail.read", action_type="read", description="", parameter_schema={}),
+        SimpleNamespace(name="workspace.gmail.write", action_type="write", description="", parameter_schema={}),
+        SimpleNamespace(name="odoo.partners.search", action_type="read", description="", parameter_schema={}),
+        SimpleNamespace(name="tasks.personal.create", action_type="write", description="", parameter_schema={}),
+    ]
+    selected = select_tools(
+        "xem lich hop roi gui mail cho khach",
+        tools,
+        domains=["calendar", "gmail", "odoo"],
+    )
+    names = {t.name for t in selected}
+    assert any("calendar" in n for n in names)
+    assert any("gmail" in n for n in names)
+    assert "odoo.partners.search" in names
