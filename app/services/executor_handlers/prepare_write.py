@@ -1,12 +1,62 @@
 """Local draft persistence and write previews."""
 
 import sqlite3
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.domain.gateway_context import GatewayUserContext
 from app.domain.intent_schema import IntentAnalysisResult
+from app.services.confirmation_service import OptionButtonsMessage
 from app.services.context_resolver import validate_and_adjust_event_times
+
+
+def _fold_text(value: str) -> str:
+    norm = unicodedata.normalize("NFD", (value or "").strip().lower())
+    return "".join(ch for ch in norm if unicodedata.category(ch) != "Mn").replace("đ", "d")
+
+
+def _resolve_candidate(
+    candidates: list[dict[str, Any]],
+    *,
+    query: str | None = None,
+    item_index: int | None = None,
+    label_keys: tuple[str, ...] = ("title", "name", "summary"),
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Resolve a target record by 1-based index or fuzzy/accent-folded label match.
+
+    Returns (unique_match, ambiguous_matches).
+    """
+    valid = [c for c in candidates if isinstance(c, dict) and c.get("id") is not None]
+    if not valid:
+        return None, []
+    if item_index is not None and 1 <= item_index <= len(valid):
+        return valid[item_index - 1], []
+    q = _fold_text(query or "")
+    if q.isdigit():
+        idx = int(q)
+        if 1 <= idx <= len(valid):
+            return valid[idx - 1], []
+    if q:
+        exact = []
+        partial = []
+        for item in valid:
+            labels = [_fold_text(str(item.get(k) or "")) for k in label_keys if item.get(k)]
+            if any(lbl == q for lbl in labels):
+                exact.append(item)
+            elif any(q in lbl or lbl in q for lbl in labels if lbl):
+                partial.append(item)
+        if len(exact) == 1:
+            return exact[0], []
+        if len(exact) > 1:
+            return None, exact
+        if len(partial) == 1:
+            return partial[0], []
+        if len(partial) > 1:
+            return None, partial
+    if len(valid) == 1 and not q:
+        return valid[0], []
+    return None, valid if not q else []
 
 
 class PrepareWriteHandler:
@@ -176,7 +226,32 @@ class PrepareWriteHandler:
         if tool_name in ["tasks.personal.update", "tasks.update"]:
             task_id = params.get("task_id") or params.get("id")
             if not task_id:
-                return ["⚠️ Thiếu mã công việc (task_id) để cập nhật."]
+                session = self.conversation_history_store.get_session(
+                    tenant=context.tenant, user_id=context.user_id, chat_id=chat_id, binding_id=binding_id, database=context.database
+                )
+                candidates = list((session.get("last_read") or {}).get("tasks") or [])
+                if not candidates:
+                    try:
+                        candidates = await self.local_tasks.list_tasks(filters={"status": "open"}, owner_key=context.owner_key) or []
+                    except Exception:
+                        candidates = []
+                raw_idx = params.get("item_index") or params.get("index")
+                idx = int(raw_idx) if str(raw_idx or "").isdigit() else None
+                match, ambig = _resolve_candidate(
+                    candidates,
+                    query=params.get("query") or params.get("target_title") or params.get("title"),
+                    item_index=idx,
+                    label_keys=("title", "name"),
+                )
+                if match:
+                    task_id = match.get("id")
+                    params["task_id"] = task_id
+                elif ambig:
+                    opts = [f"Sửa việc {t.get('title', t.get('id'))}" for t in ambig[:4]]
+                    lines = "\n".join(f"{i}. {t.get('title')} (ID: `{t.get('id')}`)" for i, t in enumerate(ambig[:5], 1))
+                    return [OptionButtonsMessage(f"Bạn muốn cập nhật công việc nào?\n{lines}", opts)]
+                else:
+                    return ["⚠️ Thiếu mã công việc (task_id) hoặc không tìm thấy công việc khớp để cập nhật."]
 
             # Lấy snapshot công việc hiện tại để đối soát
             snapshot = None
@@ -220,7 +295,32 @@ class PrepareWriteHandler:
         if tool_name in ["tasks.personal.done", "tasks.done", "tasks.complete", "tasks.personal.complete"]:
             task_id = params.get("task_id") or params.get("id")
             if not task_id:
-                return ["⚠️ Thiếu mã công việc (task_id) để hoàn thành."]
+                session = self.conversation_history_store.get_session(
+                    tenant=context.tenant, user_id=context.user_id, chat_id=chat_id, binding_id=binding_id, database=context.database
+                )
+                candidates = list((session.get("last_read") or {}).get("tasks") or [])
+                if not candidates:
+                    try:
+                        candidates = await self.local_tasks.list_tasks(filters={"status": "open"}, owner_key=context.owner_key) or []
+                    except Exception:
+                        candidates = []
+                raw_idx = params.get("item_index") or params.get("index")
+                idx = int(raw_idx) if str(raw_idx or "").isdigit() else None
+                match, ambig = _resolve_candidate(
+                    candidates,
+                    query=params.get("query") or params.get("target_title") or params.get("title"),
+                    item_index=idx,
+                    label_keys=("title", "name"),
+                )
+                if match:
+                    task_id = match.get("id")
+                    params["task_id"] = task_id
+                elif ambig:
+                    opts = [f"Hoàn thành việc {t.get('title', t.get('id'))}" for t in ambig[:4]]
+                    lines = "\n".join(f"{i}. {t.get('title')} (ID: `{t.get('id')}`)" for i, t in enumerate(ambig[:5], 1))
+                    return [OptionButtonsMessage(f"Bạn muốn đánh dấu hoàn thành công việc nào?\n{lines}", opts)]
+                else:
+                    return ["⚠️ Thiếu mã công việc (task_id) hoặc không tìm thấy công việc khớp để hoàn thành."]
 
             snapshot = None
             try:
@@ -290,13 +390,22 @@ class PrepareWriteHandler:
                 session = self.conversation_history_store.get_session(
                     tenant=context.tenant, user_id=context.user_id, chat_id=chat_id, binding_id=binding_id, database=context.database
                 )
-                last_cal = session.get("last_read", {}).get("calendar", [])
-                if len(last_cal) == 1:
-                    event_id = last_cal[0].get("id")
+                last_cal = list((session.get("last_read") or {}).get("calendar") or [])
+                raw_idx = params.get("item_index") or params.get("index")
+                idx = int(raw_idx) if str(raw_idx or "").isdigit() else None
+                match, ambig = _resolve_candidate(
+                    last_cal,
+                    query=params.get("query") or params.get("target_summary") or params.get("summary"),
+                    item_index=idx,
+                    label_keys=("summary", "title", "name"),
+                )
+                if match:
+                    event_id = match.get("id")
                     params["event_id"] = event_id
-                elif len(last_cal) > 1:
-                    opts = "\n".join(f"• `{ev.get('id')}`: {ev.get('summary')}" for ev in last_cal)
-                    return [f"⚠️ Bạn có nhiều cuộc họp gần đây, vui lòng chỉ rõ mã cuộc họp:\n{opts}"]
+                elif ambig:
+                    opts = [f"Cập nhật lịch {ev.get('summary', ev.get('id'))}" for ev in ambig[:4]]
+                    lines = "\n".join(f"• `{ev.get('id')}`: {ev.get('summary')}" for ev in ambig[:5])
+                    return [OptionButtonsMessage(f"⚠️ Bạn có nhiều cuộc họp gần đây, vui lòng chọn cuộc họp cần cập nhật:\n{lines}", opts)]
                 else:
                     return ["⚠️ Thiếu mã cuộc họp (event_id) để cập nhật."]
 
@@ -458,7 +567,37 @@ class PrepareWriteHandler:
         if tool_name in ["crm.leads.update", "crm.update"]:
             lead_id = params.get("lead_id") or params.get("id")
             if not lead_id:
-                return ["⚠️ Thiếu ID cơ hội (lead_id) để cập nhật."]
+                session = self.conversation_history_store.get_session(
+                    tenant=context.tenant, user_id=context.user_id, chat_id=chat_id, binding_id=binding_id, database=context.database
+                )
+                candidates = list((session.get("last_read") or {}).get("crm") or [])
+                q_name = params.get("query") or params.get("name")
+                if not candidates and q_name:
+                    try:
+                        resp = await self.crm_provider.search_leads(user_id=context.user_id, search_term=str(q_name))
+                        if isinstance(resp, list):
+                            candidates = resp
+                        elif isinstance(resp, dict) and resp.get("status") != "ERROR":
+                            candidates = resp.get("leads") or []
+                    except Exception:
+                        candidates = []
+                raw_idx = params.get("item_index") or params.get("index")
+                idx = int(raw_idx) if str(raw_idx or "").isdigit() else None
+                match, ambig = _resolve_candidate(
+                    candidates,
+                    query=q_name,
+                    item_index=idx,
+                    label_keys=("name", "display_name"),
+                )
+                if match:
+                    lead_id = match.get("id")
+                    params["lead_id"] = lead_id
+                elif ambig:
+                    opts = [f"Sửa cơ hội {ld.get('name', ld.get('id'))}" for ld in ambig[:4]]
+                    lines = "\n".join(f"{i}. {ld.get('name')} (ID: `{ld.get('id')}`)" for i, ld in enumerate(ambig[:5], 1))
+                    return [OptionButtonsMessage(f"Bạn muốn cập nhật cơ hội CRM nào?\n{lines}", opts)]
+                else:
+                    return ["⚠️ Thiếu ID cơ hội (lead_id) hoặc không tìm thấy cơ hội khớp để cập nhật."]
 
             snapshot = None
             try:

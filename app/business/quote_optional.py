@@ -95,10 +95,20 @@ def _numbers(text):
     return [int(value) for value in re.findall(r'\d+', normalized)]
 
 
+SKIP_MENU_PHRASES = {
+    '0', 'bo qua', 'xong', 'khong', 'khong nhe', 'khong can', 'khong bo sung',
+    'khong them', 'thoi', 'tiep tuc', 'xem truoc', 'xem truoc bao gia',
+    'tao luon', 'tao bao gia luon',
+}
+
+
 async def _question(context, field, company_id=None):
     spec = await request(context, 'GET', 'quotations/optional-metadata', _param(context, field, company_id=company_id))
     if not spec.get('available'):
-        return None, spec.get('message') or f'{BY_FIELD[field]} hiện không khả dụng trên Odoo.'
+        raw_msg = spec.get('message')
+        if raw_msg and str(raw_msg).strip().lower() == 'not found':
+            raw_msg = f'{BY_FIELD[field]} hiện chưa được bật trên Gateway; bạn có thể nhập “Bỏ qua” để tiếp tục tạo báo giá.'
+        return None, raw_msg or f'{BY_FIELD[field]} hiện không khả dụng trên Odoo.'
     label = BY_FIELD[field]
     kind = spec['type']
     if kind == 'boolean':
@@ -220,7 +230,7 @@ async def handle(text, context, session_ctx):
             return ['Nháp vừa thay đổi. Hãy thử lại.']
         return [menu_text()]
     if phase == 'menu':
-        if normalized in ('0', 'bo qua', 'xong'):
+        if normalized in SKIP_MENU_PHRASES:
             current['phase'] = 'done'
             if not _save(context, draft, active):
                 return ['Nháp vừa thay đổi. Hãy thử lại.']
@@ -243,12 +253,14 @@ async def handle(text, context, session_ctx):
         if field == 'incoterm_location' and not draft['quotation_data'].get('optional_fields', {}).get('incoterm'):
             current['queue'].insert(0, 'incoterm')
             field = 'incoterm'
+        spec_check, question = await _question(context, field)
+        if spec_check is None and len(current['queue']) == 1 and 'chưa được bật trên Gateway' in question:
+            return [question]
         if not _save(context, draft, active):
             return ['Nháp vừa thay đổi. Hãy thử lại.']
-        _, question = await _question(context, field)
         return [question]
     if phase == 'summary':
-        if normalized in ('xong', '0', 'bo qua'):
+        if normalized in SKIP_MENU_PHRASES:
             current['phase'] = 'done'
             if not _save(context, draft, active):
                 return ['Nháp vừa thay đổi. Hãy thử lại.']

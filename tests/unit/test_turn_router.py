@@ -418,3 +418,24 @@ async def test_button_only_confirmation_blocks_text_confirm(ctx):
         btn_cancel = await pipeline.analyze_input("/cancel c_1234abcd", ctx, {})
         assert btn_cancel.intent_type == IntentType.ACTION_CANCEL
         assert btn_cancel.confirmation_id == "c_1234abcd"
+
+
+@pytest.mark.asyncio
+async def test_two_stage_new_quotation_routes_to_quote_turn(ctx):
+    """Starting a new quotation when ENABLE_TWO_STAGE_ROUTER=True must route to _dispatch_quote_turn
+    (sales.quotation.collect) rather than hallucinating odoo.sales.quotation.collect."""
+    pipeline = NaturalPipeline()
+    stage1 = RouteDecision(
+        mode=RouteMode.PREPARE_WRITE,
+        confidence=0.95,
+        normalized_text="Tạo báo giá cho khách hàng ABC",
+        domains=[RouteDomain.QUOTATION],
+    )
+    quote_turn = json.dumps({"action": "start", "customer_query": "ABC"})
+    pipeline._call_gemini_raw = AsyncMock(side_effect=[stage1.model_dump_json(), quote_turn])
+    with patch("app.services.natural_pipeline.get_settings", return_value=_settings_with()), \
+         patch("app.services.turn_router.get_settings", return_value=_settings_with()):
+        res = await pipeline.analyze_input("tao bao gia cho khach ABC", ctx, {})
+    assert res.intent_type == IntentType.READ
+    assert res.tool_name == "sales.quotation.collect"
+    assert res.parameters.get("customer_query") == "ABC"

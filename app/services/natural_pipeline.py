@@ -57,49 +57,11 @@ class NaturalPipeline:
             if decision and decision.get('action') in ('discard_price_candidate', 'restore_product_candidate'):
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=decision)
 
-        # Chế độ 2 tầng thuần ngôn ngữ tự nhiên:
-        # - Xác nhận/Hủy CHỈ nhận từ nút bấm Telegram (Gateway gửi nội bộ /confirm <id> hoặc /cancel <id>).
-        # - Bỏ toàn bộ /lệnh nghiệp vụ và regex fast-path đoán ý định cũ.
-        if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
-            btn_match = re.fullmatch(r"/(confirm|cancel)\s+([a-zA-Z0-9_-]+)", clean_text, re.I)
-            if btn_match:
-                cmd, cid = btn_match.group(1).lower(), btn_match.group(2)
-                return IntentAnalysisResult(
-                    intent_type=IntentType.ACTION_CONFIRM if cmd == "confirm" else IntentType.ACTION_CANCEL,
-                    confirmation_id=cid,
-                    parameters={"confirmation_id": cid},
-                )
-            if re.search(r"\b(?:conf_|op_|c_)[a-zA-Z0-9_-]+\b", clean_text):
-                m_id = re.search(r"\b(?:conf_|op_|c_)[a-zA-Z0-9_-]+\b", clean_text)
-                if m_id:
-                    cid = m_id.group(0)
-                    return IntentAnalysisResult(
-                        intent_type=IntentType.ACTION_STATUS,
-                        confirmation_id=cid,
-                        parameters={"confirmation_id": cid},
-                    )
-            if active.get("draft_type") == "quotation" and getattr(get_settings(), "ENABLE_QUOTATIONS", False):
-                explicit_workspace = re.search(
-                    r"\b(?:drive|gmail|calendar|docs|sheets|slides|mail|email)\b|"
-                    r"quy chế|nội quy|chính sách|sổ tay|tài liệu nội bộ|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ|"
-                    r"\b(?:lịch|lich|cuộc họp|cuoc hop)\b",
-                    lower,
-                )
-                quotation_target = re.search(r"\bbáo giá\b|\bs\d{3,}\b", lower)
-                if explicit_workspace and not quotation_target:
-                    topic_context = dict(session_context or {})
-                    topic_context.pop("active_draft", None)
-                    topic_context.pop("pending_clarification", None)
-                    routed = await self._route_two_stage(clean_text, context, topic_context)
-                    if routed is not None:
-                        return routed
-                    return await self._dispatch_with_llm(clean_text, context, topic_context)
-                return await self._dispatch_quote_turn(clean_text, context, session_context)
-            routed = await self._route_two_stage(clean_text, context, session_context)
-            if routed is not None:
-                return routed
-            return await self._dispatch_with_llm(clean_text, context, session_context)
-
+        # Giữ nguyên cơ chế điều hướng thống nhất cho cả Legacy và Two-Stage Router:
+        # Khi ENABLE_TWO_STAGE_ROUTER=True:
+        # - Xác nhận / Hủy CHỈ nhận từ nút bấm Telegram (/confirm <id>, /cancel <id>).
+        # - Mọi câu chat tự nhiên không thuộc fast-path tất định (slash commands, lời chào thuần, hỏi giờ/chức năng, bản nháp email)
+        #   đều đi qua TurnRouter 2 tầng trước khi chọn tool.
         if (active.get("draft_type") == "quotation" and not clean_text.startswith("/")
                 and getattr(get_settings(), "ENABLE_QUOTATIONS", False)):
             explicit_workspace = re.search(
@@ -167,6 +129,7 @@ class NaturalPipeline:
 
         if get_settings().ENABLE_QUOTATIONS:
             from app.business.quote_local import interpret
+            two_stage_btn_only = bool(getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False))
             active = (session_context or {}).get('active_draft') or {}
             if active.get('draft_type') == 'quotation' and lower.rstrip('.!') in {'có', 'có nhé', 'đồng ý', 'ok'}:
                 if active.get('quotation_hints', {}).get('selection'):
@@ -175,6 +138,11 @@ class NaturalPipeline:
                 conf = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
                     telegram_binding_id=context.telegram_binding_id or 'default', draft_id=active.get('draft_id'))
                 if conf and conf.get('status') == 'pending' and conf.get('draft_version') == active.get('version') and confirmation_service.validate_access(conf, context.user_id, context.chat_id, context.telegram_binding_id, context.owner_key):
+                    if two_stage_btn_only:
+                        return IntentAnalysisResult(
+                            intent_type=IntentType.CLARIFY,
+                            clarification_prompt='Để đảm bảo an toàn, vui lòng bấm nút Xác nhận hoặc Từ chối trực tiếp trên bản xem trước.',
+                        )
                     return IntentAnalysisResult(intent_type=IntentType.ACTION_CONFIRM, confirmation_id=conf['confirmation_id'])
                 job = ((session_context or {}).get('last_read') or {}).get('quotation_preparation_job') or {}
                 if job.get('draft_id') == active.get('draft_id') and job.get('draft_version') == active.get('version'):
@@ -182,6 +150,11 @@ class NaturalPipeline:
             local = interpret(clean_text, active, session_context)
             if local:
                 if local['action'] == 'confirm':
+                    if two_stage_btn_only:
+                        return IntentAnalysisResult(
+                            intent_type=IntentType.CLARIFY,
+                            clarification_prompt='Để đảm bảo an toàn, vui lòng bấm nút Xác nhận hoặc Từ chối trực tiếp trên bản xem trước.',
+                        )
                     from app.business.workflow import confirmation_service
                     conf = confirmation_service.latest_draft_confirmation(user_id=context.user_id, chat_id=context.chat_id,
                         telegram_binding_id=context.telegram_binding_id or 'default', draft_id=active.get('draft_id'))
@@ -488,31 +461,32 @@ class NaturalPipeline:
                 reply_text=self.registry.generate_capability_overview(list(context.permissions)),
             )
 
-        # 4. Fast-path: Các câu lệnh xác nhận / hủy / kiểm tra mã xác nhận
-        active_quote = ((session_context or {}).get('active_draft') or {}).get('draft_type') == 'quotation'
-        explicit_confirmation = bool(re.fullmatch(r'(?:xác nhận|đồng ý)\s+(?:c_|conf_)[a-zA-Z0-9_-]+', clean_text, re.I))
-        quote_bare_confirmation = False
-        if active_quote and lower in {'xác nhận', 'đồng ý', 'ok xác nhận'}:
-            from app.services.confirmation_service import confirmation_service
-            quote_bare_confirmation = bool(confirmation_service.list_pending_confirmations(user_id=context.user_id, chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or 'default'))
-        if (not active_quote or explicit_confirmation or quote_bare_confirmation) and (lower in {"xác nhận", "đồng ý", "ok xác nhận"} or explicit_confirmation):
-            words = lower.split()
-            cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
-            return IntentAnalysisResult(
-                intent_type=IntentType.ACTION_CONFIRM,
-                confirmation_id=cid,
-                parameters={"confirmation_id": cid} if cid else {},
-            )
+        # 4. Fast-path: Các câu lệnh xác nhận / hủy / kiểm tra mã xác nhận (chỉ bật xác nhận gõ chữ khi tắt button-only)
+        if not getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
+            active_quote = ((session_context or {}).get('active_draft') or {}).get('draft_type') == 'quotation'
+            explicit_confirmation = bool(re.fullmatch(r'(?:xác nhận|đồng ý)\s+(?:c_|conf_)[a-zA-Z0-9_-]+', clean_text, re.I))
+            quote_bare_confirmation = False
+            if active_quote and lower in {'xác nhận', 'đồng ý', 'ok xác nhận'}:
+                from app.services.confirmation_service import confirmation_service
+                quote_bare_confirmation = bool(confirmation_service.list_pending_confirmations(user_id=context.user_id, chat_id=context.chat_id, telegram_binding_id=context.telegram_binding_id or 'default'))
+            if (not active_quote or explicit_confirmation or quote_bare_confirmation) and (lower in {"xác nhận", "đồng ý", "ok xác nhận"} or explicit_confirmation):
+                words = lower.split()
+                cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
+                return IntentAnalysisResult(
+                    intent_type=IntentType.ACTION_CONFIRM,
+                    confirmation_id=cid,
+                    parameters={"confirmation_id": cid} if cid else {},
+                )
 
-        explicit_cancel = bool(re.fullmatch(r'hủy\s+(?:c_|conf_)[a-zA-Z0-9_-]+', clean_text, re.I))
-        if (not active_quote or explicit_cancel or lower == 'không xác nhận') and (lower in {"hủy", "hủy bỏ", "không xác nhận", "từ chối"} or lower.startswith("hủy ")):
-            words = lower.split()
-            cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
-            return IntentAnalysisResult(
-                intent_type=IntentType.ACTION_CANCEL,
-                confirmation_id=cid,
-                parameters={"confirmation_id": cid} if cid else {},
-            )
+            explicit_cancel = bool(re.fullmatch(r'hủy\s+(?:c_|conf_)[a-zA-Z0-9_-]+', clean_text, re.I))
+            if (not active_quote or explicit_cancel or lower == 'không xác nhận') and (lower in {"hủy", "hủy bỏ", "không xác nhận", "từ chối"} or lower.startswith("hủy ")):
+                words = lower.split()
+                cid = words[-1] if len(words) > 1 and (words[-1].startswith("conf_") or words[-1].startswith("c_") or len(words[-1]) >= 8) else None
+                return IntentAnalysisResult(
+                    intent_type=IntentType.ACTION_CANCEL,
+                    confirmation_id=cid,
+                    parameters={"confirmation_id": cid} if cid else {},
+                )
 
         if (
             lower.startswith("/status")
@@ -561,13 +535,22 @@ class NaturalPipeline:
         # 6. TOÀN BỘ CÂU TỰ NHIÊN CÒN LẠI ĐỀU CHUYỂN SANG LLM DISPATCHER (hoặc Two-Stage Router khi bật cờ)
         active = (session_context or {}).get('active_draft') or {}
         from app.business.quote_fallback import plain as quote_plain
-        if get_settings().ENABLE_QUOTATIONS and (active.get('draft_type') == 'quotation' or
-                                                 re.search(r'\bbao gia\b', quote_plain(clean_text))):
+        plain_text = quote_plain(clean_text)
+        explicit_workspace_write = bool(
+            re.search(
+                r"\b(?:soan|viet|gui)\s+(?:nhap\s+|ban\s+nhap\s+)?(?:email|e-mail|mail|thu)\b"
+                r"|\b(?:tao|dat|them)\s+(?:lich|cuoc\s+hop|su\s+kien|cong\s+viec|task|viec)\b",
+                plain_text,
+            )
+        )
+        if get_settings().ENABLE_QUOTATIONS and active.get('draft_type') == 'quotation':
             return await self._dispatch_quote_turn(clean_text, context, session_context)
         if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
             routed = await self._route_two_stage(clean_text, context, session_context)
             if routed is not None:
                 return routed
+        if get_settings().ENABLE_QUOTATIONS and not explicit_workspace_write and re.search(r'\bbao gia\b', plain_text):
+            return await self._dispatch_quote_turn(clean_text, context, session_context)
         return await self._dispatch_with_llm(clean_text, context, session_context)
 
     async def _dispatch_quote_chatter(self, text, context, session_context):
@@ -1077,6 +1060,12 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
             )
 
         if decision.mode == RouteMode.PREPARE_WRITE:
+            if (
+                getattr(settings, "ENABLE_QUOTATIONS", False)
+                and "quotation" in domain_hints
+                and not ({"gmail", "calendar", "tasks"} & set(domain_hints))
+            ):
+                return await self._dispatch_quote_turn(text, context, session_context)
             return await self._dispatch_with_llm(
                 text,
                 context,
@@ -1224,6 +1213,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 else:
                     raise
             intent = IntentAnalysisResult.model_validate(data)
+            # Chuẩn hóa tên tool nếu LLM tự thêm tiền tố 'odoo.' (vd: odoo.sales.quotation.collect -> sales.quotation.collect)
+            if intent.tool_name and not self.registry.get_tool(intent.tool_name) and intent.tool_name.startswith("odoo."):
+                stripped = intent.tool_name[5:]
+                if self.registry.get_tool(stripped):
+                    intent.tool_name = stripped
+            for step in intent.steps:
+                if step.tool_name and not self.registry.get_tool(step.tool_name) and step.tool_name.startswith("odoo."):
+                    stripped = step.tool_name[5:]
+                    if self.registry.get_tool(stripped):
+                        step.tool_name = stripped
             names = [step.tool_name for step in intent.steps]
             if intent.tool_name:
                 names.append(intent.tool_name)

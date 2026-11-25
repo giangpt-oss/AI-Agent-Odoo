@@ -59,7 +59,7 @@ async def test_task_create_preview_and_confirm(temp_db_dir, mock_context):
         )
         assert len(msgs) == 1
         assert "Bản xem trước tạo công việc cá nhân" in msgs[0]
-        assert '/confirm' not in msgs[0] and 'đồng ý' in msgs[0]
+        assert '/confirm' not in msgs[0] and ('Xác nhận' in msgs[0] or 'đồng ý' in msgs[0])
 
         # Trích xuất mã confirmation id
         import re

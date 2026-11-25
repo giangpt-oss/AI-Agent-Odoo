@@ -98,6 +98,32 @@ def _available_providers(settings) -> list[str]:
     return order
 
 
+_GEMINI_FSA_STRIP_KEYS = frozenset({
+    "minLength", "maxLength", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum", "pattern",
+    "minItems", "maxItems", "title", "format",
+})
+
+
+def _simplify_gemini_schema(obj: Any) -> Any:
+    """Strip length/range/regex bounds that explode Gemini's structured-output FSA;
+    Pydantic still validates all exact constraints on the returned JSON."""
+    if isinstance(obj, list):
+        return [_simplify_gemini_schema(item) for item in obj]
+    if isinstance(obj, dict):
+        return {
+            k: _simplify_gemini_schema(v)
+            for k, v in obj.items()
+            if k not in _GEMINI_FSA_STRIP_KEYS
+        }
+    return obj
+
+
+def _is_schema_too_complex_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "too many states" in msg or "invalid_argument" in msg and "schema" in msg
+
+
 async def _invoke_provider(
     provider: str,
     settings,
@@ -153,18 +179,26 @@ async def _invoke_provider(
     api_key = settings.GEMINI_API_KEY
     model = model_override or settings.INTENT_LLM_MODEL or settings.DEFAULT_LLM_MODEL or "gemini-3.5-flash-lite"
     http_timeout_ms = max(10000, int(timeout_s * 1000))
+    gemini_schema = _simplify_gemini_schema(response_schema) if response_schema else None
 
-    def _sync_gemini():
+    def _sync_gemini(use_schema: bool = True):
         from google.genai import types
 
         client = _get_gemini_client(api_key, http_timeout_ms)
+        contents = prompt
+        if not use_schema and response_schema:
+            contents = (
+                prompt
+                + "\n\nTrả về duy nhất một JSON object hợp lệ tuân thủ JSON Schema sau:\n"
+                + json.dumps(gemini_schema, ensure_ascii=False)
+            )
         resp = client.models.generate_content(
             model=model,
-            contents=prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 temperature=0.1,
                 response_mime_type="application/json",
-                response_json_schema=response_schema,
+                response_json_schema=gemini_schema if use_schema else None,
                 max_output_tokens=900 if response_schema else None,
                 thinking_config=types.ThinkingConfig(thinking_level="MINIMAL") if model.startswith("gemini-3") else None,
             ),
@@ -176,7 +210,14 @@ async def _invoke_provider(
             int(getattr(usage, "candidates_token_count", 0) or 0),
         )
 
-    text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini), timeout=timeout_s)
+    try:
+        text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, True), timeout=timeout_s)
+    except Exception as exc:
+        if gemini_schema is not None and _is_schema_too_complex_error(exc):
+            logger.warning("gemini_schema_fallback reason=too_many_states retrying_with_prompt_schema")
+            text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, False), timeout=timeout_s)
+        else:
+            raise
     metrics = LLMCallMetrics(
         provider="gemini",
         model=model,
