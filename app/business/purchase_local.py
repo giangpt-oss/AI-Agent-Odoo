@@ -26,7 +26,26 @@ _CANCEL_DRAFT_PHRASES = {
     "hủy", "huy", "hủy bỏ", "huy bo", "hủy nháp", "huy nhap",
     "bỏ qua nháp", "thôi không tạo nữa", "thoi khong tao nua",
     "không tạo nữa", "khong tao nua", "dừng lại", "dung lai",
+    "thôi", "thoi", "hủy tạo", "huy tao",
 }
+
+_OFF_TOPIC_OR_QUERY_RE = re.compile(
+    r"\?|\b(?:cho tôi biết|cho mình biết|cho em biết|là gì|như thế nào|ở đâu|khi nào|bao nhiêu|giải thích|tóm tắt|"
+    r"quy chế|nội quy|chính sách|sổ tay|tài liệu|sơ đồ|hướng dẫn|quy trình|nghiệp vụ|"
+    r"drive|gmail|calendar|docs|sheets|slides|mail|email|lịch|cuộc họp|"
+    r"xem|tra cứu|tìm kiếm|kiểm tra|liệt kê|báo cáo|tạo|hủy|huỷ|xác nhận)\b",
+    re.I,
+)
+
+
+def is_cancel_draft_phrase(text: str) -> bool:
+    folded = fold_vi(text).rstrip(".!?")
+    if folded in {fold_vi(p) for p in _CANCEL_DRAFT_PHRASES}:
+        return True
+    return bool(re.fullmatch(
+        r"(?:huy|bo)(?:\s+(?:bo|di|nhap|tao|lap))?(?:\s+(?:tao|lap|nhap))?\s+(?:don\s+(?:mua\s+)?hang|don\s+mua|rfq|phieu(?:\s+kho)?)(?:\s+(?:nay|di|nhe|nha))?",
+        folded,
+    ))
 
 
 def fold_vi(text: str) -> str:
@@ -100,10 +119,6 @@ def parse_price_value(raw: str) -> Optional[float]:
         return val if val >= 0 else None
     except ValueError:
         return None
-
-
-def is_cancel_draft_phrase(text: str) -> bool:
-    return fold_vi(text).rstrip(".!?") in {fold_vi(p) for p in _CANCEL_DRAFT_PHRASES}
 
 
 def _recent_po_from_history(history: Optional[list[dict[str, Any]]]) -> Optional[str]:
@@ -507,8 +522,12 @@ def interpret_purchase_draft_reply(text: str, active_draft: dict[str, Any]) -> O
             payload["lines"] = lines
             return payload
 
-    # If supplier is still missing and user replied with a plain name (no digits/action verbs)
-    if not has_supplier and body and not re.search(r"\b(?:xem|tra cứu|tạo|hủy|xác nhận)\b", body.casefold()):
+    # Never hijack off-topic/RAG/workspace questions or bare refusals into supplier lookup
+    if _OFF_TOPIC_OR_QUERY_RE.search(clean) or re.match(r"^(?:không|khong|đừng|dung|chưa|chua)\b", body.casefold()):
+        return None
+
+    # If supplier is still missing and user replied with a plain name
+    if not has_supplier and body:
         payload["supplier_query"] = body
         return payload
 

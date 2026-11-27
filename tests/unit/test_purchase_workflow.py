@@ -313,3 +313,16 @@ async def test_purchase_optional_menu_and_selection_flow():
         out_skip = await purchase_optional.handle_reply("0", ctx)
         assert out_skip == ["PREVIEW_READY"]
         mock_prepare.assert_awaited_once_with(ctx)
+
+
+def test_purchase_draft_never_hijacks_rag_questions_or_cancel_phrases():
+    empty_draft = {
+        "draft_type": "business",
+        "business_action": "business.purchases.create",
+        "business_data": {},
+    }
+    assert interpret_purchase_draft_reply("Cho tôi biết quy chế công ty Hopita", empty_draft) is None
+    assert interpret_purchase_draft_reply("không cung cấp", empty_draft) is None
+    assert interpret_purchase_draft_reply("không chọn", empty_draft) is None
+    assert interpret_purchase_draft_reply("hủy tạo đơn hàng", empty_draft) == {"action": "cancel"}
+    assert interpret_purchase_draft_reply("hủy đơn mua hàng", empty_draft) == {"action": "cancel"}
