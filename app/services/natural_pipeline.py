@@ -101,12 +101,26 @@ class NaturalPipeline:
                 if draft_reply := interpret_purchase_draft_reply(clean_text, active):
                     return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_create', parameters=draft_reply)
             detected = detect_domains(clean_text)
+            off_topic_query = bool(re.search(
+                r"\?|\b(?:cho tôi biết|cho mình biết|là gì|như thế nào|quy chế|nội quy|chính sách|sổ tay|tài liệu|hướng dẫn|quy trình|"
+                r"drive|gmail|calendar|docs|sheets|slides|mail|email|lịch|cuộc họp)\b",
+                lower,
+            ))
+            if (purchase_draft or stock_draft) and off_topic_query and not (detected & {'purchases', 'stock'}):
+                topic_context = dict(session_context or {})
+                topic_context.pop("active_draft", None)
+                topic_context.pop("pending_clarification", None)
+                if getattr(get_settings(), "ENABLE_TWO_STAGE_ROUTER", False):
+                    routed = await self._route_two_stage(clean_text, context, topic_context)
+                    if routed is not None:
+                        return routed
+                return await self._dispatch_with_llm(clean_text, context, topic_context)
             stock_request = (
                 'stock' in detected
                 and 'reports' not in detected
                 and not (detected & {'calendar', 'drive', 'docs', 'sheets', 'slides', 'tasks'})
             )
-            if stock_request or (stock_draft and lower.rstrip('.!') not in {
+            if stock_request or (stock_draft and not off_topic_query and lower.rstrip('.!') not in {
                     'xác nhận', 'đồng ý', 'ok xác nhận', 'hủy', 'hủy bỏ', 'không xác nhận', 'từ chối'}):
                 return await self._dispatch_with_llm(clean_text, context, session_context, domains=['stock'])
             purchase_request = (
@@ -114,7 +128,7 @@ class NaturalPipeline:
                 and 'reports' not in detected
                 and not (detected & {'calendar', 'drive', 'docs', 'sheets', 'slides', 'tasks'})
             )
-            if purchase_request or (purchase_draft and lower.rstrip('.!') not in {
+            if purchase_request or (purchase_draft and not off_topic_query and lower.rstrip('.!') not in {
                     'xác nhận', 'đồng ý', 'ok xác nhận', 'hủy', 'hủy bỏ', 'không xác nhận', 'từ chối'}):
                 return await self._dispatch_with_llm(clean_text, context, session_context, domains=['purchases'])
         if (active.get('quotation_hints') or {}).get('unclassified_product_candidate') or (active.get('quotation_hints') or {}).get('product_query_1_needs_confirmation'):
@@ -1329,6 +1343,14 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     data = json.loads(cleaned[start_idx:end_idx+1])
                 else:
                     raise
+            if (
+                isinstance(data, dict)
+                and str(data.get("intent_type") or "").lower() == "read"
+                and not data.get("tool_name")
+                and isinstance(data.get("parameters"), dict)
+                and "query" in data["parameters"]
+            ):
+                data["tool_name"] = "knowledge.query"
             intent = IntentAnalysisResult.model_validate(data)
             # Chuẩn hóa tên tool nếu LLM tự thêm tiền tố 'odoo.' (vd: odoo.sales.quotation.collect -> sales.quotation.collect)
             if intent.tool_name and not self.registry.get_tool(intent.tool_name) and intent.tool_name.startswith("odoo."):
