@@ -51,8 +51,14 @@ class NaturalPipeline:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
         active = (session_context or {}).get('active_draft') or {}
-        if m_po_btn := re.fullmatch(r"/(purchase_approve|purchase_grant|purchase_reject)\s+([0-9a-f]{24})", clean_text, re.I):
-            btn_map = {"purchase_approve": "submit", "purchase_grant": "approve", "purchase_reject": "reject"}
+        if m_po_btn := re.fullmatch(r"/(purchase_edit|purchase_approve|purchase_grant|purchase_feedback|purchase_reject)\s+([0-9a-f]{24})", clean_text, re.I):
+            btn_map = {
+                "purchase_edit": "edit",
+                "purchase_approve": "submit",
+                "purchase_grant": "approve",
+                "purchase_feedback": "feedback",
+                "purchase_reject": "reject",
+            }
             return IntentAnalysisResult(
                 intent_type=IntentType.READ,
                 tool_name="business.purchase_approval_button",
@@ -70,11 +76,12 @@ class NaturalPipeline:
             from app.services.workspace_tool_plan import detect_domains
 
             recent_history = (session_context or {}).get("history") or []
+            recent_last_read = (session_context or {}).get("last_read")
             if stock_act := interpret_stock_flow(clean_text, history=recent_history):
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.stock_flow', parameters=stock_act)
             if stock_act := interpret_stock_create(clean_text):
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.stock_create', parameters=stock_act)
-            if purchase := interpret_purchase_flow(clean_text, history=recent_history):
+            if purchase := interpret_purchase_flow(clean_text, history=recent_history, last_read=recent_last_read):
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_flow', parameters=purchase)
             if purchase := interpret_purchase_create(clean_text):
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_create', parameters=purchase)
@@ -84,6 +91,13 @@ class NaturalPipeline:
                     return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.stock_create', parameters=draft_reply)
             purchase_draft = str(active.get('business_action', '')).startswith('business.purchases.')
             if purchase_draft:
+                from app.business import purchase_optional
+                if purchase_optional.is_active(active):
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.READ,
+                        tool_name='business.purchase_create',
+                        parameters={'action': 'optional_reply', 'text': clean_text},
+                    )
                 if draft_reply := interpret_purchase_draft_reply(clean_text, active):
                     return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_create', parameters=draft_reply)
             detected = detect_domains(clean_text)
@@ -1381,6 +1395,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     intent_type=IntentType.CLARIFY,
                     clarification_prompt="Yêu cầu của bạn có vẻ là tra cứu thông tin, chưa rõ bạn có muốn thực hiện thao tác thay đổi dữ liệu hay không. Bạn xác nhận rõ giúp tôi nhé?",
                 )
+            if intent.intent_type == IntentType.TOOL_PLAN and len(intent.steps) == 1:
+                only_step = intent.steps[0]
+                if only_step.tool_name and not only_step.tool_name.startswith("workspace."):
+                    tool_def = self.registry.get_tool(only_step.tool_name)
+                    if tool_def:
+                        return IntentAnalysisResult(
+                            intent_type=IntentType.PREPARE_WRITE if tool_def.action_type == "write" else IntentType.READ,
+                            tool_name=tool_def.name,
+                            parameters=only_step.parameters,
+                        )
             if intent.intent_type == IntentType.REPLY:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="knowledge.query",
                                             parameters={"query": text})

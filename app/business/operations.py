@@ -259,6 +259,27 @@ async def read(tool, params, context):
     if tool == 'business.purchase_approval_button':
         btn_action = str(params.get('action') or '').strip()
         token = str(params.get('token') or '').strip()
+        if btn_action == 'edit':
+            from app.business import purchase_optional
+            res = await request(context, 'POST', 'business/purchases/edit-context', {'token': token})
+            if res.get('status') != 'ok':
+                return [str(res.get('message') or 'Không mở được chế độ chỉnh sửa đơn mua.')]
+            return await purchase_optional.open_edit_menu(
+                context,
+                order_id=res['order_id'],
+                order_name=res.get('order_name') or f"PO #{res['order_id']}",
+                company_id=res.get('company_id'),
+            )
+        if btn_action == 'feedback':
+            from app.business import purchase_optional
+            res = await request(context, 'POST', 'business/purchases/approval-feedback', {'token': token})
+            if res.get('status') != 'ok':
+                return [str(res.get('message') or 'Yêu cầu duyệt đơn mua không còn hợp lệ.')]
+            return purchase_optional.open_feedback_prompt(
+                context,
+                token=token,
+                order_name=res.get('order_name') or f"PO #{res.get('order_id', '')}",
+            )
         if btn_action == 'submit':
             res = await request(context, 'POST', 'business/purchases/approval-submit', {'token': token})
         elif btn_action in ('approve', 'reject'):
@@ -631,9 +652,13 @@ def _normalize_date_field(value):
 
 
 async def prepare_purchase_draft(params, context):
+    from app.business import purchase_optional
+
     mode = params.get('action', 'start')
     if mode == 'cancel':
         return await read('business.draft', {'action': 'cancel', 'business_action': 'business.purchases.create'}, context)
+    if mode == 'optional_reply':
+        return await purchase_optional.handle_reply(str(params.get('text') or ''), context)
     current = session(context).get('active_draft') or {}
     saved = current.get('business_data', {}) if mode == 'update' and current.get('business_action') == 'business.purchases.create' else {}
     if mode not in ('start', 'update') or (mode == 'update' and not saved and current.get('business_action') != 'business.purchases.create'):
@@ -721,6 +746,18 @@ async def prepare_purchase_draft(params, context):
         if len(messages) == 1 and isinstance(messages[0], OptionButtonsMessage):
             return [messages[0]]
         return ['\n'.join(messages)]
+
+    merged_payload = copy.deepcopy(saved) if mode == 'update' else {}
+    if data.get('company_id'):
+        merged_payload['company_id'] = data['company_id']
+    if data.get('values'):
+        merged_payload['values'] = {**merged_payload.get('values', {}), **data['values']}
+    if data.get('lines'):
+        merged_payload['lines'] = data['lines']
+    has_required = bool((merged_payload.get('values') or {}).get('partner_id')) and bool(merged_payload.get('lines'))
+    opt_done = (current.get('optional_fields') or {}).get('stage') == 'done'
+    if has_required and not opt_done and not choose_first:
+        return await purchase_optional.open_menu(context, current if mode == 'update' else {}, merged_payload)
     return await read('business.draft', {'action': mode, 'business_action': 'business.purchases.create', 'data': data}, context)
 
 
@@ -917,8 +954,9 @@ def invalidate(context, draft):
 
 
 def preview_text(preview):
-    lines = [str(preview.get('title', 'Xem trước thao tác Odoo')),
-             ('Công ty: ' + str(preview['company_name'])) if preview.get('company_name') else 'Công ty ID: ' + str(preview.get('company_id'))]
+    lines = [str(preview.get('title', 'Xem trước thao tác Odoo'))]
+    if preview.get('company_name'):
+        lines.append('Công ty: ' + str(preview['company_name']))
     target = preview.get('target') or {}
     if target:
         if 'approval_state' in preview:
@@ -941,7 +979,15 @@ def preview_text(preview):
         lines.append(f"{index}. {name}; Số lượng: {item.get('product_uom_qty', '')}; Đơn giá: {item.get('price_unit', '')}; Chiết khấu: {item.get('discount', '')}")
     if isinstance(changes, list):
         for change in changes:
-            lines.append(f"{change.get('label') or change.get('field')}: {change.get('before')} → {change.get('after')}")
+            if change.get('field') == 'company_id':
+                continue
+            label = change.get('label') or change.get('field')
+            before = change.get('before')
+            after = change.get('after')
+            if before is None:
+                lines.append(f"{label}: {after}")
+            else:
+                lines.append(f"{label}: {before} → {after}")
     elif changes:
         lines.append('Thay đổi: ' + json.dumps(changes, ensure_ascii=False, default=str))
     for key, label in {'affected_variant_ids': 'Biến thể cùng bị ảnh hưởng', 'lines': 'Dòng hàng', 'recipients': 'Người nhận', 'subject': 'Tiêu đề', 'body': 'Nội dung', 'attachments': 'File đính kèm', 'activity_type': 'Loại hoạt động', 'summary': 'Tóm tắt', 'date_deadline': 'Ngày đến hạn', 'start': 'Bắt đầu', 'stop': 'Kết thúc', 'assignee': 'Phân công cho', 'attendees': 'Người tham dự', 'execution_lines': 'Số lượng thực hiện', 'backorder': 'Phần còn lại', 'return_lines': 'Dòng trả hàng', 'destination': 'Vị trí đích', 'before_quantity': 'Tồn trước', 'counted_quantity': 'Số kiểm kê', 'difference': 'Chênh lệch', 'conversion': 'Chuyển đổi CRM', 'lost_reason': 'Lý do thua', 'feedback': 'Kết quả hoạt động', 'notice': 'Lưu ý'}.items():

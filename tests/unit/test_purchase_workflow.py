@@ -134,8 +134,11 @@ class TestPurchasePreviewAndConfirmationUX:
     def test_preview_text_formats_lines_and_recipients_cleanly(self):
         text = operations.preview_text({
             "title": "Tạo RFQ mua",
-            "company_name": "Công ty ABC",
-            "changes": [{"field": "partner_id", "label": "Nhà cung cấp", "before": None, "after": "Azure Interior"}],
+            "company_id": 1,
+            "changes": [
+                {"field": "partner_id", "label": "Nhà cung cấp", "before": None, "after": "Azure Interior"},
+                {"field": "company_id", "label": "Công ty", "before": None, "after": 1},
+            ],
             "lines": [{
                 "product_id": 12,
                 "product": "Bàn làm việc",
@@ -148,6 +151,10 @@ class TestPurchasePreviewAndConfirmationUX:
             "recipients": [{"id": 10, "name": "Azure Interior", "email": "vendor@example.com"}],
         })
         assert '{"product_id"' not in text
+        assert "Công ty ID:" not in text
+        assert "Công ty:" not in text
+        assert "Nhà cung cấp: Azure Interior" in text
+        assert "None →" not in text
         assert "1. Bàn làm việc — SL: 3 Cái · Đơn giá: 500,000 · Thuế: 10% · Ngày nhận: 2026-12-30" in text
         assert "Người nhận: Azure Interior <vendor@example.com>" in text
 
@@ -231,3 +238,78 @@ async def test_purchase_approval_button_commands():
         out = await operations.read("business.purchase_approval_button", {"action": "submit", "token": tok}, ctx)
     assert out == ["Đã gửi yêu cầu phê duyệt đơn mua P00065."]
     mock_req.assert_awaited_once_with(ctx, "POST", "business/purchases/approval-submit", {"token": tok})
+
+
+def test_interpret_purchase_flow_uses_last_read_and_never_falls_into_workspace_plan():
+    last_read = {
+        "business_action_result": {
+            "status": "completed",
+            "result": {"record": {"id": 65, "name": "P00065", "state": "draft"}},
+        }
+    }
+    res = interpret_purchase_flow("Xác nhận đơn mua hàng", history=[], last_read=last_read)
+    assert res == {"action": "confirm", "purchase_name": "P00065"}
+
+    res_missing = interpret_purchase_flow("Xác nhận đơn mua hàng", history=[], last_read={})
+    assert res_missing == {"action": "confirm", "purchase_name": ""}
+
+    assert interpret_purchase_flow("Hủy tạo đơn mua hàng", history=[], last_read={}) is None
+
+
+@pytest.mark.asyncio
+async def test_purchase_optional_menu_and_selection_flow():
+    from app.business import purchase_optional
+
+    ctx = _ctx()
+    saved_drafts: list[dict] = []
+
+    def fake_session(_ctx):
+        return {"active_draft": saved_drafts[-1] if saved_drafts else None}
+
+    def fake_set_active_draft(*args, **kwargs):
+        draft = args[4]
+        saved_drafts.append(draft)
+        return draft
+
+    async def fake_request(_ctx, method, path, body):
+        assert path == "business/lookup"
+        if body["kind"] == "currencies":
+            return {"status": "ok", "items": [{"id": 23, "display_name": "VND"}, {"id": 2, "display_name": "USD"}]}
+        return {"status": "ok", "items": []}
+
+    mock_prepare = AsyncMock(return_value=["PREVIEW_READY"])
+
+    with patch.object(purchase_optional, "session", side_effect=fake_session), \
+         patch.object(purchase_optional.store, "set_active_draft", side_effect=fake_set_active_draft), \
+         patch.object(purchase_optional, "request", side_effect=fake_request), \
+         patch.object(operations, "prepare", mock_prepare):
+        # 1. Open menu after supplier + product + qty are resolved
+        payload = {"values": {"partner_id": 10}, "lines": [{"product_id": 618, "quantity": 2}]}
+        out1 = await purchase_optional.open_menu(ctx, {}, payload)
+        assert "1. Mã nhà cung cấp" in out1[0]
+        assert "2. Tiền tệ" in out1[0]
+        assert purchase_optional.is_active(saved_drafts[-1]) is True
+
+        # 2. User picks "1, 2" -> asks for Mã nhà cung cấp first
+        out2 = await purchase_optional.handle_reply("1, 2", ctx)
+        assert "Mã nhà cung cấp" in out2[0]
+
+        # 3. User enters partner_ref -> asks for Tiền tệ with Odoo options
+        out3 = await purchase_optional.handle_reply("NCC-2026-01", ctx)
+        assert saved_drafts[-1]["business_data"]["values"]["partner_ref"] == "NCC-2026-01"
+        prompt3 = out3[0].text if hasattr(out3[0], "text") else out3[0]
+        assert "USD" in prompt3 and "VND" in prompt3
+
+        # 4. User picks option 2 (USD) -> completes optional step and triggers prepare()
+        out4 = await purchase_optional.handle_reply("2", ctx)
+        assert out4 == ["PREVIEW_READY"]
+        assert saved_drafts[-1]["business_data"]["values"]["currency_id"] == 2
+        assert purchase_optional.is_active(saved_drafts[-1]) is False
+        mock_prepare.assert_awaited_once_with(ctx)
+
+        # 5. Menu skip ("0") goes straight to prepare()
+        mock_prepare.reset_mock()
+        await purchase_optional.open_menu(ctx, {}, payload)
+        out_skip = await purchase_optional.handle_reply("0", ctx)
+        assert out_skip == ["PREVIEW_READY"]
+        mock_prepare.assert_awaited_once_with(ctx)

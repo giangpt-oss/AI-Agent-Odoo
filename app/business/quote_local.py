@@ -193,7 +193,14 @@ def interpret(text, draft, session=None):
         return {'action': 'status'}
     if re.fullmatch(r'không thêm(?: dòng| sản phẩm)?(?: nào)?(?: nữa)?', lower):
         return {'action': 'finish_lines'}
-    if re.fullmatch(r'(?:hủy|bỏ)(?: toàn bộ)? (?:nháp )?báo giá(?: này)?', lower):
+    if re.fullmatch(
+        r'(?:(?:hủy|huỷ|huy)(?:\s+(?:bỏ|bo|đi|di|nháp|nhap|toàn bộ|tạo|lập))?'
+        r'(?:\s+(?:toàn bộ\s+)?(?:tạo\s+|lập\s+|nháp\s+)?báo giá(?:\s+này)?)?'
+        r'|bỏ(?:\s+toàn bộ)?\s+(?:nháp\s+)?báo giá(?:\s+này)?'
+        r'|(?:thôi\s+)?không\s+(?:tạo|lập)(?:\s+báo giá)?\s+nữa'
+        r'|dừng(?:\s+lại)?|bỏ qua\s+nháp|cancel)(?:\s+(?:đi|nhé|nha|ạ))?',
+        lower.rstrip('.!?'),
+    ):
         return {'action': 'cancel'}
     for pattern, field in [(r'(?:khách hàng|khách)(?: là|:)?\s+(.+)', 'customer_query'), (r'sản phẩm(?: là|:)?\s+(.+)', 'product_query')]:
         match = re.fullmatch(pattern, text, re.I)

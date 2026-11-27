@@ -117,7 +117,25 @@ def _recent_po_from_history(history: Optional[list[dict[str, Any]]]) -> Optional
     return None
 
 
-def interpret_purchase_flow(text: str, history: Optional[list[dict[str, Any]]] = None) -> Optional[dict[str, Any]]:
+def _po_from_last_read(last_read: Optional[dict[str, Any]]) -> Optional[str]:
+    if not isinstance(last_read, dict):
+        return None
+    res = last_read.get("business_action_result")
+    if isinstance(res, dict):
+        inner = res.get("result") if isinstance(res.get("result"), dict) else res
+        rec = inner.get("record") if isinstance(inner, dict) else None
+        if isinstance(rec, dict):
+            name = str(rec.get("name") or rec.get("display_name") or "").strip()
+            if _PO_NAME_RE.fullmatch(name):
+                return name.upper()
+    return None
+
+
+def interpret_purchase_flow(
+    text: str,
+    history: Optional[list[dict[str, Any]]] = None,
+    last_read: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
     """Parse lifecycle actions on an existing Odoo RFQ / PO (confirm, approve, reject, cancel, draft, copy, delete, send)."""
     clean = (text or "").strip()
     if not clean:
@@ -129,11 +147,12 @@ def interpret_purchase_flow(text: str, history: Optional[list[dict[str, Any]]] =
     names = _PO_NAME_RE.findall(clean)
     if len(names) > 1:
         return None
+    explicit_po_noun = bool(re.search(r"đơn mua|rfq|yêu cầu báo giá mua", lower))
     if len(names) == 1:
         po_name = names[0].upper()
-    elif re.search(r"đơn mua|rfq|yêu cầu báo giá mua", lower):
-        po_name = _recent_po_from_history(history)
-        if not po_name:
+    elif explicit_po_noun:
+        po_name = _recent_po_from_history(history) or _po_from_last_read(last_read) or ""
+        if not po_name and re.search(r"(?:hủy|huỷ)\s+(?:tạo|lập|nháp)", lower):
             return None
     else:
         return None
