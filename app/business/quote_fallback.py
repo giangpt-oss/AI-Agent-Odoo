@@ -99,7 +99,23 @@ def _quantity(token):
 
 def _product_lines(clause):
     norm, offsets = normalized_with_map(clause)
+    if re.search(r'\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b', norm):
+        return []
     amount = r'(?:\d+|' + '|'.join(NUMBER_WORDS) + r')'
+    match_trailing = re.fullmatch(
+        r'(?:san pham\s*:?\s*)?(.+?)\s*(?:[,;-]\s*)?(?:lấy|lay|số lượng|so luong|sl)\s*:?\s*('
+        + amount + r')(?:\s+' + UNITS + r')?(?:\s+nhé|\s+nhe|\s+ạ|\s+a)?',
+        norm,
+    )
+    if match_trailing:
+        product = original_slice(clause, offsets, *match_trailing.span(1)).strip(' :,-')
+        if (
+            product
+            and re.search(r'[a-z0-9]', plain(product))
+            and plain(product) not in {'khong', 'dung', 'chua'}
+            and not re.search(r'\b(?:ngay|han|thanh toan|bang gia|bao gia)\b', plain(product))
+        ):
+            return [(product, _quantity(match_trailing.group(2)))]
     starts = list(re.finditer(r'\b' + amount + r'\b\s*(?:' + UNITS + r'\b\s*)?', norm))
     result = []
     if starts:
@@ -107,14 +123,16 @@ def _product_lines(clause):
             end = starts[index + 1].start() if index + 1 < len(starts) else len(norm)
             product = original_slice(clause, offsets, match.end(), end)
             product = re.sub(r'\s+(?:và|va)\s*$', '', product, flags=re.I).strip()
-            if product and plain(product) not in {'nhe', 'a', 'di', 'voi'} and not re.search(r'\b(?:ngay|han|thanh toan|gia|bao gia)\b', plain(product)):
+            p_plain = plain(product)
+            if (
+                product
+                and re.search(r'[a-z0-9]', p_plain)
+                and p_plain not in {'nhe', 'a', 'di', 'voi'}
+                and not re.search(r'\b(?:ngay|han|thanh toan|gia|bao gia)\b', p_plain)
+            ):
                 result.append((product, _quantity(match.group().split()[0])))
     if result:
         return result
-    match = re.fullmatch(r'(.+?)\s+(?:lấy|lay|số lượng|so luong)\s+(' + amount + r')(?:\s+' + UNITS + r')?(?:\s+nhé|\s+nhe)?', norm)
-    if match:
-        product = original_slice(clause, offsets, *match.span(1))
-        return [(product, _quantity(match.group(2)))] if product and plain(product) not in {'khong', 'dung', 'chua'} else []
     return []
 
 
@@ -145,7 +163,13 @@ def extract(text, draft=None, session=None, today=None, strict=False):
         return None
     data = draft.get('quotation_data') or {}
     facts = {'action': 'start' if creating else 'update'}
-    clauses = [part.strip() for part in re.split(r'[,;\n]+', original) if part.strip()]
+    working_original = original
+    from app.business.quote_local import _extract_payment_term_phrase
+    pre_term, rest_after_term = _extract_payment_term_phrase(working_original, draft)
+    if pre_term:
+        facts['payment_term_query'] = pre_term
+        working_original = rest_after_term
+    clauses = [part.strip() for part in re.split(r'[,;\n]+', working_original) if part.strip()]
     lines = []
     unknown = False
     labelled_customer = explicit_customer_name(original)
@@ -158,19 +182,28 @@ def extract(text, draft=None, session=None, today=None, strict=False):
             return facts
     for clause in clauses:
         normalized, offsets = normalized_with_map(clause)
-        # Explicit date and payment terms use distinct anchors.
-        date_match = re.search(r'\b(?:het han|hieu luc den|co hieu luc den)(?:\s+bao gia)?(?:\s+ngay)?\s+(\d{1,2})/(\d{1,2})/(\d{4})\b', normalized)
+        # Explicit date and payment terms use distinct anchors; bare DD/MM/YYYY is accepted when active draft needs validity_date.
+        date_match = re.search(r'\b(?:het han|hieu luc den|co hieu luc den)(?:\s+bao gia)?(?:\s+ngay)?\s*:?\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b', normalized)
+        if not date_match and active and not data.get('validity_date'):
+            date_match = re.fullmatch(r'(?:ngay\s+)?(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+nhe|\s+a)?', normalized.strip())
         if date_match:
             try:
                 facts['validity_date'] = date(int(date_match[3]), int(date_match[2]), int(date_match[1])).isoformat()
             except ValueError:
                 pass
             continue
-        duration = re.search(r'\b(?:bao gia\s+)?co hieu luc\s+(\d+)\s+ngay\b', normalized)
+        duration = re.search(r'\b(?:bao gia\s+)?(?:co hieu luc|het han sau)\s+(\d+)\s+ngay\b', normalized)
         if duration:
             facts['validity_date'] = ((today or date.today()) + timedelta(days=int(duration[1]))).isoformat()
             continue
-        term = re.search(r'\b(?:dieu khoan\s+)?thanh toan(?:\s+trong|\s+la)?\s+(\d+\s+ngay)\b|\btra(?:\s+tien)?\s+trong\s+(\d+\s+ngay)\b', normalized)
+        immediate_term = re.search(
+            r'\b(?:(?:dieu khoan\s+)?thanh toan|tra(?:\s+tien)?)\s+(ngay(?:\s+lap\s+tuc)?)\b|\b(immediate\s+payment)\b',
+            normalized,
+        )
+        if immediate_term:
+            facts['payment_term_query'] = 'Thanh toán ngay'
+            continue
+        term = re.search(r'\b(?:dieu khoan\s+)?thanh toan(?:\s+trong|\s+la|\s*:)?\s*(\d+\s+ngay)\b|\btra(?:\s+tien)?\s+trong\s+(\d+\s+ngay)\b', normalized)
         if term:
             selected = term.group(1) or term.group(2)
             facts['payment_term_query'] = re.sub(r'ngay$', 'ngày', selected)

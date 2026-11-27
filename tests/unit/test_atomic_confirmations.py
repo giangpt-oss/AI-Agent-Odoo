@@ -91,7 +91,7 @@ def test_lifecycle_transitions(tmp_path):
     # 2. Cannot claim again while executing
     ok2, msg2, _ = service.claim_and_validate(cid, 3, 789, "tg_bind_3")
     assert ok2 is False
-    assert "đang được thực thi" in msg2 or "executing" in msg2.lower()
+    assert "đang được thực thi" in msg2 or "đang được xử lý" in msg2 or "executing" in msg2.lower()
 
     # 3. executing -> failed
     service.mark_failed(cid, "Network connection error")

@@ -303,10 +303,90 @@ class ConfirmationService:
         )
         if action == 'sales.quotation.create':
             instruction = '\n\nChọn Xác nhận để tạo báo giá theo nội dung trên hoặc Từ chối để hủy yêu cầu. Bản xác nhận có hiệu lực 5 phút.'
-        from app.business.operations import QUOTE_FLOW_ACTIONS
-        if action in QUOTE_FLOW_ACTIONS:
+        from app.business.operations import PURCHASE_FLOW_ACTIONS, QUOTE_FLOW_ACTIONS, STOCK_FLOW_ACTIONS
+        if action in QUOTE_FLOW_ACTIONS or action in PURCHASE_FLOW_ACTIONS or action in STOCK_FLOW_ACTIONS:
             instruction = '\n\nChọn Xác nhận để thực hiện bước trên hoặc Từ chối để hủy yêu cầu. Bản xác nhận có hiệu lực 5 phút.'
         return conf_id, ConfirmationPreview(preview_text + instruction, conf_id)
+
+    @staticmethod
+    def _human_label(
+        action: Optional[str],
+        preview_text: Optional[str] = None,
+        result_json: Optional[str] = None,
+    ) -> str:
+        """Tạo nhãn thân thiện cho người dùng cuối thay vì hiển thị mã kỹ thuật c_xxxxxxxx."""
+        import re
+
+        if result_json:
+            try:
+                parsed = json.loads(result_json)
+                if isinstance(parsed, dict):
+                    rec = parsed.get("result") if isinstance(parsed.get("result"), dict) else parsed
+                    if isinstance(rec, dict) and isinstance(rec.get("record"), dict):
+                        rec = rec["record"]
+                    doc_name = rec.get("name") if isinstance(rec, dict) else None
+                    if isinstance(doc_name, str) and doc_name.strip():
+                        if str(action or "").startswith(("sales.quotation", "business.sales.")):
+                            return f"Báo giá {doc_name.strip()}"
+                        if str(action or "").startswith("business.purchases."):
+                            return f"Đơn mua {doc_name.strip()}"
+                        if str(action or "").startswith("business.stock."):
+                            return f"Phiếu kho {doc_name.strip()}"
+                        return f"Chứng từ {doc_name.strip()}"
+            except Exception:
+                pass
+
+        if preview_text:
+            m_quote = re.search(r"\bS\d{3,}\b", preview_text)
+            if m_quote:
+                return f"Báo giá {m_quote.group(0).upper()}"
+            m_pick = re.search(r"\b[A-Z0-9]{2,10}/(?:OUT|IN|INT|PICK|PACK|RET)/\d{3,}\b", preview_text, re.I)
+            if m_pick:
+                return f"Phiếu kho {m_pick.group(0).upper()}"
+            m_po = re.search(r"\bP(?:O)?\d{3,}\b", preview_text)
+            if m_po:
+                return f"Đơn mua {m_po.group(0).upper()}"
+            if action == "sales.quotation.create":
+                m_cust = re.search(r"Khách hàng:\s*([^\n]+)", preview_text)
+                if m_cust and m_cust.group(1).strip() and m_cust.group(1).strip().lower() != "chưa nhập":
+                    return f"Yêu cầu tạo báo giá cho {m_cust.group(1).strip()[:80]}"
+            if action == "business.purchases.create":
+                m_sup = re.search(r"Nhà cung cấp:\s*(?:None\s*→\s*)?([^\n]+)", preview_text)
+                if m_sup and m_sup.group(1).strip():
+                    return f"Yêu cầu tạo RFQ mua hàng cho {m_sup.group(1).strip()[:80]}"
+
+        action_labels = {
+            "sales.quotation.create": "Yêu cầu tạo báo giá",
+            "business.purchases.create": "Yêu cầu tạo RFQ mua hàng",
+            "business.purchases.update": "Yêu cầu cập nhật RFQ mua hàng",
+            "business.purchases.confirm": "Yêu cầu xác nhận đơn mua",
+            "business.purchases.approve": "Yêu cầu phê duyệt đơn mua",
+            "business.purchases.reject": "Yêu cầu từ chối đơn mua",
+            "business.purchases.cancel": "Yêu cầu hủy đơn mua",
+            "business.purchases.draft": "Yêu cầu đưa RFQ về nháp",
+            "business.purchases.copy": "Yêu cầu sao chép RFQ",
+            "business.purchases.delete": "Yêu cầu xóa RFQ",
+            "business.purchases.send": "Yêu cầu gửi email RFQ",
+            "business.stock.create": "Yêu cầu tạo phiếu kho",
+            "business.stock.update": "Yêu cầu cập nhật phiếu kho",
+            "business.stock.confirm": "Yêu cầu xác nhận phiếu kho",
+            "business.stock.reserve": "Yêu cầu giữ hàng phiếu kho",
+            "business.stock.unreserve": "Yêu cầu bỏ giữ hàng phiếu kho",
+            "business.stock.validate": "Yêu cầu hoàn tất phiếu giao/nhận hàng",
+            "business.stock.return": "Yêu cầu tạo phiếu trả hàng",
+            "business.stock.cancel": "Yêu cầu hủy phiếu kho",
+            "business.stock.backorder": "Yêu cầu xử lý phần hàng còn lại",
+            "tasks.create": "Yêu cầu tạo công việc",
+            "tasks.update": "Yêu cầu cập nhật công việc",
+            "tasks.done": "Yêu cầu hoàn thành công việc",
+            "calendar.create": "Yêu cầu tạo sự kiện lịch",
+            "calendar.update": "Yêu cầu cập nhật lịch",
+            "gmail.send": "Yêu cầu gửi email",
+            "crm.create": "Yêu cầu tạo cơ hội CRM",
+            "crm.update": "Yêu cầu cập nhật CRM",
+            "knowledge.index": "Yêu cầu nạp tài liệu kho tri thức",
+        }
+        return action_labels.get(str(action or ""), "Yêu cầu xác nhận này")
 
     def claim_and_validate(
         self,
@@ -331,7 +411,7 @@ class ConfirmationService:
                 SELECT confirmation_id, operation_id, user_id, chat_id, telegram_binding_id,
                        owner_key, action, arguments_json, target_snapshot_json,
                        preview_text, status, expires_at, draft_id, draft_version,
-                       lease_expires_at, telegram_user_id
+                       lease_expires_at, telegram_user_id, result_json
                 FROM pending_confirmations
                 WHERE confirmation_id = ?
                 """,
@@ -340,7 +420,7 @@ class ConfirmationService:
             row = cursor.fetchone()
             if not row:
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` không tồn tại hoặc đã bị xóa.", None
+                return False, "Yêu cầu xác nhận này không tồn tại hoặc đã bị xóa.", None
 
             (
                 cid,
@@ -359,7 +439,9 @@ class ConfirmationService:
                 c_draft_ver,
                 c_lease_exp,
                 c_tele_uid,
+                c_result_json,
             ) = row
+            label = self._human_label(c_act, c_prev, c_result_json)
 
             if c_status == "executing":
                 # Kiểm tra xem lease có hết hạn chưa
@@ -378,25 +460,25 @@ class ConfirmationService:
                         (now_str, clean_id),
                     )
                     conn.commit()
-                    return False, f"Mã xác nhận `{clean_id}` chưa rõ kết quả và cần được đối soát (lease đã hết hạn).", None
+                    return False, f"{label} chưa rõ kết quả và cần được đối soát trước khi thử lại.", None
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` đang được thực thi bởi tiến trình khác.", None
+                return False, f"{label} đang được xử lý, vui lòng chờ giây lát.", None
 
             if c_status == "completed":
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` đã được thực thi hoàn tất trước đó (chỉ dùng 1 lần).", None
+                return False, f"{label} đã được thực thi hoàn tất trước đó (chỉ dùng 1 lần).", None
             if c_status == "failed":
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` trước đó đã thất bại. Vui lòng tạo yêu cầu mới.", None
+                return False, f"{label} trước đó đã thất bại. Vui lòng tạo yêu cầu mới.", None
             if c_status == "unknown_result":
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` chưa rõ kết quả và cần được đối soát, không thể tự động thực thi lại.", None
+                return False, f"{label} chưa rõ kết quả và cần được đối soát, không thể tự động thực thi lại.", None
             if c_status == "cancelled":
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` đã bị hủy bỏ.", None
+                return False, f"{label} đã bị hủy bỏ.", None
             if c_status != "pending":
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` ở trạng thái không hợp lệ: {c_status}.", None
+                return False, f"{label} hiện ở trạng thái không hợp lệ ({c_status}).", None
 
             # Check user and chat isolation
             if c_uid != user_id or c_chat != chat_id:
@@ -435,14 +517,14 @@ class ConfirmationService:
                         (now_str, clean_id),
                     )
                     conn.commit()
-                    return False, f"Mã xác nhận `{clean_id}` đã hết hạn 5 phút. Vui lòng tạo yêu cầu mới.", None
+                    return False, f"{label} đã hết hạn 5 phút. Vui lòng tạo yêu cầu mới.", None
             except Exception:
                 pass
 
             # Sinh execution token và lease 30s
             execution_token = f"tok_{secrets.token_hex(8)}"
-            from app.business.operations import QUOTE_FLOW_ACTIONS
-            lease_expires_at = now_ts + (75.0 if c_act in QUOTE_FLOW_ACTIONS else 30.0)
+            from app.business.operations import PURCHASE_FLOW_ACTIONS, QUOTE_FLOW_ACTIONS
+            lease_expires_at = now_ts + (75.0 if c_act in QUOTE_FLOW_ACTIONS | PURCHASE_FLOW_ACTIONS else 30.0)
 
             # Atomic conditional update claim
             update_cursor = conn.execute(
@@ -458,7 +540,7 @@ class ConfirmationService:
             )
             if update_cursor.rowcount != 1:
                 conn.commit()
-                return False, f"Mã xác nhận `{clean_id}` đang được thực thi hoặc đã được xử lý bởi tiến trình khác.", None
+                return False, f"{label} đang được xử lý hoặc đã hoàn tất trước đó.", None
 
             conn.commit()
 
@@ -678,26 +760,27 @@ class ConfirmationService:
         with sqlite3.connect(self.db_path, timeout=20.0) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
-                "SELECT user_id, chat_id, telegram_binding_id, status, telegram_user_id FROM pending_confirmations WHERE confirmation_id = ?",
+                "SELECT user_id, chat_id, telegram_binding_id, status, telegram_user_id, action, preview_text, result_json FROM pending_confirmations WHERE confirmation_id = ?",
                 (clean_id,),
             )
             row = cursor.fetchone()
             if not row:
-                return False, f"Mã xác nhận `{clean_id}` không tồn tại."
-            c_uid, c_chat, c_bind, c_status, c_tele_uid = row
+                return False, "Yêu cầu xác nhận này không tồn tại hoặc đã bị xóa."
+            c_uid, c_chat, c_bind, c_status, c_tele_uid, c_act, c_prev, c_res = row
+            label = self._human_label(c_act, c_prev, c_res)
             if c_uid != user_id or c_chat != chat_id or c_bind != telegram_binding_id:
-                return False, "Bạn không có quyền hủy mã xác nhận này."
+                return False, "Bạn không có quyền hủy yêu cầu xác nhận này."
             if telegram_user_id is not None and c_tele_uid not in (None, telegram_user_id):
                 return False, "Tài khoản Telegram không khớp với yêu cầu xác nhận."
             if c_status != "pending":
-                return False, f"Mã xác nhận `{clean_id}` hiện ở trạng thái: {c_status} (không thể hủy)."
+                return False, f"{label} hiện không còn ở trạng thái chờ xác nhận ({c_status})."
 
             conn.execute(
                 "UPDATE pending_confirmations SET status = 'cancelled', updated_at = ? WHERE confirmation_id = ?",
                 (now_str, clean_id),
             )
             conn.commit()
-            return True, f"Đã hủy bỏ thành công yêu cầu `{clean_id}`."
+            return True, f"Đã hủy bỏ thành công: {label}."
 
     def latest_draft_confirmation(self, *, user_id, chat_id, telegram_binding_id, draft_id):
         with sqlite3.connect(self.db_path, timeout=20.0) as conn:

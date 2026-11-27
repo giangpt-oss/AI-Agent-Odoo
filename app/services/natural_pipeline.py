@@ -51,6 +51,72 @@ class NaturalPipeline:
         clean_text = (text or "").strip()
         lower = clean_text.lower()
         active = (session_context or {}).get('active_draft') or {}
+        if m_po_btn := re.fullmatch(r"/(purchase_edit|purchase_approve|purchase_grant|purchase_feedback|purchase_reject)\s+([0-9a-f]{24})", clean_text, re.I):
+            btn_map = {
+                "purchase_edit": "edit",
+                "purchase_approve": "submit",
+                "purchase_grant": "approve",
+                "purchase_feedback": "feedback",
+                "purchase_reject": "reject",
+            }
+            return IntentAnalysisResult(
+                intent_type=IntentType.READ,
+                tool_name="business.purchase_approval_button",
+                parameters={"action": btn_map[m_po_btn[1].lower()], "token": m_po_btn[2]},
+            )
+        if getattr(get_settings(), 'ENABLE_BUSINESS_ACTIONS', False) and not clean_text.startswith('/'):
+            from app.business.operations import (
+                interpret_purchase_create,
+                interpret_purchase_draft_reply,
+                interpret_purchase_flow,
+                interpret_stock_create,
+                interpret_stock_draft_reply,
+                interpret_stock_flow,
+            )
+            from app.services.workspace_tool_plan import detect_domains
+
+            recent_history = (session_context or {}).get("history") or []
+            recent_last_read = (session_context or {}).get("last_read")
+            if stock_act := interpret_stock_flow(clean_text, history=recent_history):
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.stock_flow', parameters=stock_act)
+            if stock_act := interpret_stock_create(clean_text):
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.stock_create', parameters=stock_act)
+            if purchase := interpret_purchase_flow(clean_text, history=recent_history, last_read=recent_last_read):
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_flow', parameters=purchase)
+            if purchase := interpret_purchase_create(clean_text):
+                return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_create', parameters=purchase)
+            stock_draft = str(active.get('business_action', '')).startswith('business.stock.')
+            if stock_draft:
+                if draft_reply := interpret_stock_draft_reply(clean_text, active):
+                    return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.stock_create', parameters=draft_reply)
+            purchase_draft = str(active.get('business_action', '')).startswith('business.purchases.')
+            if purchase_draft:
+                from app.business import purchase_optional
+                if purchase_optional.is_active(active):
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.READ,
+                        tool_name='business.purchase_create',
+                        parameters={'action': 'optional_reply', 'text': clean_text},
+                    )
+                if draft_reply := interpret_purchase_draft_reply(clean_text, active):
+                    return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='business.purchase_create', parameters=draft_reply)
+            detected = detect_domains(clean_text)
+            stock_request = (
+                'stock' in detected
+                and 'reports' not in detected
+                and not (detected & {'calendar', 'drive', 'docs', 'sheets', 'slides', 'tasks'})
+            )
+            if stock_request or (stock_draft and lower.rstrip('.!') not in {
+                    'xác nhận', 'đồng ý', 'ok xác nhận', 'hủy', 'hủy bỏ', 'không xác nhận', 'từ chối'}):
+                return await self._dispatch_with_llm(clean_text, context, session_context, domains=['stock'])
+            purchase_request = (
+                'purchases' in detected
+                and 'reports' not in detected
+                and not (detected & {'calendar', 'drive', 'docs', 'sheets', 'slides', 'tasks'})
+            )
+            if purchase_request or (purchase_draft and lower.rstrip('.!') not in {
+                    'xác nhận', 'đồng ý', 'ok xác nhận', 'hủy', 'hủy bỏ', 'không xác nhận', 'từ chối'}):
+                return await self._dispatch_with_llm(clean_text, context, session_context, domains=['purchases'])
         if (active.get('quotation_hints') or {}).get('unclassified_product_candidate') or (active.get('quotation_hints') or {}).get('product_query_1_needs_confirmation'):
             from app.business.quote_local import interpret as interpret_quote_local
             decision = interpret_quote_local(text, active, session_context)
@@ -630,6 +696,29 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
         if active.get('draft_type') == 'quotation' and re.fullmatch(r'\d+\s+ngay(?:\s+nhe)?', quote_plain(text).strip()) and not local_facts:
             return IntentAnalysisResult(intent_type=IntentType.CLARIFY,
                 clarification_prompt=f"{text.strip().split()[0]} ngày là hạn báo giá hay điều khoản thanh toán?")
+        if active.get('draft_type') == 'quotation' and not (active.get('quotation_hints') or {}).get('optional'):
+            plain_turn = quote_plain(text).strip()
+            if re.search(r'^(?:bo qua|khong can|khong nhap)\b', plain_turn) and not local_facts:
+                qdata = active.get('quotation_data') or {}
+                missing_req = []
+                if not qdata.get('partner_id'):
+                    missing_req.append('khách hàng')
+                if not qdata.get('pricelist_id'):
+                    missing_req.append('bảng giá')
+                if not qdata.get('lines') or any(not ln.get('product_id') or not ln.get('quantity') for ln in qdata.get('lines') or []):
+                    missing_req.append('sản phẩm và số lượng')
+                if not qdata.get('validity_date'):
+                    missing_req.append('ngày hết hạn báo giá')
+                if not qdata.get('payment_term_id'):
+                    missing_req.append('điều khoản thanh toán')
+                if missing_req:
+                    return IntentAnalysisResult(
+                        intent_type=IntentType.CLARIFY,
+                        clarification_prompt=(
+                            f"Các mục sau là bắt buộc trước khi tạo báo giá nên chưa thể bỏ qua: {', '.join(missing_req)}. "
+                            "Bạn gửi nhanh giúp tôi nhé (ví dụ: hết hạn 30/11/2026, thanh toán 30 ngày hoặc thanh toán ngay)."
+                        ),
+                    )
         selection = active.get('quotation_hints', {}).get('selection') or {}
         candidates = []
         if selection.get('kind') and time.time() - selection.get('at', 0) <= 1800:
@@ -746,6 +835,29 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     if routed is not None:
                         return routed
                 return await self._dispatch_with_llm(text, context, topic_context)
+            if turn.action == 'explain' and not re.search(r'\b(?:han|het han|giao hang|lead|ngay|thue|bang gia|dieu khoan)\b', quote_plain(text)):
+                turn.action = 'show'
+            if turn.action in ('start', 'update') and local_facts:
+                if local_facts.get('line_updates'):
+                    from app.business.quote_schema import QuoteLineFacts
+                    local_lines = [QuoteLineFacts.model_validate(item) for item in local_facts['line_updates']]
+                    if not turn.line_updates and not turn.product_query:
+                        turn.line_updates = local_lines
+                        turn.quantity = None
+                    elif turn.line_updates and len(turn.line_updates) == len(local_lines):
+                        for t_line, l_line in zip(turn.line_updates, local_lines):
+                            if not t_line.product_query and l_line.product_query:
+                                t_line.product_query = l_line.product_query
+                            if t_line.quantity is None and l_line.quantity is not None:
+                                t_line.quantity = l_line.quantity
+                if local_facts.get('validity_date') and not turn.validity_date:
+                    turn.validity_date = local_facts['validity_date']
+                if local_facts.get('payment_term_query') and not turn.payment_term_query and not turn.payment_term_id:
+                    turn.payment_term_query = local_facts['payment_term_query']
+                if local_facts.get('pricelist_query') and not turn.pricelist_query and not turn.pricelist_id:
+                    turn.pricelist_query = local_facts['pricelist_query']
+                if local_facts.get('customer_query') and not turn.customer_query:
+                    turn.customer_query = local_facts['customer_query']
             return IntentAnalysisResult(intent_type=IntentType.READ, tool_name='sales.quotation.collect', parameters=turn.model_dump(exclude_none=True))
         except Exception as exc:
             logger.warning('Quotation semantic extraction failed: %s code=%s', type(exc).__name__, getattr(exc, 'code', None))
@@ -1003,6 +1115,7 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                 "confidence": decision.confidence,
                 "fallback_used": False,
             }
+            session_context["_route_domains"] = [d.value for d in decision.domains]
 
         threshold = float(getattr(settings, "ROUTER_CONFIDENCE_THRESHOLD", 0.6) or 0.6)
         if decision.mode == RouteMode.CLARIFY or decision.confidence < threshold:
@@ -1093,11 +1206,15 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
         from app.services.intent_prompt import INTENT_PROMPT, tool_catalog
         from app.services.workspace_tool_plan import select_tools
 
+        active_draft = (session_context or {}).get("active_draft") or {}
+        selection_domains = list(domains or [])
+        if str(active_draft.get("business_action", "")).startswith("business.purchases."):
+            selection_domains.append("purchases")
         selected = select_tools(
             text,
             available_tools,
             normalized_text=normalized_text,
-            domains=domains,
+            domains=selection_domains,
             read_only=read_only,
         )
         tools_summary = tool_catalog(selected)
@@ -1242,7 +1359,7 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     available_tools,
                     expanded=True,
                     normalized_text=normalized_text,
-                    domains=domains,
+                    domains=selection_domains,
                     read_only=read_only,
                 )
                 preferred = [tool for tool in available_tools if tool.name in canonical_names]
@@ -1278,6 +1395,16 @@ Gửi tin nhắn qua email dùng action=message, options.body là nội dung ng�
                     intent_type=IntentType.CLARIFY,
                     clarification_prompt="Yêu cầu của bạn có vẻ là tra cứu thông tin, chưa rõ bạn có muốn thực hiện thao tác thay đổi dữ liệu hay không. Bạn xác nhận rõ giúp tôi nhé?",
                 )
+            if intent.intent_type == IntentType.TOOL_PLAN and len(intent.steps) == 1:
+                only_step = intent.steps[0]
+                if only_step.tool_name and not only_step.tool_name.startswith("workspace."):
+                    tool_def = self.registry.get_tool(only_step.tool_name)
+                    if tool_def:
+                        return IntentAnalysisResult(
+                            intent_type=IntentType.PREPARE_WRITE if tool_def.action_type == "write" else IntentType.READ,
+                            tool_name=tool_def.name,
+                            parameters=only_step.parameters,
+                        )
             if intent.intent_type == IntentType.REPLY:
                 return IntentAnalysisResult(intent_type=IntentType.READ, tool_name="knowledge.query",
                                             parameters={"query": text})

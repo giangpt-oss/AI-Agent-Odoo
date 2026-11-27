@@ -60,7 +60,72 @@ class UnifiedExecutor(ReadHandler, PrepareWriteHandler, ConfirmationHandler):
         remaining_time = max(0.5, deadline - now_ts)
 
         if intent.intent_type == IntentType.TOOL_PLAN:
-            return await self._handle_workspace_plan(intent, context, chat_id, deadline)
+            from app.core.config import get_settings
+            from app.services.react_loop import needs_react_continuation, react_agent_loop
+
+            if intent.steps and not any(s.tool_name.startswith("workspace.") for s in intent.steps):
+                outputs: list[str] = []
+                executed_steps: list[tuple[str, dict[str, Any], list[Any]]] = []
+                for step in intent.steps[:4]:
+                    tool_def = self.registry.get_tool(step.tool_name)
+                    if not tool_def:
+                        continue
+                    step_intent = IntentAnalysisResult(
+                        intent_type=IntentType.PREPARE_WRITE if tool_def.action_type == "write" else IntentType.READ,
+                        tool_name=step.tool_name,
+                        parameters=step.parameters,
+                    )
+                    if step_intent.intent_type == IntentType.PREPARE_WRITE:
+                        step_out = await self._handle_prepare_write(step_intent, context, chat_id)
+                        outputs.extend(step_out)
+                        if any(hasattr(m, "confirmation_id") for m in step_out):
+                            return outputs
+                    else:
+                        step_out = await self._handle_read(
+                            step_intent, context, chat_id, user_info, remaining_time,
+                            history=(session_context or {}).get("history"),
+                        )
+                        outputs.extend(step_out)
+                        executed_steps.append((step.tool_name, step.parameters, step_out))
+                if (getattr(get_settings(), "ENABLE_REACT_LOOP", False)
+                        and executed_steps
+                        and (session_context or {}).get("_user_text")):
+                    return await react_agent_loop.run(
+                        user_text=session_context["_user_text"],
+                        context=context,
+                        session_context=session_context,
+                        registry=self.registry,
+                        execute_read=lambda si: self._handle_read(
+                            si, context, chat_id, user_info, max(1.0, deadline - time.time()),
+                            history=(session_context or {}).get("history"),
+                        ),
+                        execute_prepare_write=lambda wi: self._handle_prepare_write(wi, context, chat_id),
+                        initial_steps=executed_steps,
+                        deadline=deadline,
+                        domains=(session_context or {}).get("_route_domains"),
+                    )
+                if outputs:
+                    return outputs
+            plan_outputs = await self._handle_workspace_plan(intent, context, chat_id, deadline)
+            if (getattr(get_settings(), "ENABLE_REACT_LOOP", False)
+                    and (session_context or {}).get("_user_text")
+                    and needs_react_continuation(session_context["_user_text"], intent, plan_outputs, domains=(session_context or {}).get("_route_domains"))):
+                initial = [(s.tool_name, s.parameters, plan_outputs if idx == len(intent.steps) - 1 else []) for idx, s in enumerate(intent.steps)]
+                return await react_agent_loop.run(
+                    user_text=session_context["_user_text"],
+                    context=context,
+                    session_context=session_context,
+                    registry=self.registry,
+                    execute_read=lambda si: self._handle_read(
+                        si, context, chat_id, user_info, max(1.0, deadline - time.time()),
+                        history=(session_context or {}).get("history"),
+                    ),
+                    execute_prepare_write=lambda wi: self._handle_prepare_write(wi, context, chat_id),
+                    initial_steps=initial,
+                    deadline=deadline,
+                    domains=(session_context or {}).get("_route_domains"),
+                )
+            return plan_outputs
 
         # 1. REPLY Intent
         if intent.intent_type == IntentType.REPLY:
@@ -112,8 +177,37 @@ class UnifiedExecutor(ReadHandler, PrepareWriteHandler, ConfirmationHandler):
 
         # 8. READ Intent
         if intent.intent_type == IntentType.READ:
-            return await self._handle_read(intent, context, chat_id, user_info, remaining_time,
-                                           history=(session_context or {}).get("history"))
+            from app.core.config import get_settings
+            from app.services.react_loop import needs_react_continuation, react_agent_loop
+
+            initial_outputs = await self._handle_read(
+                intent, context, chat_id, user_info, remaining_time,
+                history=(session_context or {}).get("history"),
+            )
+            user_text = (session_context or {}).get("_user_text")
+            if (getattr(get_settings(), "ENABLE_REACT_LOOP", False)
+                    and user_text
+                    and needs_react_continuation(
+                        user_text,
+                        intent,
+                        initial_outputs,
+                        domains=(session_context or {}).get("_route_domains"),
+                    )):
+                return await react_agent_loop.run(
+                    user_text=user_text,
+                    context=context,
+                    session_context=session_context or {},
+                    registry=self.registry,
+                    execute_read=lambda si: self._handle_read(
+                        si, context, chat_id, user_info, max(1.0, deadline - time.time()),
+                        history=(session_context or {}).get("history"),
+                    ),
+                    execute_prepare_write=lambda wi: self._handle_prepare_write(wi, context, chat_id),
+                    initial_steps=[(intent.tool_name or "", intent.parameters or {}, initial_outputs)],
+                    deadline=deadline,
+                    domains=(session_context or {}).get("_route_domains"),
+                )
+            return initial_outputs
 
         # 9. PREPARE_WRITE Intent
         if intent.intent_type == IntentType.PREPARE_WRITE:

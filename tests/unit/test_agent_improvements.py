@@ -274,3 +274,111 @@ def test_select_tools_balances_multi_domain_slots():
     assert any("calendar" in n for n in names)
     assert any("gmail" in n for n in names)
     assert "odoo.partners.search" in names
+
+
+@pytest.mark.asyncio
+async def test_live_quotation_nlp_regressions_product_qty_bare_date_immediate_payment():
+    from app.business.quote_fallback import extract as fallback_extract
+    from app.business.quote_local import interpret as local_interpret
+    from app.services.natural_pipeline import NaturalPipeline
+
+    draft = {
+        "draft_type": "quotation",
+        "draft_id": "q_live_1",
+        "version": 1,
+        "quotation_data": {"partner_id": 135612, "pricelist_id": 2, "lines": []},
+        "quotation_hints": {"partner_label": "Anh Diệp", "pricelist_label": "KH thương mại (VND)"},
+    }
+
+    # 1. "Bao tay số lượng 2" extracts both product_query and quantity
+    loc1 = local_interpret("Bao tay số lượng 2", draft, {})
+    assert loc1 == {"action": "update", "product_query": "Bao tay", "quantity": 2.0}
+    fb1 = fallback_extract("Bao tay số lượng 2", draft, {})
+    assert fb1["line_updates"] == [{"line_index": 1, "product_query": "Bao tay", "quantity": 2}]
+
+    # 2. "30/12/2026, thanh toán ngay lập tức" MUST extract validity_date + payment_term_query and NEVER "/" product lines!
+    draft_with_line = {
+        **draft,
+        "quotation_data": {**draft["quotation_data"], "lines": [{"product_id": 1270, "quantity": 2.0}]},
+    }
+    loc2 = local_interpret("30/12/2026, thanh toán ngay lập tức", draft_with_line, {})
+    assert loc2 == {"action": "update", "validity_date": "2026-12-30", "payment_term_query": "Thanh toán ngay"}
+    fb2 = fallback_extract("30/12/2026, thanh toán ngay lập tức", draft_with_line, {})
+    assert fb2["validity_date"] == "2026-12-30"
+    assert fb2["payment_term_query"] == "Thanh toán ngay"
+    assert "line_updates" not in fb2
+
+    # 3. Even if LLM returns incomplete line_updates without product_query, _dispatch_quote_turn merges local_facts cleanly
+    pipeline = NaturalPipeline()
+    pipeline._call_gemini_raw = AsyncMock(
+        return_value='{"action": "update", "line_updates": [{"line_index": 1, "quantity": 2.0}]}'
+    )
+    ctx = GatewayUserContext(user_id=2, tenant="t", database="d", odoo_uid=27, permissions={"sales.create"})
+    res = await pipeline._dispatch_quote_turn("Bao tay số lượng 2", ctx, {"active_draft": draft})
+    assert res.tool_name == "sales.quotation.collect"
+    assert res.parameters["line_updates"][0]["product_query"] == "Bao tay"
+    assert res.parameters["line_updates"][0]["quantity"] == 2.0
+
+    # 4. Saying "bỏ qua" while mandatory fields are missing explains clearly instead of repeating form silently
+    skip_res = await pipeline._dispatch_quote_turn("bỏ qua ngày hết hạn, bỏ qua điều khoản", ctx, {"active_draft": draft_with_line})
+    assert skip_res.intent_type == IntentType.CLARIFY
+    assert "bắt buộc" in (skip_res.clarification_prompt or "")
+    assert "ngày hết hạn" in (skip_res.clarification_prompt or "")
+
+    # 5. All 10 standard Vietnamese Odoo payment terms (including comma-containing terms) extract cleanly
+    draft_with_expiry = {
+        **draft_with_line,
+        "quotation_data": {**draft_with_line["quotation_data"], "validity_date": "2026-12-01"},
+    }
+    all_10_terms = [
+        ("Thanh toán ngay", "Thanh toán ngay"),
+        ("15 ngày", "15 ngày"),
+        ("21 ngày", "21 ngày"),
+        ("30 ngày", "30 ngày"),
+        ("45 ngày", "45 ngày"),
+        ("Cuối tháng kế tiếp", "Cuối tháng kế tiếp"),
+        ("10 ngày sau ngày cuối tháng kế tiếp", "10 ngày sau ngày cuối tháng kế tiếp"),
+        ("30% trả ngay, còn lại trả trong 60 ngày", "30% trả ngay, còn lại trả trong 60 ngày"),
+        ("Trong 30 ngày, giảm 2% trong 7 ngày", "Trong 30 ngày, giảm 2% trong 7 ngày"),
+        ("90 ngày, vào ngày 10", "90 ngày, vào ngày 10"),
+    ]
+    for raw_input, expected_query in all_10_terms:
+        parsed_loc = local_interpret(raw_input, draft_with_expiry, {})
+        assert parsed_loc is not None, f"Failed local_interpret on: {raw_input}"
+        assert parsed_loc["payment_term_query"].casefold() == expected_query.casefold()
+        assert "product_query" not in parsed_loc and "quantity" not in parsed_loc
+
+    combo = local_interpret("01/12/2026, 30% trả ngay, còn lại trả trong 60 ngày", draft_with_line, {})
+    assert combo == {
+        "action": "update",
+        "validity_date": "2026-12-01",
+        "payment_term_query": "30% trả ngay, còn lại trả trong 60 ngày",
+    }
+
+
+def test_confirmation_messages_use_human_quotation_label_instead_of_raw_c_id(tmp_path):
+    from app.services.confirmation_service import ConfirmationService
+
+    svc = ConfirmationService(db_path=tmp_path / "conf.db")
+    cid, _ = svc.create_confirmation(
+        user_id=2,
+        chat_id=100,
+        telegram_binding_id="b1",
+        action="sales.quotation.create",
+        arguments={"partner_id": 135612},
+        preview_text="Trạng thái: Chờ xác nhận tạo báo giá.\nKhách hàng: Anh Diệp\nBảng giá: KH thương mại",
+    )
+    ok, _, data = svc.claim_and_validate(cid, 2, 100, "b1")
+    assert ok
+    # Clicking again while executing -> shows customer label, NEVER raw c_xxxxxxxx
+    ok2, msg_exec, _ = svc.claim_and_validate(cid, 2, 100, "b1")
+    assert not ok2
+    assert "c_" not in msg_exec
+    assert "Anh Diệp" in msg_exec
+
+    # Once Odoo creates S00098 -> shows "Báo giá S00098"
+    svc.mark_completed(cid, {"id": 98, "name": "S00098", "state": "draft"}, execution_token=data["execution_token"])
+    ok3, msg_done, _ = svc.claim_and_validate(cid, 2, 100, "b1")
+    assert not ok3
+    assert "Báo giá S00098" in msg_done
+    assert "c_" not in msg_done

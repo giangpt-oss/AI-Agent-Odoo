@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     ROUTER_LLM_MODEL: str | None = None
     ROUTER_CONFIDENCE_THRESHOLD: float = 0.6
     ROUTER_TIMEOUT_SECONDS: float = 12.0
+    ENABLE_REACT_LOOP: bool = False
+    REACT_MAX_ITERATIONS: int = 4
+    REACT_TIME_BUDGET_SECONDS: float = 24.0
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: str = ""
