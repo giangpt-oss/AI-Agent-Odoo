@@ -150,6 +150,22 @@ async def lookup_reference(context, kind, query, payload):
         if simplified and simplified.casefold() != query.strip().casefold():
             data = await request(context, 'GET', 'quotations/lookup', dict(params, query=simplified))
             # Gateway's exact/unique flags refer to an actual visible Odoo record.
+    elif kind == 'payment_terms' and data.get('items') == []:
+        from app.business.quote_fallback import plain
+        q_norm = plain(query).strip()
+        fallbacks = []
+        if any(k in q_norm for k in ('ngay', 'lap tuc', 'immediate')) and not re.search(r'\d', q_norm):
+            fallbacks = ['Thanh toán ngay', 'Immediate Payment', 'ngay']
+        elif m_days := re.search(r'(\d+)\s*ngay', q_norm):
+            days = m_days.group(1)
+            fallbacks = [f'{days} ngày', f'{days} Days', days]
+        for fb in fallbacks:
+            if fb.casefold() == query.strip().casefold():
+                continue
+            alt = await request(context, 'GET', 'quotations/lookup', dict(params, query=fb))
+            if alt.get('items'):
+                data = alt
+                break
     return data
 
 

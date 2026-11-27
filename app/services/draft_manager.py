@@ -53,9 +53,9 @@ class DraftManager:
                     f"Chỉ trả về nội dung mới đã chỉnh sửa, không kèm lời giải thích thừa.\n\n"
                     f"--- NỘI DUNG GỐC ---\n{original_body}"
                 )
-                from google.genai import types
+                from app.core.config import get_settings
                 resp = ai_client.models.generate_content(
-                    model="gemini-3.5-flash-lite",
+                    model=get_settings().DEFAULT_LLM_MODEL or "gemini-3.8-flash",
                     contents=prompt
                 )
                 if resp and resp.text:

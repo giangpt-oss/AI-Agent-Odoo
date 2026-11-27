@@ -80,12 +80,19 @@ ROUTES = {
     "sheets": r"sheets|bảng tính|bang tinh|excel",
     "slides": r"slides|slide|trình chiếu|trinh chieu",
     "odoo": r"odoo|đối tác|doi tac|khách hàng|khach hang|khách|hóa đơn|hoa don|tồn kho|ton kho|sản phẩm|san pham|đơn hàng|don hang",
+    "purchases": r"mua hàng|mua hang|đơn mua|don mua|rfq|nhà cung cấp|nha cung cap|p\d{3,}",
+    "stock": r"giao hàng|giao hang|phiếu giao|phieu giao|phiếu kho|phieu kho|nhập kho|nhap kho|xuất kho|xuat kho|chuyển kho|chuyen kho|trả hàng|tra hang|wh/(?:out|in|int|pick|pack)/\d+",
     "reports": r"báo cáo|bao cao",
     "quotation": r"báo giá|bao gia",
     "crm": r"crm|cơ hội|co hoi|lead",
     "tasks": r"công việc|cong viec|việc cần làm|viec can lam|task",
     "briefing": r"hôm nay có gì|hom nay co gi|tổng hợp ngày|briefing",
 }
+
+
+def detect_domains(text):
+    return {name for name, pattern in ROUTES.items()
+            if re.search(rf"(?<!\w)(?:{pattern})(?!\w)", text.casefold())}
 
 
 def select_tools(
@@ -100,15 +107,22 @@ def select_tools(
     if read_only:
         tools = [tool for tool in tools if getattr(tool, "action_type", "read") == "read"]
     combined = f"{text or ''} {normalized_text or ''}".casefold()
-    matched = {name for name, pattern in ROUTES.items()
-               if re.search(rf"(?<!\w)(?:{pattern})(?!\w)", combined)}
+    matched = detect_domains(combined)
     if domains:
         matched |= {str(d).casefold() for d in domains if d}
     words = set(re.findall(r"\w+", combined))
 
     def priority(tool):
         parts = set(tool.name.split("."))
-        return (bool(matched & parts), len(words & parts), tool.name == "knowledge.query")
+        purchase_tool = "purchases" in matched and tool.name in {
+            "business.lookup", "business.draft", "business.preview",
+            "business.purchase_flow", "business.purchase_create", "business.purchase_update",
+        }
+        stock_tool = "stock" in matched and tool.name in {
+            "business.lookup", "business.draft", "business.preview",
+            "business.stock_flow", "business.stock_create",
+        }
+        return (purchase_tool or stock_tool or bool(matched & parts), len(words & parts), tool.name == "knowledge.query")
 
     ordered = sorted(tools, key=priority, reverse=True)
     limit = 12 if expanded or len(matched) >= 3 else 6

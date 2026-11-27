@@ -61,9 +61,10 @@ class MeetingProcessingService:
         
         async def process_chunk(chunk, index):
             try:
+                from app.core.config import get_settings
                 response = await asyncio.to_thread(
                     ai_client.models.generate_content,
-                    model='gemini-3.5-flash-lite',
+                    model=get_settings().DEFAULT_LLM_MODEL or "gemini-3.8-flash",
                     contents=prompt + chunk,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",

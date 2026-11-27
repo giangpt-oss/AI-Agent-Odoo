@@ -464,6 +464,14 @@ async def handle_telegram_turn(
         session_ctx = conversation_history_store.get_session(
             tenant=context.tenant, user_id=context.user_id, chat_id=req.chat_id,
             binding_id=context.telegram_binding_id, database=context.database)
+        if get_settings().ENABLE_BUSINESS_ACTIONS:
+            from app.business.operations import PURCHASE_FLOW_ACTIONS
+            from app.services.workspace_tool_plan import detect_domains
+            if ((session_ctx.get('active_draft') or {}).get('business_action') in PURCHASE_FLOW_ACTIONS
+                    or 'purchases' in detect_domains(req.text)):
+                turn_budget = 60.0
+                turn_deadline = turn_start_time + turn_budget
+                turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
         if getattr(get_settings(), 'ENABLE_QUOTATION_APPROVAL_FLOW', False) or getattr(get_settings(), 'ENABLE_QUOTATIONS', False):
             from app.business.operations import CHATTER_ACTIONS, QUOTE_FLOW_ACTIONS, interpret_quotation_flow, looks_like_quote_chatter
             active = session_ctx.get('active_draft') or {}
@@ -531,6 +539,12 @@ async def handle_telegram_turn(
                 session_ctx["last_read"].pop("knowledge.query")
                 session_ctx["history"] = []
             session_ctx['_turn_deadline'] = turn_deadline
+            session_ctx['_user_text'] = clean_text
+            if getattr(get_settings(), 'ENABLE_REACT_LOOP', False) and turn_budget < 45.0:
+                turn_budget = 45.0
+                turn_deadline = turn_start_time + turn_budget
+                session_ctx['_turn_deadline'] = turn_deadline
+                turn_timeout.reschedule(asyncio.get_running_loop().time() + max(0.1, turn_deadline - time.time()))
             if req.reply_to_text and req.reply_to_text.strip():
                 session_ctx["reply_to_text"] = req.reply_to_text.strip()[:600]
             if get_settings().ENABLE_QUOTATIONS:

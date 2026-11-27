@@ -193,8 +193,8 @@ class ConfirmationHandler:
         if not self.confirmation_service.mark_dispatched(conf_id, execution_token=exec_token):
             return ["⚠️ Phiên xử lý thao tác đã hết hạn hoặc không còn hiệu lực. Vui lòng thử lại."]
 
-        from app.business.operations import CHATTER_ACTIONS, QUOTE_FLOW_ACTIONS
-        call_timeout = max(1.0, min(50.0 if norm_action in QUOTE_FLOW_ACTIONS | CHATTER_ACTIONS else 14.0, remaining_time - 1.0))
+        from app.business.operations import CHATTER_ACTIONS, PURCHASE_FLOW_ACTIONS, QUOTE_FLOW_ACTIONS, STOCK_FLOW_ACTIONS
+        call_timeout = max(1.0, min(50.0 if norm_action in QUOTE_FLOW_ACTIONS | CHATTER_ACTIONS | PURCHASE_FLOW_ACTIONS | STOCK_FLOW_ACTIONS else 14.0, remaining_time - 1.0))
 
         try:
             gw_res = await self.gateway_client.execute_action(
@@ -216,6 +216,16 @@ class ConfirmationHandler:
                     from app.business.operations import format_result
                     from app.business.workflow import remember
                     remember(context, "business_action_result", gw_res)
+                    try:
+                        self.conversation_history_store.clear_active_draft(
+                            tenant=context.tenant,
+                            user_id=context.user_id,
+                            chat_id=chat_id,
+                            binding_id=binding_id,
+                            database=context.database,
+                        )
+                    except Exception:
+                        pass
                     return format_result(gw_res)
                 if norm_action == "sales.quotation.create":
                     from app.business.quote_status import result_message

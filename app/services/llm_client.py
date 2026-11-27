@@ -121,7 +121,28 @@ def _simplify_gemini_schema(obj: Any) -> Any:
 
 def _is_schema_too_complex_error(exc: Exception) -> bool:
     msg = str(exc).lower()
-    return "too many states" in msg or "invalid_argument" in msg and "schema" in msg
+    return "too many states" in msg or ("invalid_argument" in msg and "schema" in msg)
+
+
+def _is_thinking_level_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "thinking level" in msg and ("not supported" in msg or "invalid_argument" in msg)
+
+
+def build_gemini_thinking_config(model: str, types_module: Any, *, fallback: bool = False) -> Any:
+    """Build a model-compatible ThinkingConfig for Gemini 3.x models.
+
+    Gemini 3.8+ models reject thinking_level='MINIMAL' with 400 INVALID_ARGUMENT,
+    so we default to 'LOW' for 3.6+ non-lite models and omit thinking_config on fallback.
+    """
+    if fallback:
+        return None
+    lower = (model or "").lower()
+    if not lower.startswith("gemini-3"):
+        return None
+    if "lite" in lower or lower.startswith(("gemini-3.0", "gemini-3.1", "gemini-3.5")):
+        return types_module.ThinkingConfig(thinking_level="MINIMAL")
+    return types_module.ThinkingConfig(thinking_level="LOW")
 
 
 async def _invoke_provider(
@@ -181,7 +202,7 @@ async def _invoke_provider(
     http_timeout_ms = max(10000, int(timeout_s * 1000))
     gemini_schema = _simplify_gemini_schema(response_schema) if response_schema else None
 
-    def _sync_gemini(use_schema: bool = True):
+    def _sync_gemini(use_schema: bool = True, fallback_thinking: bool = False):
         from google.genai import types
 
         client = _get_gemini_client(api_key, http_timeout_ms)
@@ -192,6 +213,7 @@ async def _invoke_provider(
                 + "\n\nTrả về duy nhất một JSON object hợp lệ tuân thủ JSON Schema sau:\n"
                 + json.dumps(gemini_schema, ensure_ascii=False)
             )
+        thinking_cfg = build_gemini_thinking_config(model, types, fallback=fallback_thinking)
         resp = client.models.generate_content(
             model=model,
             contents=contents,
@@ -199,8 +221,8 @@ async def _invoke_provider(
                 temperature=0.1,
                 response_mime_type="application/json",
                 response_json_schema=gemini_schema if use_schema else None,
-                max_output_tokens=900 if response_schema else None,
-                thinking_config=types.ThinkingConfig(thinking_level="MINIMAL") if model.startswith("gemini-3") else None,
+                max_output_tokens=2048 if response_schema else None,
+                thinking_config=thinking_cfg,
             ),
         )
         usage = getattr(resp, "usage_metadata", None)
@@ -211,11 +233,14 @@ async def _invoke_provider(
         )
 
     try:
-        text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, True), timeout=timeout_s)
+        text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, True, False), timeout=timeout_s)
     except Exception as exc:
-        if gemini_schema is not None and _is_schema_too_complex_error(exc):
+        if _is_thinking_level_error(exc):
+            logger.warning("gemini_thinking_fallback model=%s retrying_without_thinking_config", model)
+            text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, True, True), timeout=timeout_s)
+        elif gemini_schema is not None and _is_schema_too_complex_error(exc):
             logger.warning("gemini_schema_fallback reason=too_many_states retrying_with_prompt_schema")
-            text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, False), timeout=timeout_s)
+            text, p_tok, o_tok = await asyncio.wait_for(asyncio.to_thread(_sync_gemini, False, False), timeout=timeout_s)
         else:
             raise
     metrics = LLMCallMetrics(
@@ -247,10 +272,15 @@ async def generate_json(
     deadline = time.time() + eff_timeout
 
     last_exc: Optional[Exception] = None
+    has_failover = len(providers) > 1
     for idx, provider in enumerate(providers[:2]):
         remaining = deadline - time.time()
         if idx > 0 and remaining < 2.5:
             break
+        attempt_timeout = max(2.0, remaining)
+        if idx == 0 and has_failover and eff_timeout >= 16.0:
+            # Reserve time for secondary provider failover if primary hangs/times out
+            attempt_timeout = min(attempt_timeout, max(10.0, eff_timeout - 7.0))
         try:
             text, metrics = await _invoke_provider(
                 provider,
@@ -258,7 +288,7 @@ async def generate_json(
                 prompt,
                 response_schema,
                 model_override if idx == 0 else None,
-                max(2.0, remaining),
+                attempt_timeout,
             )
             metrics.failover_used = idx > 0
             last_llm_metrics.set(metrics)

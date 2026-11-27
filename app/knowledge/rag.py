@@ -90,6 +90,8 @@ async def _chat_completion(settings, provider, key, model, system_instruction, p
 
 
 async def _gemini_completion(ai_client, model, system_instruction, prompt):
+    from app.services.llm_client import build_gemini_thinking_config
+
     response = await call_gemini(
         "generation",
         ai_client.models.generate_content,
@@ -99,7 +101,7 @@ async def _gemini_completion(ai_client, model, system_instruction, prompt):
             system_instruction=system_instruction,
             temperature=0.1,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            thinking_config=types.ThinkingConfig(thinking_level="MINIMAL") if "gemini-3" in model else None,
+            thinking_config=build_gemini_thinking_config(model, types),
         ),
     )
     usage = getattr(response, "usage_metadata", None)

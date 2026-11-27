@@ -104,7 +104,7 @@ async def handle(text, context, session, store, pipeline):
         return [result.get('message') or 'Chưa sửa được điều khoản; hãy thử lại trên PDF mới.']
     if options and plain(text) in ('dong y', 'xac nhan', 'ok') and len(options) == 1:
         return await handle('1', context, session, store, pipeline)
-    term_request = re.search(r'(?:dieu khoan|thanh toan|tra ngay|ngay lap tuc|\d+\s*ngay|immediate payment)', plain(text))
+    term_request = re.search(r'(?:dieu khoan|thanh toan|tra ngay|ngay lap tuc|\d+\s*ngay|immediate payment|cuoi thang)', plain(text))
     if term_request:
         query = re.sub(r'^.*?(?:đổi|sửa|chuyển|chọn|lấy|dùng|doi|sua|chuyen|chon|lay|dung)\s+(?:(?:điều khoản|dieu khoan)(?: thanh toán| thanh toan)?\s+)?(?:thành|sang|là|thanh|la)?\s*', '', text, flags=re.I).strip()
         query = re.sub(r'^(?:điều khoản|dieu khoan)(?: thanh toán| thanh toan)?\s*[:：]?\s*', '', query, flags=re.I).strip()

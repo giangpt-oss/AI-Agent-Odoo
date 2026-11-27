@@ -216,3 +216,24 @@ async def test_draft_preview_requires_unambiguous_odoo_partner(monkeypatch, coun
         preview.assert_not_awaited()
         assert "nhiều đối tác" in result[0]
         assert "phụ thuộc" in result[-1]
+
+def test_purchase_requests_include_business_tools_and_respect_read_only():
+    from types import SimpleNamespace
+
+    from app.services.workspace_tool_plan import select_tools
+
+    names = [
+        "odoo.purchases.search", "business.capabilities", "business.lookup",
+        "business.draft", "business.preview", "knowledge.query",
+        "workspace.drive.read", "workspace.calendar.read",
+    ]
+    tools = [
+        SimpleNamespace(name=name, action_type="write" if name == "business.preview" else "read")
+        for name in names
+    ]
+    for text in ("tạo đơn mua hàng", "tao don mua hang", "xác nhận RFQ"):
+        selected = {tool.name for tool in select_tools(text, tools)}
+        assert {"business.lookup", "business.draft", "business.preview"} <= selected
+    selected = {tool.name for tool in select_tools("số lượng 3", tools, domains=["purchases"], read_only=True)}
+    assert "business.draft" in selected
+    assert "business.preview" not in selected

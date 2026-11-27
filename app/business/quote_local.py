@@ -75,6 +75,39 @@ def structured_quote(text, draft):
     return {'action': 'update', 'customer_query': customer, 'pricelist_query': pricelist, 'line_updates': lines}
 
 
+def _extract_payment_term_phrase(text: str, draft: dict) -> tuple[str | None, str]:
+    """Extract canonical Vietnamese/English payment term (including comma-containing terms) and return (term, remaining_text)."""
+    patterns = [
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*)?(\d+%\s*trả ngay\s*,\s*còn lại trả trong\s+\d+\s*ngày)', None),
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*)?(trong\s+\d+\s*ngày\s*,\s*giảm\s+\d+(?:[.,]\d+)?%\s*trong\s+\d+\s*ngày)', None),
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*)?(\d+\s*ngày\s*,\s*vào ngày\s+\d+)', None),
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*)?(\d+\s*ngày sau ngày cuối tháng kế tiếp)', None),
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*)?(?:thanh toán\s+)?(cuối tháng kế tiếp|cuối tháng sau)', 'Cuối tháng kế tiếp'),
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*)?(?:thanh toán|trả)(?:\s+tiền)?\s+ngay(?:\s+lập tức)?(?:\s+nhé|\s+ạ)?', 'Thanh toán ngay'),
+        (r'\bimmediate\s+payment\b', 'Immediate Payment'),
+        (r'(?:điều khoản(?: thanh toán)?(?:\s+là|\s*:)?\s*|thanh toán(?:\s+trong|\s+là|\s*:)?\s+|trả(?:\s+tiền)?\s+trong\s+)(\d+)\s*ngày(?:\s+nhé|\s+ạ)?', '{days} ngày'),
+    ]
+    for pat, template in patterns:
+        m = re.search(pat, text, flags=re.I)
+        if m:
+            if template is None:
+                term_val = m.group(1).strip()
+            elif '{days}' in template:
+                term_val = template.format(days=m.group(1))
+            else:
+                term_val = template
+            rest = (text[:m.start()] + ' ' + text[m.end():]).strip(' ,;-\t\r\n')
+            rest = re.sub(r'^(?:và|va)\s+|\s+(?:và|va)$', '', rest, flags=re.I).strip(' ,;-')
+            return term_val, rest
+    # Bare "<N> ngày" when validity_date is already filled on draft (unambiguously payment term!)
+    qdata = draft.get('quotation_data') or {}
+    if qdata.get('validity_date') and not qdata.get('payment_term_id'):
+        m_bare = re.fullmatch(r'\s*(\d+)\s*ngày(?:\s+nhé|\s+ạ)?\s*', text, flags=re.I)
+        if m_bare:
+            return f"{m_bare.group(1)} ngày", ""
+    return None, text
+
+
 def _pricelist_reply(text, draft):
     """Keep the user's exact label while a quotation is waiting for a price list."""
     if draft.get('draft_type') != 'quotation':
@@ -172,6 +205,17 @@ def interpret(text, draft, session=None):
         if time.time() - selection.get('at', 0) <= 1800 and selected in selection.get('ids', []):
             return {'action': 'update', 'selected_id': selected}
         return None
+    match = re.fullmatch(
+        r'(?:sản phẩm(?: là|:)?\s+)?(.+?)\s+số lượng(?: là|:)?\s+(\d+(?:[.,]\d+)?|một|hai|ba)',
+        text,
+        re.I,
+    )
+    if match and not re.search(r'[,;\n]|\bID\b', match[1], re.I) and len(draft.get('quotation_data', {}).get('lines', [])) <= 1:
+        prod_name = match[1].strip(' :,-')
+        qty_str = {'một': '1', 'hai': '2', 'ba': '3'}.get(match[2].casefold(), match[2])
+        qty_val = float(qty_str.replace(',', '.'))
+        if prod_name and qty_val > 0 and not re.search(r'\b(?:không|đừng|chưa)\b', prod_name, re.I):
+            return {'action': 'update', 'product_query': prod_name, 'quantity': qty_val}
     match = re.fullmatch(r'số lượng(?: là|:)?\s+(\d+(?:[.,]\d+)?|một|hai|ba)', lower)
     if not match and re.fullmatch(r'\d+(?:[.,]\d+)?', lower):
         lines = draft.get('quotation_data', {}).get('lines', [])
@@ -188,12 +232,21 @@ def interpret(text, draft, session=None):
     if match:
         return {'action': 'update', 'customer_lead': float(match[1])}
     match = re.fullmatch(r'(?:ngày )?hết hạn(?: báo giá)?(?: là| ngày|:)?\s+(\d{1,2})/(\d{1,2})/(\d{4})', lower)
+    if not match and not draft.get('quotation_data', {}).get('validity_date'):
+        match = re.fullmatch(r'(?:ngày\s+)?(\d{1,2})/(\d{1,2})/(\d{4})', lower)
     if match:
         try:
             value = date(int(match[3]), int(match[2]), int(match[1])).isoformat()
         except ValueError:
             return None
         return {'action': 'update', 'validity_date': value}
+    term_val, term_rest = _extract_payment_term_phrase(text, draft)
+    if term_val:
+        if not term_rest:
+            return {'action': 'update', 'payment_term_query': term_val}
+        sub_update = interpret(term_rest, draft, session)
+        if sub_update and sub_update.get('action') == 'update' and 'payment_term_query' not in sub_update:
+            return {**sub_update, 'payment_term_query': term_val}
     clauses = [part.strip() for part in re.split(r'[,;]|\s+và\s+', lower)]
     facts = {}
     for clause in clauses:
@@ -221,10 +274,19 @@ def interpret(text, draft, session=None):
     history = session.get('history') or []
     last_question = next((row.get('content', '') for row in reversed(history) if row.get('role') == 'assistant'), '').casefold()
     # Bare names are lookup queries only, never selected Odoo records.
-    if not selection and re.fullmatch(r'[^\W_][\w\s\-\'’]{1,150}', text) and not re.search(r'\b(?:không|có|hủy|tạo|lập|xem|báo|ngày|giá|thuế|sao|gì|đâu|đồng ý|xác nhận)\b', lower):
+    if not selection and re.fullmatch(r'[^\W_][\w\s\-\'’]{1,150}', text) and not re.search(r'\b(?:không|có|hủy|tạo|lập|xem|báo|ngày|giá|thuế|sao|gì|đâu|đồng ý|xác nhận|bỏ qua)\b', lower):
         data, hints = draft.get('quotation_data', {}), draft.get('quotation_hints', {})
         if not data.get('partner_id') and not hints.get('customer_query') and 'tên khách hàng' in last_question:
             return {'action': 'update', 'customer_query': text}
-        if data.get('partner_id') and not data.get('lines') and 'tên sản phẩm' in last_question:
+        lines = data.get('lines') or []
+        needs_product = (not lines) or (len(lines) == 1 and not lines[0].get('product_id'))
+        if (
+            data.get('partner_id')
+            and needs_product
+            and not re.match(r'^\d+\s+', lower)
+            and 'số lượng' not in lower
+            and 'so luong' not in lower
+            and any(phrase in last_question for phrase in ('tên sản phẩm', 'sản phẩm nào', 'tên hoặc mã sản phẩm'))
+        ):
             return {'action': 'update', 'product_query': text}
     return None
